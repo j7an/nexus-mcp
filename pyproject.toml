@@ -1,0 +1,92 @@
+[project]
+name = "nexus-mcp"
+version = "0.1.0"
+description = "Model Context Protocol server for AI CLI agents"
+readme = "README.md"
+authors = [
+    { name = "j7an", email = "j7an@users.noreply.github.com" }
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp>=2.14.5,<3.0",
+    "packaging>=26.0",
+    "pydantic>=2.12.5,<3.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.28.0"]
+build-backend = "hatchling.build"
+# Note: hatchling>=1.28.0 auto-discovers src-layout; no [tool.hatch.build.targets.wheel] needed
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1,<2.0",
+    "pre-commit>=4.5.1,<5.0",
+    "pytest>=9.0.2,<10.0",
+    "pytest-asyncio>=1.3.0,<2.0",
+    "pytest-cov>=7.0.0,<8.0",
+    "ruff>=0.15.0,<1.0",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    # Core linting
+    "E",    # pycodestyle errors
+    "F",    # Pyflakes (undefined names, unused imports)
+    "I",    # isort (import sorting)
+    "W",    # pycodestyle warnings
+
+    # Modern Python practices
+    "UP",   # pyupgrade (modernize syntax for target Python version)
+    "FA",   # flake8-future-annotations (PEP 563 compliance)
+
+    # Code quality
+    "B",    # flake8-bugbear (detect likely bugs and design problems)
+    "C4",   # flake8-comprehensions (better list/dict/set comprehensions)
+    "SIM",  # flake8-simplify (simplification opportunities)
+    "RET",  # flake8-return (improve return statements)
+
+    # Import management
+    "ICN",  # flake8-import-conventions (enforce import aliases, e.g., pd for pandas)
+    "TID",  # flake8-tidy-imports (ban relative imports, enforce import style)
+    "TC",   # flake8-type-checking (optimize TYPE_CHECKING blocks)
+
+    # String handling
+    "ISC",  # flake8-implicit-str-concat (flag implicit string concatenation)
+
+    # Pathlib migration
+    "PTH",  # flake8-use-pathlib (prefer pathlib over os.path)
+
+    # Documentation
+    "TD",   # flake8-todos (require issue links in TODO comments)
+
+    # Library-specific
+    "NPY",  # NumPy-specific rules (better array operations)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"  # Recommended by FastMCP: eliminates need for @pytest.mark.asyncio decorators
+asyncio_default_fixture_loop_scope = "function"  # Avoids deprecation warning in pytest-asyncio 1.x (will be default in v2.0)
+testpaths = ["tests"]  # Explicit test discovery
+markers = [
+    "integration: tests that call real CLI subprocesses",
+    "slow: tests that take >1 second",
+]
