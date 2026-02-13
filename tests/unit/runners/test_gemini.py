@@ -128,7 +128,7 @@ class TestGeminiRunnerOutputParsing:
         assert response.agent == "gemini"
         assert response.output == "Hello, world!"
         assert response.raw_output == GEMINI_JSON_WITH_STATS
-        assert response.metadata == {"stats": {"models": {"gemini-2.5-flash": 1}}}
+        assert response.metadata == {"models": {"gemini-2.5-flash": 1}}
 
     def test_parse_output_strips_whitespace(self):
         """Response text should be stripped of leading/trailing whitespace."""
@@ -223,7 +223,7 @@ class TestGeminiRunnerIntegration:
         # Assert: Response parsed correctly
         assert response.agent == "gemini"
         assert response.output == "Hello, world!"
-        assert response.metadata["stats"]["models"]["gemini-2.5-flash"] == 1
+        assert response.metadata["models"]["gemini-2.5-flash"] == 1
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_run_subprocess_error_propagates(self, mock_exec):

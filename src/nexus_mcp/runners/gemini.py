@@ -56,10 +56,13 @@ class GeminiRunner(AbstractRunner):
             command.extend(["--model", request.model])
 
         # Add execution mode flag
-        if request.execution_mode == "sandbox":
-            command.append("--sandbox")
-        elif request.execution_mode == "yolo":
-            command.append("--yolo")
+        match request.execution_mode:
+            case "sandbox":
+                command.append("--sandbox")
+            case "yolo":
+                command.append("--yolo")
+            case _:
+                pass  # default: no auto-approve flags
 
         return command
 
@@ -75,7 +78,7 @@ class GeminiRunner(AbstractRunner):
                 - agent: "gemini"
                 - output: Stripped response text
                 - raw_output: Original stdout
-                - metadata: {"stats": {...}} if stats field present
+                - metadata: stats dict if present (flat, not nested)
 
         Raises:
             ParseError: If JSON is invalid, missing 'response' field,
@@ -109,10 +112,8 @@ class GeminiRunner(AbstractRunner):
                 raw_output=stdout,
             )
 
-        # Extract optional stats
-        metadata = {}
-        if "stats" in data:
-            metadata["stats"] = data["stats"]
+        # Extract optional stats (flat metadata - stats dict IS the metadata)
+        metadata = data.get("stats", {})
 
         return AgentResponse(
             agent="gemini",
