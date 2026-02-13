@@ -1,0 +1,33 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.0  # Latest stable (Feb 2026)
+    hooks:
+      - id: ruff-check  # Changed from 'ruff' (breaking change in v0.10+)
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.19.1  # Latest stable (Feb 2026)
+    hooks:
+      - id: mypy
+        additional_dependencies: ["pydantic>=2.12.5,<3.0", "fastmcp>=2.14.5,<3.0", "packaging>=26.0"]
+        pass_filenames: false  # Required for src-layout
+        args: [src/nexus_mcp]  # Explicit source path
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0  # Latest stable (Feb 2026)
+    hooks:
+      # File quality checks
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+
+      # Syntax validation
+      - id: check-yaml
+      - id: check-toml  # Validates pyproject.toml
+      - id: check-ast   # Validates Python syntax
+
+      # Guard rails
+      - id: check-added-large-files
+        args: ['--maxkb=500']  # Prevents files >500KB
+      - id: check-merge-conflict  # Catches unresolved conflicts
+      - id: mixed-line-ending     # Enforces consistent line endings
