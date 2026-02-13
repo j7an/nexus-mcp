@@ -1,49 +1,118 @@
 """Custom exception hierarchy for nexus-mcp.
 
 All exceptions inherit from NexusMCPError, which inherits from Exception.
-Each concrete exception stores context attributes and produces a human-readable message.
+Each concrete exception stores context attributes for debugging.
 """
 
 
 class NexusMCPError(Exception):
-    """Base exception for all nexus-mcp errors."""
+    """Base exception for all nexus-mcp errors.
+
+    All custom exceptions in this package inherit from this base class.
+    """
 
 
-class CLIProcessError(NexusMCPError):
-    """Raised when a CLI subprocess exits with a non-zero return code."""
+class SubprocessError(NexusMCPError):
+    """Subprocess execution failed.
 
-    def __init__(self, returncode: int, stderr: str, command: str) -> None:
-        self.returncode = returncode
+    Raised when a CLI subprocess exits with an error or encounters execution issues.
+
+    Attributes:
+        stderr: Standard error output from the subprocess.
+        command: The command that was executed (as a list of arguments).
+        returncode: The exit code returned by the subprocess.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        stderr: str = "",
+        command: list[str] | None = None,
+        returncode: int | None = None,
+    ):
+        """Initialize SubprocessError.
+
+        Args:
+            message: Human-readable error description.
+            stderr: Standard error output from the subprocess (default: "").
+            command: The command that failed (default: None).
+            returncode: The subprocess exit code (default: None).
+        """
+        super().__init__(message)
         self.stderr = stderr
         self.command = command
-        super().__init__(
-            f"CLI process failed: command={command!r}, returncode={returncode}, stderr={stderr!r}"
-        )
-
-
-class CLITimeoutError(NexusMCPError):
-    """Raised when a CLI subprocess exceeds its timeout."""
-
-    def __init__(self, timeout: float, command: str) -> None:
-        self.timeout = timeout
-        self.command = command
-        super().__init__(f"CLI process timed out after {timeout}s: command={command!r}")
+        self.returncode = returncode
 
 
 class ParseError(NexusMCPError):
-    """Raised when CLI output cannot be parsed into the expected format."""
+    """Failed to parse CLI output.
 
-    def __init__(self, raw_output: str, agent: str) -> None:
+    Raised when CLI output cannot be parsed into the expected format (e.g., invalid JSON).
+
+    Attributes:
+        raw_output: The unparseable output received from the CLI.
+    """
+
+    def __init__(self, message: str, raw_output: str = ""):
+        """Initialize ParseError.
+
+        Args:
+            message: Human-readable error description.
+            raw_output: The raw output that could not be parsed (default: "").
+        """
+        super().__init__(message)
         self.raw_output = raw_output
+
+
+class UnsupportedAgentError(NexusMCPError):
+    """Agent not recognized by RunnerFactory.
+
+    Raised when attempting to create a runner for an unknown agent.
+
+    Attributes:
+        agent: The name of the unsupported agent.
+    """
+
+    def __init__(self, agent: str):
+        """Initialize UnsupportedAgentError.
+
+        Args:
+            agent: The name of the unsupported agent.
+        """
+        super().__init__(f"Unsupported agent: {agent}")
         self.agent = agent
-        super().__init__(f"Failed to parse {agent} output: {raw_output!r}")
 
 
-class AgentNotFoundError(NexusMCPError):
-    """Raised when a requested agent is not registered."""
+class SubprocessTimeoutError(SubprocessError):
+    """Subprocess exceeded timeout.
 
-    def __init__(self, agent: str, available: list[str]) -> None:
-        self.agent = agent
-        self.available = available
-        available_str = ", ".join(available)
-        super().__init__(f"Agent {agent!r} not found. Available agents: {available_str}")
+    Raised when a CLI subprocess runs longer than the allowed timeout duration.
+    Inherits all attributes from SubprocessError and adds timeout information.
+
+    Attributes:
+        timeout: The timeout duration in seconds that was exceeded.
+        stderr: Inherited from SubprocessError.
+        command: Inherited from SubprocessError.
+        returncode: Inherited from SubprocessError.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        timeout: float,
+        stderr: str = "",
+        command: list[str] | None = None,
+        returncode: int | None = None,
+    ):
+        """Initialize SubprocessTimeoutError.
+
+        Args:
+            message: Human-readable error description.
+            timeout: The timeout duration in seconds (keyword-only).
+            stderr: Standard error output from the subprocess (default: "").
+            command: The command that timed out (default: None).
+            returncode: The subprocess exit code (default: None).
+        """
+        super().__init__(message, stderr=stderr, command=command, returncode=returncode)
+        self.timeout = timeout

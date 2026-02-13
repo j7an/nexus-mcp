@@ -1,108 +1,77 @@
-"""Tests for nexus_mcp.exceptions — custom exception hierarchy."""
-
+# tests/unit/test_exceptions.py
 from nexus_mcp.exceptions import (
-    AgentNotFoundError,
-    CLIProcessError,
-    CLITimeoutError,
     NexusMCPError,
     ParseError,
+    SubprocessError,
+    SubprocessTimeoutError,
+    UnsupportedAgentError,
 )
 
-# --- NexusMCPError (base) ---
+
+def test_exception_hierarchy():
+    assert issubclass(SubprocessError, NexusMCPError)
+    assert issubclass(ParseError, NexusMCPError)
+    assert issubclass(UnsupportedAgentError, NexusMCPError)
 
 
-class TestNexusMCPError:
-    def test_is_exception_subclass(self) -> None:
-        exc = NexusMCPError("something went wrong")
-        assert isinstance(exc, Exception)
-
-    def test_message_via_str(self) -> None:
-        exc = NexusMCPError("something went wrong")
-        assert str(exc) == "something went wrong"
+def test_subprocess_timeout_error_hierarchy():
+    assert issubclass(SubprocessTimeoutError, SubprocessError)
+    assert issubclass(SubprocessTimeoutError, NexusMCPError)
 
 
-# --- CLIProcessError ---
+def test_subprocess_error_message():
+    err = SubprocessError("Command failed", stderr="error output")
+    assert "Command failed" in str(err)
+    assert err.stderr == "error output"
 
 
-class TestCLIProcessError:
-    def test_inherits_from_base(self) -> None:
-        exc = CLIProcessError(returncode=1, stderr="error output", command="gemini -p hi")
-        assert isinstance(exc, NexusMCPError)
-        assert isinstance(exc, Exception)
-
-    def test_stores_attributes(self) -> None:
-        exc = CLIProcessError(returncode=2, stderr="fatal error", command="codex exec foo")
-        assert exc.returncode == 2
-        assert exc.stderr == "fatal error"
-        assert exc.command == "codex exec foo"
-
-    def test_message_contains_context(self) -> None:
-        exc = CLIProcessError(returncode=127, stderr="not found", command="gemini -p test")
-        msg = str(exc)
-        assert "127" in msg
-        assert "not found" in msg
-        assert "gemini -p test" in msg
+def test_subprocess_error_stores_command_and_returncode():
+    err = SubprocessError(
+        "Command failed",
+        stderr="error output",
+        command=["gemini", "-p", "test"],
+        returncode=1,
+    )
+    assert err.command == ["gemini", "-p", "test"]
+    assert err.returncode == 1
+    assert err.stderr == "error output"
 
 
-# --- CLITimeoutError ---
+def test_subprocess_error_defaults():
+    err = SubprocessError("Command failed")
+    assert err.stderr == ""
+    assert err.command is None
+    assert err.returncode is None
 
 
-class TestCLITimeoutError:
-    def test_inherits_from_base(self) -> None:
-        exc = CLITimeoutError(timeout=30.0, command="gemini -p slow")
-        assert isinstance(exc, NexusMCPError)
-        assert isinstance(exc, Exception)
-
-    def test_stores_attributes(self) -> None:
-        exc = CLITimeoutError(timeout=60.5, command="codex exec long")
-        assert exc.timeout == 60.5
-        assert exc.command == "codex exec long"
-
-    def test_message_contains_context(self) -> None:
-        exc = CLITimeoutError(timeout=30.0, command="gemini -p slow")
-        msg = str(exc)
-        assert "30.0" in msg
-        assert "gemini -p slow" in msg
+def test_subprocess_timeout_error_stores_timeout():
+    err = SubprocessTimeoutError("Timed out", timeout=30.0)
+    assert err.timeout == 30.0
+    assert "Timed out" in str(err)
 
 
-# --- ParseError ---
+def test_subprocess_timeout_error_stores_command():
+    err = SubprocessTimeoutError(
+        "Timed out",
+        timeout=30.0,
+        command=["slow-command", "--flag"],
+    )
+    assert err.timeout == 30.0
+    assert err.command == ["slow-command", "--flag"]
 
 
-class TestParseError:
-    def test_inherits_from_base(self) -> None:
-        exc = ParseError(raw_output="not json", agent="gemini")
-        assert isinstance(exc, NexusMCPError)
-        assert isinstance(exc, Exception)
-
-    def test_stores_attributes(self) -> None:
-        exc = ParseError(raw_output="<html>bad</html>", agent="codex")
-        assert exc.raw_output == "<html>bad</html>"
-        assert exc.agent == "codex"
-
-    def test_message_contains_context(self) -> None:
-        exc = ParseError(raw_output="garbled output", agent="gemini")
-        msg = str(exc)
-        assert "gemini" in msg
-        assert "garbled output" in msg
+def test_parse_error_stores_raw_output():
+    err = ParseError("Failed to parse JSON", raw_output='{"truncated": "da')
+    assert "Failed to parse JSON" in str(err)
+    assert err.raw_output == '{"truncated": "da'
 
 
-# --- AgentNotFoundError ---
+def test_parse_error_defaults():
+    err = ParseError("Parse failed")
+    assert err.raw_output == ""
 
 
-class TestAgentNotFoundError:
-    def test_inherits_from_base(self) -> None:
-        exc = AgentNotFoundError(agent="unknown", available=["gemini", "codex"])
-        assert isinstance(exc, NexusMCPError)
-        assert isinstance(exc, Exception)
-
-    def test_stores_attributes(self) -> None:
-        exc = AgentNotFoundError(agent="gpt4", available=["gemini", "codex", "claude"])
-        assert exc.agent == "gpt4"
-        assert exc.available == ["gemini", "codex", "claude"]
-
-    def test_message_contains_context(self) -> None:
-        exc = AgentNotFoundError(agent="gpt4", available=["gemini", "codex"])
-        msg = str(exc)
-        assert "gpt4" in msg
-        assert "gemini" in msg
-        assert "codex" in msg
+def test_unsupported_agent_error_stores_agent():
+    err = UnsupportedAgentError("unknown-agent")
+    assert err.agent == "unknown-agent"
+    assert "Unsupported agent: unknown-agent" in str(err)
