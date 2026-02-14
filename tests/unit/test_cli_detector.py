@@ -130,6 +130,12 @@ class TestGetCLICapabilities:
         assert caps.supports_model_flag is True
         assert caps.fallback_to_text is False
 
+    def test_gemini_json_only(self):
+        """Gemini v0.6.0 supports JSON but is the minimum version."""
+        caps = get_cli_capabilities("gemini", "0.6.0")
+        assert caps.supports_json is True
+        assert caps.supports_model_flag is True
+
     def test_gemini_old(self):
         caps = get_cli_capabilities("gemini", "0.5.0")
         assert caps.found is True
