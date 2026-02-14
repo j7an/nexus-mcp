@@ -11,7 +11,8 @@ from unittest.mock import patch
 
 import pytest
 
-from nexus_mcp.exceptions import ParseError, SubprocessError
+from nexus_mcp.cli_detector import CLIInfo
+from nexus_mcp.exceptions import CLINotFoundError, ParseError, SubprocessError
 from nexus_mcp.runners.gemini import GeminiRunner
 from tests.fixtures import (
     GEMINI_JSON_RESPONSE,
@@ -19,6 +20,23 @@ from tests.fixtures import (
     create_mock_process,
     make_prompt_request,
 )
+
+
+@pytest.fixture(autouse=True)
+def mock_cli_detection():
+    """Auto-mock CLI detection for all GeminiRunner tests.
+
+    GeminiRunner.__init__ calls detect_cli() and get_cli_version().
+    Mock both so tests don't require actual Gemini CLI installed.
+    get_cli_capabilities is NOT mocked — it runs with the mocked version
+    ("0.12.0" → supports_json=True), keeping existing command assertions valid.
+    """
+    with (
+        patch("nexus_mcp.runners.gemini.detect_cli") as mock_detect,
+        patch("nexus_mcp.runners.gemini.get_cli_version", return_value="0.12.0"),
+    ):
+        mock_detect.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
+        yield mock_detect
 
 
 class TestGeminiRunnerCommandBuilding:
@@ -243,3 +261,31 @@ class TestGeminiRunnerIntegration:
 
         assert exc_info.value.returncode == 1
         assert "API key not found" in exc_info.value.stderr
+
+
+class TestGeminiRunnerCLIDetection:
+    """Test GeminiRunner CLI detection at construction time."""
+
+    def test_raises_if_cli_not_found(self, mock_cli_detection):
+        """GeminiRunner should raise CLINotFoundError if gemini not in PATH."""
+        mock_cli_detection.return_value = CLIInfo(found=False)
+        with pytest.raises(CLINotFoundError):
+            GeminiRunner()
+
+    def test_uses_json_if_supported(self):
+        """With version 0.12.0 (autouse fixture), JSON flag should be present."""
+        runner = GeminiRunner()
+        cmd = runner.build_command(make_prompt_request(prompt="Test"))
+        assert "--output-format" in cmd
+        assert "json" in cmd
+
+    def test_omits_json_if_not_supported(self):
+        """With old version, JSON flag should be absent."""
+        with (
+            patch("nexus_mcp.runners.gemini.detect_cli") as mock_detect,
+            patch("nexus_mcp.runners.gemini.get_cli_version", return_value="0.5.0"),
+        ):
+            mock_detect.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
+            runner = GeminiRunner()
+        cmd = runner.build_command(make_prompt_request(prompt="Test"))
+        assert "--output-format" not in cmd
