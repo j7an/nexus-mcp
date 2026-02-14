@@ -13,7 +13,8 @@ Expected JSON response:
 
 import json
 
-from nexus_mcp.exceptions import ParseError
+from nexus_mcp.cli_detector import detect_cli, get_cli_capabilities, get_cli_version
+from nexus_mcp.exceptions import CLINotFoundError, ParseError
 from nexus_mcp.runners.base import AbstractRunner
 from nexus_mcp.types import AgentResponse, PromptRequest
 
@@ -28,6 +29,18 @@ class GeminiRunner(AbstractRunner):
         {"response": "text", "stats": {...}}
     """
 
+    def __init__(self) -> None:
+        """Initialize GeminiRunner with CLI detection and capability checking.
+
+        Raises:
+            CLINotFoundError: If gemini CLI is not found in PATH.
+        """
+        info = detect_cli("gemini")
+        if not info.found:
+            raise CLINotFoundError("gemini")
+        version = get_cli_version("gemini")
+        self.capabilities = get_cli_capabilities("gemini", version)
+
     def build_command(self, request: PromptRequest) -> list[str]:
         """Build Gemini CLI command from request.
 
@@ -38,18 +51,17 @@ class GeminiRunner(AbstractRunner):
             Command list: ["gemini", "-p", <prompt>, "--output-format", "json", ...]
 
         Command structure:
-            1. Base: gemini -p <prompt> --output-format json
-            2. Add --model <model> if request.model is set
-            3. Add --sandbox if execution_mode == "sandbox"
-            4. Add --yolo if execution_mode == "yolo"
+            1. Base: gemini -p <prompt>
+            2. Add --output-format json if capabilities.supports_json
+            3. Add --model <model> if request.model is set
+            4. Add --sandbox if execution_mode == "sandbox"
+            5. Add --yolo if execution_mode == "yolo"
         """
-        command = [
-            "gemini",
-            "-p",
-            request.prompt,
-            "--output-format",
-            "json",
-        ]
+        command = ["gemini", "-p", request.prompt]
+
+        # Add --output-format json if supported by CLI version
+        if self.capabilities.supports_json:
+            command.extend(["--output-format", "json"])
 
         # Add model flag if specified
         if request.model:

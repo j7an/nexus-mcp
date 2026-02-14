@@ -116,3 +116,22 @@ class SubprocessTimeoutError(SubprocessError):
         """
         super().__init__(message, stderr=stderr, command=command, returncode=returncode)
         self.timeout = timeout
+
+
+class CLINotFoundError(NexusMCPError):
+    """CLI binary not found in PATH.
+
+    Raised when a required CLI tool is not installed or not in PATH.
+
+    Attributes:
+        cli_name: The name of the CLI that was not found.
+    """
+
+    def __init__(self, cli_name: str):
+        """Initialize CLINotFoundError.
+
+        Args:
+            cli_name: The name of the CLI binary that was not found.
+        """
+        super().__init__(f"CLI not found in PATH: {cli_name}")
+        self.cli_name = cli_name
