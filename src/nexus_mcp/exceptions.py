@@ -135,3 +135,23 @@ class CLINotFoundError(NexusMCPError):
         """
         super().__init__(f"CLI not found in PATH: {cli_name}")
         self.cli_name = cli_name
+
+
+class ConfigurationError(NexusMCPError):
+    """Configuration validation failed.
+
+    Raised when environment variable or configuration values are invalid.
+
+    Attributes:
+        config_key: The configuration key that failed validation (optional).
+    """
+
+    def __init__(self, message: str, config_key: str | None = None):
+        """Initialize ConfigurationError.
+
+        Args:
+            message: Human-readable error description.
+            config_key: The configuration key that failed (optional).
+        """
+        super().__init__(message)
+        self.config_key = config_key

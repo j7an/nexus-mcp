@@ -113,3 +113,34 @@ def test_prompt_request_empty_string_session_id_fails():
 
     with pytest.raises(ValidationError):
         PromptRequest(agent="claude", prompt="Hello", session_id="")
+
+
+# Phase 3.7: File References tests
+def test_prompt_request_with_file_refs():
+    """PromptRequest accepts optional file_refs list."""
+    from nexus_mcp.types import PromptRequest
+
+    request = PromptRequest(
+        agent="gemini", prompt="Analyze this code", file_refs=["src/main.py", "tests/test_main.py"]
+    )
+    assert request.file_refs == ["src/main.py", "tests/test_main.py"]
+
+
+def test_prompt_request_file_refs_default_empty():
+    """PromptRequest.file_refs defaults to empty list."""
+    from nexus_mcp.types import PromptRequest
+
+    request = PromptRequest(agent="gemini", prompt="test")
+    assert request.file_refs == []
+
+
+def test_prompt_request_file_refs_must_be_strings():
+    """PromptRequest.file_refs must contain only strings."""
+    from nexus_mcp.types import PromptRequest
+
+    with pytest.raises(ValidationError):
+        PromptRequest(
+            agent="gemini",
+            prompt="test",
+            file_refs=["valid.py", 123, None],  # Invalid types
+        )
