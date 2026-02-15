@@ -65,14 +65,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Run Trivy vulnerability scanner
+      - name: Generate SARIF report
         uses: aquasecurity/trivy-action@0.34.0
         with:
           scan-type: repo
           format: sarif
           output: trivy-results.sarif
-          severity: CRITICAL,HIGH
-          exit-code: "1"
 
       - name: Upload Trivy results to GitHub Security tab
         if: always()
@@ -80,3 +78,11 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
           category: trivy
+
+      - name: Fail on CRITICAL/HIGH vulnerabilities
+        uses: aquasecurity/trivy-action@0.34.0
+        with:
+          scan-type: repo
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "1"
