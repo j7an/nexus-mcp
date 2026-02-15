@@ -26,6 +26,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "diff-cover>=10.2.0,<11.0",
     "mypy>=1.19.1,<2.0",
     "pre-commit>=4.5.1,<5.0",
     "pytest>=9.0.2,<10.0",
@@ -89,4 +90,25 @@ testpaths = ["tests"]  # Explicit test discovery
 markers = [
     "integration: tests that call real CLI subprocesses",
     "slow: tests that take >1 second",
+]
+
+[tool.coverage.run]
+source = ["nexus_mcp"]
+branch = true
+relative_files = true
+omit = [
+    "*/tests/*",
+    "*/__main__.py",
+]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    'if __name__ == .__main__.:',
+    "@(abc\\.)?abstractmethod",
+    "raise NotImplementedError",
+    "class .*\\bProtocol\\):",
+    "\\.\\.\\.",
 ]
