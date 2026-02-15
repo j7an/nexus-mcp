@@ -9,26 +9,11 @@ from unittest.mock import patch
 
 import pytest
 
-from nexus_mcp.cli_detector import CLIInfo
 from nexus_mcp.types import AgentResponse, PromptRequest
 from tests.fixtures import create_mock_process, make_prompt_request
 
 
-@pytest.fixture(autouse=True)
-def mock_cli_detection():
-    """Auto-mock CLI detection for extension point tests.
-
-    TestCacheExtensionPoint and TestValidateExtensionPoint use
-    RunnerFactory.create("gemini") which triggers GeminiRunner.__init__.
-    """
-    with (
-        patch("nexus_mcp.runners.gemini.detect_cli") as mock_detect,
-        patch("nexus_mcp.runners.gemini.get_cli_version", return_value="0.12.0"),
-    ):
-        mock_detect.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
-        yield mock_detect
-
-
+@pytest.mark.usefixtures("mock_cli_detection")
 class TestCacheExtensionPoint:
     """Verify cache can be added as decorator on runner.run()."""
 
@@ -52,6 +37,7 @@ class TestCacheExtensionPoint:
         assert response.output == "test"
 
 
+@pytest.mark.usefixtures("mock_cli_detection")
 class TestValidateExtensionPoint:
     """Verify validation can intercept before runner.run()."""
 

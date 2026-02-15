@@ -22,23 +22,6 @@ from tests.fixtures import (
 )
 
 
-@pytest.fixture(autouse=True)
-def mock_cli_detection():
-    """Auto-mock CLI detection for all GeminiRunner tests.
-
-    GeminiRunner.__init__ calls detect_cli() and get_cli_version().
-    Mock both so tests don't require actual Gemini CLI installed.
-    get_cli_capabilities is NOT mocked — it runs with the mocked version
-    ("0.12.0" → supports_json=True), keeping existing command assertions valid.
-    """
-    with (
-        patch("nexus_mcp.runners.gemini.detect_cli") as mock_detect,
-        patch("nexus_mcp.runners.gemini.get_cli_version", return_value="0.12.0"),
-    ):
-        mock_detect.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
-        yield mock_detect
-
-
 class TestGeminiRunnerCommandBuilding:
     """Test GeminiRunner.build_command() constructs correct CLI commands."""
 
@@ -289,3 +272,115 @@ class TestGeminiRunnerCLIDetection:
             runner = GeminiRunner()
         cmd = runner.build_command(make_prompt_request(prompt="Test"))
         assert "--output-format" not in cmd
+
+
+class TestGeminiRunnerErrorRecovery:
+    """Test GeminiRunner error recovery from non-zero exit codes."""
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_gemini_runner_recovers_from_partial_error(self, mock_exec):
+        """GeminiRunner recovers when CLI exits with error but stdout has valid JSON."""
+        # Scenario: Gemini CLI encountered an issue but still produced partial response
+        mock_exec.return_value = create_mock_process(
+            stdout='{"response": "Partial result before error", "stats": {}}',
+            stderr="Warning: Rate limit approaching",
+            returncode=1,
+        )
+
+        runner = GeminiRunner()
+        request = make_prompt_request(prompt="test")
+
+        # Should NOT raise - recovers from error by parsing stdout
+        response = await runner.run(request)
+        assert response.output == "Partial result before error"
+        assert response.metadata.get("recovered_from_error") is True
+        assert response.metadata.get("original_exit_code") == 1
+        assert response.metadata.get("stderr") == "Warning: Rate limit approaching"
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_gemini_runner_raises_when_recovery_impossible(self, mock_exec):
+        """GeminiRunner raises when stdout is not parseable."""
+        mock_exec.return_value = create_mock_process(
+            stdout="Fatal error: API key invalid",  # Not JSON
+            stderr="Error: 401 Unauthorized",
+            returncode=1,
+        )
+
+        runner = GeminiRunner()
+        request = make_prompt_request(prompt="test")
+
+        # Should raise - no recovery possible
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        assert exc_info.value.returncode == 1
+        assert "Error: 401 Unauthorized" in exc_info.value.stderr
+
+
+class TestGeminiRunnerFileReferences:
+    """Test GeminiRunner file references handling."""
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_gemini_runner_appends_file_refs_to_prompt(self, mock_exec):
+        """GeminiRunner appends file references to prompt text."""
+        mock_exec.return_value = create_mock_process(stdout='{"response": "ok"}')
+
+        runner = GeminiRunner()
+        request = make_prompt_request(
+            prompt="Analyze this code", file_refs=["src/main.py", "tests/test_main.py"]
+        )
+        await runner.run(request)
+
+        # Verify command includes modified prompt
+        args = mock_exec.call_args[0]
+        prompt_arg = args[2]  # args = ("gemini", "-p", "<prompt>", ...)
+        assert "src/main.py" in prompt_arg
+        assert "tests/test_main.py" in prompt_arg
+        assert "Analyze this code" in prompt_arg
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_gemini_runner_prompt_unchanged_when_no_file_refs(self, mock_exec):
+        """GeminiRunner does not modify prompt if file_refs is empty."""
+        mock_exec.return_value = create_mock_process(stdout='{"response": "ok"}')
+
+        runner = GeminiRunner()
+        request = make_prompt_request(prompt="Simple prompt")
+        await runner.run(request)
+
+        args = mock_exec.call_args[0]
+        prompt_arg = args[2]
+        assert prompt_arg == "Simple prompt"  # Unchanged
+
+
+class TestGeminiRunnerEnvConfiguration:
+    """Test GeminiRunner environment variable configuration."""
+
+    @patch.dict("os.environ", {"NEXUS_GEMINI_PATH": "/opt/custom/gemini"})
+    def test_gemini_runner_uses_custom_path_from_env(self):
+        """GeminiRunner uses NEXUS_GEMINI_PATH if set."""
+        runner = GeminiRunner()
+        request = make_prompt_request(prompt="test")
+
+        # Build command and verify custom path used
+        cmd = runner.build_command(request)
+        assert cmd[0] == "/opt/custom/gemini"
+
+    @patch.dict("os.environ", {"NEXUS_GEMINI_MODEL": "gemini-2.5-flash"})
+    def test_gemini_runner_uses_default_model_from_env(self):
+        """GeminiRunner uses NEXUS_GEMINI_MODEL as default if request.model is None."""
+        runner = GeminiRunner()
+        request = make_prompt_request(prompt="test", model=None)
+
+        cmd = runner.build_command(request)
+        assert "--model" in cmd
+        assert "gemini-2.5-flash" in cmd
+
+    @patch.dict("os.environ", {"NEXUS_GEMINI_MODEL": "gemini-2.5-flash"})
+    def test_gemini_runner_request_model_overrides_env(self):
+        """Request model overrides env var default."""
+        runner = GeminiRunner()
+        request = make_prompt_request(prompt="test", model="gemini-3-pro-preview")
+
+        cmd = runner.build_command(request)
+        assert "gemini-3-pro-preview" in cmd
+        assert "gemini-2.5-flash" not in cmd

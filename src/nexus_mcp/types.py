@@ -23,6 +23,10 @@ class PromptRequest(BaseModel):
         description="Optional session ID for resumable sessions (Claude Code --resume)",
         min_length=1,
     )
+    file_refs: list[str] = Field(
+        default_factory=list,
+        description="Optional file paths for agent context (appended to prompt)",
+    )
 
 
 class AgentResponse(BaseModel):

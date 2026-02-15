@@ -7,29 +7,11 @@ Tests verify:
 - list_agents() → ["gemini"]
 """
 
-from unittest.mock import patch
-
 import pytest
 
-from nexus_mcp.cli_detector import CLIInfo
 from nexus_mcp.exceptions import UnsupportedAgentError
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.runners.gemini import GeminiRunner
-
-
-@pytest.fixture(autouse=True)
-def mock_cli_detection():
-    """Auto-mock CLI detection for factory tests.
-
-    RunnerFactory.create("gemini") calls GeminiRunner() which needs
-    detect_cli() and get_cli_version() mocked.
-    """
-    with (
-        patch("nexus_mcp.runners.gemini.detect_cli") as mock_detect,
-        patch("nexus_mcp.runners.gemini.get_cli_version", return_value="0.12.0"),
-    ):
-        mock_detect.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
-        yield mock_detect
 
 
 class TestRunnerFactory:

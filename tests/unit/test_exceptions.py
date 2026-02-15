@@ -1,5 +1,6 @@
 # tests/unit/test_exceptions.py
 from nexus_mcp.exceptions import (
+    ConfigurationError,
     NexusMCPError,
     ParseError,
     SubprocessError,
@@ -75,3 +76,16 @@ def test_unsupported_agent_error_stores_agent():
     err = UnsupportedAgentError("unknown-agent")
     assert err.agent == "unknown-agent"
     assert "Unsupported agent: unknown-agent" in str(err)
+
+
+def test_configuration_error_stores_config_key():
+    """ConfigurationError should store config_key attribute."""
+    err = ConfigurationError("Invalid timeout value", config_key="NEXUS_TIMEOUT_SECONDS")
+    assert str(err) == "Invalid timeout value"
+    assert err.config_key == "NEXUS_TIMEOUT_SECONDS"
+
+
+def test_configuration_error_default_config_key():
+    """ConfigurationError config_key defaults to None."""
+    err = ConfigurationError("Bad config")
+    assert err.config_key is None
