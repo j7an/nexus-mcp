@@ -1,0 +1,7 @@
+vulnerabilities:
+  - id: CVE-2025-69872
+    statement: |
+      diskcache is a transitive dependency (fastmcp → py-key-value-aio[disk]).
+      nexus-mcp does not use DiskStore — only in-memory and Redis backends.
+      No patched version available. Exploitation requires local write access
+      to the cache directory, which is not exposed.
