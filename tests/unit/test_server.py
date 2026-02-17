@@ -34,6 +34,8 @@ class TestPromptAgent:
 
         assert result == "Agent response"
         mock_factory.create.assert_called_once_with("gemini")
+        call_args = mock_runner.run.call_args.args[0]
+        assert call_args.prompt == "Test prompt"
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_prompt_agent_passes_execution_mode(self, mock_factory):
@@ -89,7 +91,7 @@ class TestPromptAgent:
         )
 
         progress.set_total.assert_called_once_with(100)
-        assert progress.increment.call_count >= 2
+        assert progress.increment.call_count == 4
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_prompt_agent_handles_unsupported_agent(self, mock_factory):
