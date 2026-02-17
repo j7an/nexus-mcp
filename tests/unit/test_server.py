@@ -14,11 +14,6 @@ from nexus_mcp.server import list_agents, prompt_agent
 from tests.fixtures import make_agent_response
 
 
-@pytest.fixture
-def progress():
-    return AsyncMock()
-
-
 class TestPromptAgent:
     """Tests for the prompt_agent tool function."""
 
