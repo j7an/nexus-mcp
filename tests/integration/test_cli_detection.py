@@ -15,6 +15,27 @@ from nexus_mcp.cli_detector import detect_cli, get_cli_capabilities, get_cli_ver
 _SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+")
 
 
+class TestDetectCLIFallback:
+    """Pure-Python tests for detect_cli() that require no installed CLI."""
+
+    def test_detect_nonexistent_cli_returns_not_found(self) -> None:
+        """detect_cli() with unknown binary name should return found=False gracefully."""
+        result = detect_cli("nonexistent_cli_that_does_not_exist_12345")
+
+        assert result.found is False
+        assert result.path is None
+
+
+class TestGetCLIVersionFallback:
+    """Pure-Python tests for get_cli_version() that require no installed CLI."""
+
+    def test_get_version_nonexistent_cli_returns_none(self) -> None:
+        """get_cli_version() for missing CLI should return None without raising."""
+        version = get_cli_version("nonexistent_cli_that_does_not_exist_12345")
+
+        assert version is None
+
+
 @pytest.mark.integration
 class TestDetectCLIReal:
     """Validate detect_cli() against real PATH entries."""
@@ -26,13 +47,6 @@ class TestDetectCLIReal:
         assert result.found is True
         assert result.path is not None
         assert result.path == gemini_cli_available
-
-    def test_detect_nonexistent_cli_returns_not_found(self) -> None:
-        """detect_cli() with unknown binary name should return found=False gracefully."""
-        result = detect_cli("nonexistent_cli_that_does_not_exist_12345")
-
-        assert result.found is False
-        assert result.path is None
 
 
 @pytest.mark.integration
@@ -46,12 +60,6 @@ class TestGetCLIVersionReal:
         assert version is not None
         assert _SEMVER_PATTERN.match(version), f"Expected semver format, got: {version!r}"
 
-    def test_get_version_nonexistent_cli_returns_none(self) -> None:
-        """get_cli_version() for missing CLI should return None without raising."""
-        version = get_cli_version("nonexistent_cli_that_does_not_exist_12345")
-
-        assert version is None
-
 
 @pytest.mark.integration
 class TestGetCLICapabilitiesReal:
@@ -60,6 +68,9 @@ class TestGetCLICapabilitiesReal:
     def test_gemini_capabilities_with_real_version(self, gemini_cli_available: str) -> None:  # noqa: ARG002
         """get_cli_capabilities() should populate CLICapabilities from real version."""
         version = get_cli_version("gemini")
+        assert version is not None, (
+            "get_cli_version('gemini') returned None — version output format may have changed"
+        )
         capabilities = get_cli_capabilities("gemini", version)
 
         assert capabilities.found is True
@@ -70,6 +81,9 @@ class TestGetCLICapabilitiesReal:
     def test_gemini_modern_version_supports_json(self, gemini_cli_available: str) -> None:  # noqa: ARG002
         """Installed Gemini CLI should be >= 0.6.0 and support JSON output."""
         version = get_cli_version("gemini")
+        assert version is not None, (
+            "get_cli_version('gemini') returned None — version output format may have changed"
+        )
         capabilities = get_cli_capabilities("gemini", version)
 
         # Integration environment must have a modern CLI (>= 0.6.0)

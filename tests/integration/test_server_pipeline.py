@@ -19,15 +19,27 @@ from nexus_mcp.server import list_agents, prompt_agent
 _PING_PROMPT = "Reply with exactly the word 'pong'"
 
 
-@pytest.mark.integration
-class TestServerListAgents:
-    """Validate list_agents() returns expected agent names."""
+class TestServerListAgentsSmokeTest:
+    """Smoke tests for list_agents() that require no CLI."""
 
     def test_list_agents_includes_gemini(self) -> None:
         """list_agents() should always include 'gemini' (no CLI required)."""
         agents = list_agents()
 
         assert "gemini" in agents
+
+
+class TestServerPromptAgentValidation:
+    """Input-validation tests for prompt_agent() that require no CLI."""
+
+    async def test_prompt_agent_rejects_unsupported_agent(self, progress: AsyncMock) -> None:
+        """prompt_agent() should raise UnsupportedAgentError for unknown agent names."""
+        with pytest.raises(UnsupportedAgentError):
+            await prompt_agent(
+                agent="nonexistent_agent_12345",
+                prompt="test",
+                progress=progress,
+            )
 
 
 @pytest.mark.integration
@@ -62,12 +74,3 @@ class TestServerPromptAgentPipeline:
         progress.set_total.assert_called_once_with(100)
         assert progress.increment.call_count == 4
         assert sum(c.args[0] for c in progress.increment.call_args_list) == 100
-
-    async def test_prompt_agent_rejects_unsupported_agent(self, progress: AsyncMock) -> None:
-        """prompt_agent() should raise UnsupportedAgentError for unknown agent names."""
-        with pytest.raises(UnsupportedAgentError):
-            await prompt_agent(
-                agent="nonexistent_agent_12345",
-                prompt="test",
-                progress=progress,
-            )

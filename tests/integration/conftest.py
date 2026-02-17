@@ -2,10 +2,10 @@
 """Shared fixtures for integration tests.
 
 No CLI mocking — all fixtures use real CLI binaries.
+The root tests/conftest.py provides the shared `progress` fixture.
 """
 
 import shutil
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -33,13 +33,3 @@ def gemini_runner(gemini_cli_available: str) -> GeminiRunner:  # noqa: ARG001
     Depends on gemini_cli_available to skip if CLI is absent.
     """
     return GeminiRunner()
-
-
-@pytest.fixture
-def progress() -> AsyncMock:
-    """Minimal mock for FastMCP Progress DI sentinel.
-
-    Progress is the only mock in the integration suite — it cannot be
-    provided by FastMCP outside an active MCP server context.
-    """
-    return AsyncMock()

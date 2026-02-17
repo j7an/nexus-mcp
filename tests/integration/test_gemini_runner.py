@@ -75,6 +75,38 @@ class TestGeminiRunnerEndToEnd:
 
 
 @pytest.mark.integration
+@pytest.mark.slow
+class TestGeminiRunnerErrorPath:
+    """Validate error propagation when the real CLI fails.
+
+    Uses an invalid model name to reliably trigger a non-zero exit from the CLI.
+    This exercises the full error path:
+      server.py:69 → base.py run() → _recover_from_error() or SubprocessError
+
+    Flakiness risk: CLI error messages and exit codes may vary across versions.
+    The assertion is intentionally broad (SubprocessError OR recovered_from_error)
+    to remain valid even if recovery behavior changes.
+    """
+
+    async def test_run_with_invalid_model_raises_or_recovers(
+        self, gemini_runner: GeminiRunner
+    ) -> None:
+        """run() with a nonexistent model should either raise SubprocessError or recover."""
+        from nexus_mcp.exceptions import SubprocessError
+
+        request = make_prompt_request(prompt="ping", model="nonexistent-model-xyz-99")
+        try:
+            response = await gemini_runner.run(request)
+            # Recovery path: error was caught, metadata records it
+            assert response.metadata.get("recovered_from_error") is True, (
+                "Expected SubprocessError or recovered_from_error=True for invalid model, "
+                f"got response: {response.output!r}"
+            )
+        except SubprocessError:
+            pass  # Error propagation path — also correct
+
+
+@pytest.mark.integration
 class TestGeminiRunnerBuildCommand:
     """Validate command building uses real capability detection."""
 
