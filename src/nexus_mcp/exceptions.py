@@ -46,14 +46,26 @@ class SubprocessError(NexusMCPError):
         self.returncode = returncode
         self.stdout = stdout
 
+    _MAX_OUTPUT_DISPLAY = 500
+
     def __str__(self) -> str:
-        parts = [self.args[0]]
+        parts = [self.args[0] if self.args else ""]
         if self.returncode is not None:
             parts.append(f"returncode={self.returncode}")
         if self.stderr:
-            parts.append(f"stderr='{self.stderr}'")
+            stderr_display = (
+                self.stderr[: self._MAX_OUTPUT_DISPLAY] + "[truncated]"
+                if len(self.stderr) > self._MAX_OUTPUT_DISPLAY
+                else self.stderr
+            )
+            parts.append(f"stderr='{stderr_display}'")
         if self.stdout:
-            parts.append(f"stdout='{self.stdout}'")
+            stdout_display = (
+                self.stdout[: self._MAX_OUTPUT_DISPLAY] + "[truncated]"
+                if len(self.stdout) > self._MAX_OUTPUT_DISPLAY
+                else self.stdout
+            )
+            parts.append(f"stdout='{stdout_display}'")
         return " | ".join(parts)
 
 
@@ -117,6 +129,7 @@ class SubprocessTimeoutError(SubprocessError):
         stderr: str = "",
         command: list[str] | None = None,
         returncode: int | None = None,
+        stdout: str = "",
     ):
         """Initialize SubprocessTimeoutError.
 
@@ -126,8 +139,11 @@ class SubprocessTimeoutError(SubprocessError):
             stderr: Standard error output from the subprocess (default: "").
             command: The command that timed out (default: None).
             returncode: The subprocess exit code (default: None).
+            stdout: Standard output from the subprocess (default: "").
         """
-        super().__init__(message, stderr=stderr, command=command, returncode=returncode)
+        super().__init__(
+            message, stderr=stderr, command=command, returncode=returncode, stdout=stdout
+        )
         self.timeout = timeout
 
 

@@ -471,6 +471,50 @@ class TestGeminiRunnerAPIErrorExtraction:
         primary_message = exc_info.value.args[0]
         assert "Gemini API error" not in primary_message
 
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_non_dict_json_stdout_does_not_crash(self, mock_exec):
+        """Non-dict JSON in stdout (e.g. array) must not raise AttributeError.
+
+        Previously, _try_extract_error called json.loads(stdout) and then data.get("error")
+        without checking isinstance(data, dict), crashing on list/number JSON.
+        """
+        mock_exec.return_value = create_mock_process(
+            stdout="[1, 2, 3]",
+            stderr="something went wrong",
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        # Should fall through to generic error, NOT crash with AttributeError
+        primary_message = exc_info.value.args[0]
+        assert "Gemini API error" not in primary_message
+        assert "CLI command failed" in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_structured_error_includes_command(self, mock_exec):
+        """SubprocessError raised from structured API error JSON should include the command."""
+        error_stdout = (
+            '{"error": {"code": 429, "message": "Rate limited", "status": "RESOURCE_EXHAUSTED"}}'
+        )
+        mock_exec.return_value = create_mock_process(
+            stdout=error_stdout,
+            stderr="",
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        # The command field should be populated (not None), matching generic error behavior
+        assert exc_info.value.command is not None
+        assert "gemini" in exc_info.value.command[0]
+
 
 class TestGeminiRunnerExtractLastJson:
     """Test GeminiRunner._extract_last_json_object() helper staticmethod."""
@@ -508,6 +552,26 @@ class TestGeminiRunnerExtractLastJson:
         text = "text before\n[1, 2, 3]"
         result = GeminiRunner._extract_last_json_object(text)
         assert result is None
+
+    def test_known_limitation_braces_in_string_values(self):
+        """Documents known limitation: brace chars in string values confuse depth tracking.
+
+        Balanced brace chars (e.g. '{foo}') cancel out and accidentally find the right
+        boundary; unbalanced ones (e.g. lone '}') cause json.loads to fail and return None.
+        In practice, Google API error messages rarely contain literal brace characters.
+        """
+        # Balanced braces in string values — algorithm accidentally gets the right answer
+        text = 'log\n{"key": "{balanced}"}'
+        result = GeminiRunner._extract_last_json_object(text)
+        assert result == {"key": "{balanced}"}
+
+        # Unbalanced closing brace in string value — algorithm mis-identifies boundary,
+        # json.loads fails, returns None (falls through to generic SubprocessError)
+        text_unbalanced = 'log\n{"key": "has a } brace"}'
+        result_unbalanced = GeminiRunner._extract_last_json_object(text_unbalanced)
+        # NOTE: Returns None due to brace-depth mis-parsing. Raw stderr is still
+        # preserved in the generic SubprocessError at base.py:99-105.
+        assert result_unbalanced is None
 
 
 class TestGeminiRunnerFileReferences:

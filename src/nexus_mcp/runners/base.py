@@ -93,7 +93,9 @@ class AbstractRunner(ABC):
 
         # Step 3: Error check with recovery attempt
         if result.returncode != 0:
-            recovered = self._recover_from_error(result.stdout, result.stderr, result.returncode)
+            recovered = self._recover_from_error(
+                result.stdout, result.stderr, result.returncode, command
+            )
             if recovered:
                 return self._apply_output_limit(recovered)
             raise SubprocessError(
@@ -161,7 +163,7 @@ class AbstractRunner(ABC):
         )
 
     def _recover_from_error(
-        self, stdout: str, stderr: str, returncode: int
+        self, stdout: str, stderr: str, returncode: int, command: list[str] | None = None
     ) -> AgentResponse | None:
         """Attempt to recover from subprocess error.
 
@@ -172,9 +174,14 @@ class AbstractRunner(ABC):
             stdout: Subprocess stdout
             stderr: Subprocess stderr
             returncode: Exit code
+            command: The CLI command that was run (may be forwarded to SubprocessError).
 
         Returns:
-            Recovered AgentResponse or None if recovery not possible
+            Recovered AgentResponse or None if recovery not possible.
+
+        Raises:
+            SubprocessError: Subclass implementations may raise if a structured error is
+                detected in stdout/stderr (e.g. GeminiRunner raises on API error JSON).
         """
         return None
 
