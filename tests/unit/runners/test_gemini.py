@@ -17,6 +17,7 @@ from nexus_mcp.runners.gemini import GeminiRunner
 from tests.fixtures import (
     GEMINI_JSON_RESPONSE,
     GEMINI_JSON_WITH_STATS,
+    GEMINI_NOISY_STDOUT,
     create_mock_process,
     make_prompt_request,
 )
@@ -656,6 +657,62 @@ class TestGeminiRunnerFileReferences:
         args = mock_exec.call_args[0]
         prompt_arg = args[2]
         assert prompt_arg == "Simple prompt"  # Unchanged
+
+
+class TestGeminiRunnerNoisyStdout:
+    """Test GeminiRunner.parse_output() handles Node.js warning prefix before JSON."""
+
+    def test_parse_output_with_node_warnings(self):
+        """Node.js deprecation warnings before valid JSON → should parse successfully."""
+        runner = GeminiRunner()
+
+        response = runner.parse_output(GEMINI_NOISY_STDOUT, stderr="")
+
+        assert response.agent == "gemini"
+        assert response.output == "test output"
+        assert response.raw_output == GEMINI_NOISY_STDOUT
+
+    def test_parse_output_with_multiple_prefix_lines(self):
+        """Multiple non-JSON lines before JSON → should extract and parse correctly."""
+        runner = GeminiRunner()
+        noisy = (
+            "info: Starting up\n"
+            "debug: Connecting to API\n"
+            "warn: Retrying request\n"
+            '{"response": "result from noisy stdout"}'
+        )
+
+        response = runner.parse_output(noisy, stderr="")
+
+        assert response.output == "result from noisy stdout"
+
+    def test_parse_output_with_prefix_and_stats(self):
+        """Prefix noise + JSON with stats → metadata preserved after extraction."""
+        runner = GeminiRunner()
+        noisy = (
+            "(node:12345) [DEP0040] DeprecationWarning: punycode is deprecated\n"
+            "Loaded cached credentials.\n"
+            '{"response": "Hello!", "stats": {"models": {"gemini-2.5-flash": 1}}}'
+        )
+
+        response = runner.parse_output(noisy, stderr="")
+
+        assert response.output == "Hello!"
+        assert response.metadata == {"models": {"gemini-2.5-flash": 1}}
+
+    def test_parse_output_noisy_no_json_raises(self):
+        """Prefix noise with NO valid JSON → ParseError (not a regression)."""
+        runner = GeminiRunner()
+        noisy_no_json = (
+            "(node:87799) [DEP0040] DeprecationWarning: punycode is deprecated\n"
+            "Loaded cached credentials.\n"
+            "Error: Something went wrong without JSON output"
+        )
+
+        with pytest.raises(ParseError) as exc_info:
+            runner.parse_output(noisy_no_json, stderr="")
+
+        assert exc_info.value.raw_output == noisy_no_json
 
 
 class TestGeminiRunnerEnvConfiguration:

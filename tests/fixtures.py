@@ -14,6 +14,16 @@ GEMINI_JSON_WITH_STATS = (
     '{"response": "Hello, world!", "stats": {"models": {"gemini-2.5-flash": 1}}}'
 )
 
+# Realistic Node.js warning prefix emitted by Gemini CLI v0.29.0+ before JSON output.
+# Used to test parse_output() fallback for noisy stdout.
+GEMINI_NOISY_STDOUT = (
+    "(node:87799) [DEP0040] DeprecationWarning: The `punycode` module is deprecated."
+    " Please use a userland alternative instead.\n"
+    "(Use `node --trace-deprecation ...` to show where the warning was created)\n"
+    "Loaded cached credentials.\n"
+    '{"response": "test output"}'
+)
+
 # Phase 6/7: Add CODEX_NDJSON_RESPONSE and CLAUDE_JSON_RESPONSE constants
 # when implementing CodexRunner and ClaudeCodeRunner respectively.
 
