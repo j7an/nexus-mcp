@@ -126,8 +126,8 @@ class GeminiRunner(AbstractRunner):
                 raw_output=stdout,
             ) from None
 
-        # Validate 'response' field exists
-        if "response" not in data:
+        # Validate 'response' field exists (guard against scalar JSON like null or 42)
+        if not isinstance(data, dict) or "response" not in data:
             raise ParseError(
                 "Missing 'response' field in Gemini CLI output",
                 raw_output=stdout,
@@ -270,7 +270,7 @@ class GeminiRunner(AbstractRunner):
                 raw_output=response.raw_output,
                 metadata=metadata,
             )
-        except (ParseError, json.JSONDecodeError):
+        except ParseError:
             # Try to extract structured API error; raises SubprocessError if found
             self._try_extract_error(stdout, stderr, returncode, command)
             return None  # Falls through to base.py's generic SubprocessError

@@ -516,6 +516,55 @@ class TestGeminiRunnerAPIErrorExtraction:
         assert "gemini" in exc_info.value.command[0]
 
 
+class TestGeminiRunnerScalarJson:
+    """Test parse_output handles scalar JSON values (null, number) without TypeError."""
+
+    def test_parse_output_null_json_raises_parse_error(self):
+        """json.loads('null') returns None; 'response' not in None raises TypeError without fix."""
+        runner = GeminiRunner()
+
+        with pytest.raises(ParseError) as exc_info:
+            runner.parse_output("null", stderr="")
+
+        assert "Missing 'response' field" in str(exc_info.value)
+
+    def test_parse_output_number_json_raises_parse_error(self):
+        """json.loads('42') returns int; 'response' not in 42 raises TypeError without fix."""
+        runner = GeminiRunner()
+
+        with pytest.raises(ParseError) as exc_info:
+            runner.parse_output("42", stderr="")
+
+        assert "Missing 'response' field" in str(exc_info.value)
+
+
+class TestGeminiRunnerDualFieldRecovery:
+    """Test _recover_from_error behaviour when stdout has both 'response' and 'error'."""
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_response_field_wins_over_error_field_on_nonzero_exit(self, mock_exec):
+        """When stdout has both 'response' and 'error', recovery path returns the response.
+
+        Documents the 'recovery wins' contract: parse_output runs before _try_extract_error
+        in _recover_from_error, so a valid 'response' field takes priority.
+        """
+        dual_field_stdout = (
+            '{"response": "Partial answer", "error": {"code": 429, "message": "quota"}}'
+        )
+        mock_exec.return_value = create_mock_process(
+            stdout=dual_field_stdout,
+            stderr="",
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        response = await runner.run(request)
+
+        assert response.output == "Partial answer"
+        assert response.metadata.get("recovered_from_error") is True
+
+
 class TestGeminiRunnerExtractLastJson:
     """Test GeminiRunner._extract_last_json_object() helper staticmethod."""
 
