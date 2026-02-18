@@ -157,6 +157,22 @@ class TestAbstractRunner:
         assert "truncated" not in response.metadata
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_run_includes_stdout_in_subprocess_error(self, mock_exec, runner):
+        """SubprocessError raised on non-zero exit should carry stdout."""
+        error_json = '{"error": {"code": 429, "message": "Rate limit exceeded"}}'
+        mock_exec.return_value = create_mock_process(
+            stdout=error_json,
+            stderr="Rate limit exceeded",
+            returncode=1,
+        )
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        assert exc_info.value.stdout == error_json
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_run_passes_timeout_to_subprocess(self, mock_exec, runner):
         """run() should pass self.timeout to run_subprocess()."""
         mock_exec.return_value = create_mock_process(stdout="output")

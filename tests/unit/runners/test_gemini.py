@@ -317,6 +317,312 @@ class TestGeminiRunnerErrorRecovery:
         assert "Error: 401 Unauthorized" in exc_info.value.stderr
 
 
+class TestGeminiRunnerAPIErrorExtraction:
+    """Test GeminiRunner extracts structured API error details from error JSON."""
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_gemini_error_json_surfaces_in_subprocess_error(self, mock_exec):
+        """429 rate limit error JSON should produce a structured SubprocessError message."""
+        error_stdout = (
+            '{"error": {"code": 429, "message": "Quota exceeded for quota metric",'
+            ' "status": "RESOURCE_EXHAUSTED"}}'
+        )
+        mock_exec.return_value = create_mock_process(
+            stdout=error_stdout,
+            stderr="",
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        # The primary message (args[0]) should contain structured error info,
+        # not just raw JSON buried in stdout
+        primary_message = exc_info.value.args[0]
+        assert "429" in primary_message
+        assert "RESOURCE_EXHAUSTED" in primary_message
+        assert "Gemini API error" in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_gemini_error_json_401_surfaces_auth_failure(self, mock_exec):
+        """401 auth error JSON should produce a structured SubprocessError message."""
+        error_stdout = (
+            '{"error": {"code": 401, "message": "API key not valid", "status": "UNAUTHENTICATED"}}'
+        )
+        mock_exec.return_value = create_mock_process(
+            stdout=error_stdout,
+            stderr="",
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "401" in primary_message
+        assert "UNAUTHENTICATED" in primary_message
+        assert "Gemini API error" in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_gemini_error_json_preserves_returncode(self, mock_exec):
+        """SubprocessError from error JSON should preserve returncode and stdout."""
+        error_stdout = (
+            '{"error": {"code": 429, "message": "Rate limited", "status": "RESOURCE_EXHAUSTED"}}'
+        )
+        mock_exec.return_value = create_mock_process(
+            stdout=error_stdout,
+            stderr="rate limit hit",
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        assert exc_info.value.returncode == 1
+        assert exc_info.value.stdout == error_stdout
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_stderr_json_fallback_when_stdout_empty(self, mock_exec):
+        """When stdout is empty but stderr has JSON error block, extracts structured error."""
+        stderr_with_json = (
+            "Gemini CLI error log\n"
+            "Stack trace...\n"
+            '{"error": {"code": 429, "message": "Quota exceeded", "status": "RESOURCE_EXHAUSTED"}}'
+        )
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr=stderr_with_json,
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "429" in primary_message
+        assert "RESOURCE_EXHAUSTED" in primary_message
+        assert "Gemini API error" in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_stdout_takes_priority_over_stderr_json(self, mock_exec):
+        """When both stdout and stderr have JSON error, stdout wins (richer API format)."""
+        stdout_error = (
+            '{"error": {"code": 429, "message": "Quota exceeded for stdout",'
+            ' "status": "RESOURCE_EXHAUSTED"}}'
+        )
+        stderr_with_json = (
+            "log line\n"
+            '{"error": {"code": 1, "message": "Generic exit code error", "status": "UNKNOWN"}}'
+        )
+        mock_exec.return_value = create_mock_process(
+            stdout=stdout_error,
+            stderr=stderr_with_json,
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "429" in primary_message
+        assert "Quota exceeded for stdout" in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_no_json_anywhere_falls_through_to_generic(self, mock_exec):
+        """When neither stdout nor stderr has JSON, falls through to generic SubprocessError."""
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr="Connection refused: unable to reach API",
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "Gemini API error" not in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_malformed_stderr_json_falls_through(self, mock_exec):
+        """When stderr has truncated/malformed JSON, falls through gracefully without crash."""
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr='Some error\n{"error": {"code": 429, "message": "truncated...',
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "Gemini API error" not in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_non_dict_json_stdout_does_not_crash(self, mock_exec):
+        """Non-dict JSON in stdout (e.g. array) must not raise AttributeError.
+
+        Previously, _try_extract_error called json.loads(stdout) and then data.get("error")
+        without checking isinstance(data, dict), crashing on list/number JSON.
+        """
+        mock_exec.return_value = create_mock_process(
+            stdout="[1, 2, 3]",
+            stderr="something went wrong",
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        # Should fall through to generic error, NOT crash with AttributeError
+        primary_message = exc_info.value.args[0]
+        assert "Gemini API error" not in primary_message
+        assert "CLI command failed" in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_structured_error_includes_command(self, mock_exec):
+        """SubprocessError raised from structured API error JSON should include the command."""
+        error_stdout = (
+            '{"error": {"code": 429, "message": "Rate limited", "status": "RESOURCE_EXHAUSTED"}}'
+        )
+        mock_exec.return_value = create_mock_process(
+            stdout=error_stdout,
+            stderr="",
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        # The command field should be populated (not None), matching generic error behavior
+        assert exc_info.value.command is not None
+        assert "gemini" in exc_info.value.command[0]
+
+
+class TestGeminiRunnerScalarJson:
+    """Test parse_output handles scalar JSON values (null, number) without TypeError."""
+
+    def test_parse_output_null_json_raises_parse_error(self):
+        """json.loads('null') returns None; 'response' not in None raises TypeError without fix."""
+        runner = GeminiRunner()
+
+        with pytest.raises(ParseError) as exc_info:
+            runner.parse_output("null", stderr="")
+
+        assert "Missing 'response' field" in str(exc_info.value)
+
+    def test_parse_output_number_json_raises_parse_error(self):
+        """json.loads('42') returns int; 'response' not in 42 raises TypeError without fix."""
+        runner = GeminiRunner()
+
+        with pytest.raises(ParseError) as exc_info:
+            runner.parse_output("42", stderr="")
+
+        assert "Missing 'response' field" in str(exc_info.value)
+
+
+class TestGeminiRunnerDualFieldRecovery:
+    """Test _recover_from_error behaviour when stdout has both 'response' and 'error'."""
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_response_field_wins_over_error_field_on_nonzero_exit(self, mock_exec):
+        """When stdout has both 'response' and 'error', recovery path returns the response.
+
+        Documents the 'recovery wins' contract: parse_output runs before _try_extract_error
+        in _recover_from_error, so a valid 'response' field takes priority.
+        """
+        dual_field_stdout = (
+            '{"response": "Partial answer", "error": {"code": 429, "message": "quota"}}'
+        )
+        mock_exec.return_value = create_mock_process(
+            stdout=dual_field_stdout,
+            stderr="",
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        response = await runner.run(request)
+
+        assert response.output == "Partial answer"
+        assert response.metadata.get("recovered_from_error") is True
+
+
+class TestGeminiRunnerExtractLastJson:
+    """Test GeminiRunner._extract_last_json_object() helper staticmethod."""
+
+    def test_extracts_json_from_end_of_mixed_text(self):
+        """Extracts the JSON object appended at the end of a mixed-content string."""
+        text = 'log line 1\nlog line 2\n{"key": "value"}'
+        result = GeminiRunner._extract_last_json_object(text)
+        assert result == {"key": "value"}
+
+    def test_returns_none_for_no_json(self):
+        """Returns None when the text contains no JSON object."""
+        result = GeminiRunner._extract_last_json_object("just plain text with no JSON")
+        assert result is None
+
+    def test_returns_none_for_empty_string(self):
+        """Returns None for empty string input."""
+        result = GeminiRunner._extract_last_json_object("")
+        assert result is None
+
+    def test_handles_nested_braces(self):
+        """Correctly handles JSON with nested objects (brace-depth matching)."""
+        text = 'preamble\n{"outer": {"inner": "value", "count": 42}}'
+        result = GeminiRunner._extract_last_json_object(text)
+        assert result == {"outer": {"inner": "value", "count": 42}}
+
+    def test_picks_last_json_when_multiple_present(self):
+        """Returns the last JSON object when multiple are present in the text."""
+        text = '{"first": 1}\nsome text\n{"second": 2}'
+        result = GeminiRunner._extract_last_json_object(text)
+        assert result == {"second": 2}
+
+    def test_ignores_non_dict_json(self):
+        """Returns None when the extracted JSON is not a dict (e.g., an array)."""
+        text = "text before\n[1, 2, 3]"
+        result = GeminiRunner._extract_last_json_object(text)
+        assert result is None
+
+    def test_known_limitation_braces_in_string_values(self):
+        """Documents known limitation: brace chars in string values confuse depth tracking.
+
+        Balanced brace chars (e.g. '{foo}') cancel out and accidentally find the right
+        boundary; unbalanced ones (e.g. lone '}') cause json.loads to fail and return None.
+        In practice, Google API error messages rarely contain literal brace characters.
+        """
+        # Balanced braces in string values — algorithm accidentally gets the right answer
+        text = 'log\n{"key": "{balanced}"}'
+        result = GeminiRunner._extract_last_json_object(text)
+        assert result == {"key": "{balanced}"}
+
+        # Unbalanced closing brace in string value — algorithm mis-identifies boundary,
+        # json.loads fails, returns None (falls through to generic SubprocessError)
+        text_unbalanced = 'log\n{"key": "has a } brace"}'
+        result_unbalanced = GeminiRunner._extract_last_json_object(text_unbalanced)
+        # NOTE: Returns None due to brace-depth mis-parsing. Raw stderr is still
+        # preserved in the generic SubprocessError at base.py:99-105.
+        assert result_unbalanced is None
+
+
 class TestGeminiRunnerFileReferences:
     """Test GeminiRunner file references handling."""
 
