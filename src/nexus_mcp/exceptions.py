@@ -29,6 +29,7 @@ class SubprocessError(NexusMCPError):
         stderr: str = "",
         command: list[str] | None = None,
         returncode: int | None = None,
+        stdout: str = "",
     ):
         """Initialize SubprocessError.
 
@@ -37,11 +38,23 @@ class SubprocessError(NexusMCPError):
             stderr: Standard error output from the subprocess (default: "").
             command: The command that failed (default: None).
             returncode: The subprocess exit code (default: None).
+            stdout: Standard output from the subprocess (default: "").
         """
         super().__init__(message)
         self.stderr = stderr
         self.command = command
         self.returncode = returncode
+        self.stdout = stdout
+
+    def __str__(self) -> str:
+        parts = [self.args[0]]
+        if self.returncode is not None:
+            parts.append(f"returncode={self.returncode}")
+        if self.stderr:
+            parts.append(f"stderr='{self.stderr}'")
+        if self.stdout:
+            parts.append(f"stdout='{self.stdout}'")
+        return " | ".join(parts)
 
 
 class ParseError(NexusMCPError):

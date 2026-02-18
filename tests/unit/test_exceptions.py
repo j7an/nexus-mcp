@@ -89,3 +89,43 @@ def test_configuration_error_default_config_key():
     """ConfigurationError config_key defaults to None."""
     err = ConfigurationError("Bad config")
     assert err.config_key is None
+
+
+def test_subprocess_error_accepts_stdout():
+    """SubprocessError should store stdout attribute."""
+    err = SubprocessError("Command failed", stdout="output data")
+    assert err.stdout == "output data"
+
+
+def test_subprocess_error_stdout_defaults_to_empty():
+    """SubprocessError stdout defaults to empty string."""
+    err = SubprocessError("Command failed")
+    assert err.stdout == ""
+
+
+def test_subprocess_error_str_includes_returncode():
+    """str(SubprocessError) should include returncode when set."""
+    err = SubprocessError("Command failed", returncode=1)
+    assert "returncode=1" in str(err)
+
+
+def test_subprocess_error_str_includes_stderr():
+    """str(SubprocessError) should include stderr when non-empty."""
+    err = SubprocessError("Command failed", stderr="some error")
+    assert "stderr='some error'" in str(err)
+
+
+def test_subprocess_error_str_includes_stdout():
+    """str(SubprocessError) should include stdout when non-empty."""
+    err = SubprocessError("Command failed", stdout="some output")
+    assert "stdout='some output'" in str(err)
+
+
+def test_subprocess_error_str_omits_empty_fields():
+    """str(SubprocessError) should not include labels for empty/None fields."""
+    err = SubprocessError("Command failed")
+    result = str(err)
+    assert "returncode" not in result
+    assert "stderr" not in result
+    assert "stdout" not in result
+    assert result == "Command failed"

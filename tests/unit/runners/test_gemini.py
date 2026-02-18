@@ -317,6 +317,199 @@ class TestGeminiRunnerErrorRecovery:
         assert "Error: 401 Unauthorized" in exc_info.value.stderr
 
 
+class TestGeminiRunnerAPIErrorExtraction:
+    """Test GeminiRunner extracts structured API error details from error JSON."""
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_gemini_error_json_surfaces_in_subprocess_error(self, mock_exec):
+        """429 rate limit error JSON should produce a structured SubprocessError message."""
+        error_stdout = (
+            '{"error": {"code": 429, "message": "Quota exceeded for quota metric",'
+            ' "status": "RESOURCE_EXHAUSTED"}}'
+        )
+        mock_exec.return_value = create_mock_process(
+            stdout=error_stdout,
+            stderr="",
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        # The primary message (args[0]) should contain structured error info,
+        # not just raw JSON buried in stdout
+        primary_message = exc_info.value.args[0]
+        assert "429" in primary_message
+        assert "RESOURCE_EXHAUSTED" in primary_message
+        assert "Gemini API error" in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_gemini_error_json_401_surfaces_auth_failure(self, mock_exec):
+        """401 auth error JSON should produce a structured SubprocessError message."""
+        error_stdout = (
+            '{"error": {"code": 401, "message": "API key not valid", "status": "UNAUTHENTICATED"}}'
+        )
+        mock_exec.return_value = create_mock_process(
+            stdout=error_stdout,
+            stderr="",
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "401" in primary_message
+        assert "UNAUTHENTICATED" in primary_message
+        assert "Gemini API error" in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_gemini_error_json_preserves_returncode(self, mock_exec):
+        """SubprocessError from error JSON should preserve returncode and stdout."""
+        error_stdout = (
+            '{"error": {"code": 429, "message": "Rate limited", "status": "RESOURCE_EXHAUSTED"}}'
+        )
+        mock_exec.return_value = create_mock_process(
+            stdout=error_stdout,
+            stderr="rate limit hit",
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        assert exc_info.value.returncode == 1
+        assert exc_info.value.stdout == error_stdout
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_stderr_json_fallback_when_stdout_empty(self, mock_exec):
+        """When stdout is empty but stderr has JSON error block, extracts structured error."""
+        stderr_with_json = (
+            "Gemini CLI error log\n"
+            "Stack trace...\n"
+            '{"error": {"code": 429, "message": "Quota exceeded", "status": "RESOURCE_EXHAUSTED"}}'
+        )
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr=stderr_with_json,
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "429" in primary_message
+        assert "RESOURCE_EXHAUSTED" in primary_message
+        assert "Gemini API error" in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_stdout_takes_priority_over_stderr_json(self, mock_exec):
+        """When both stdout and stderr have JSON error, stdout wins (richer API format)."""
+        stdout_error = (
+            '{"error": {"code": 429, "message": "Quota exceeded for stdout",'
+            ' "status": "RESOURCE_EXHAUSTED"}}'
+        )
+        stderr_with_json = (
+            "log line\n"
+            '{"error": {"code": 1, "message": "Generic exit code error", "status": "UNKNOWN"}}'
+        )
+        mock_exec.return_value = create_mock_process(
+            stdout=stdout_error,
+            stderr=stderr_with_json,
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "429" in primary_message
+        assert "Quota exceeded for stdout" in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_no_json_anywhere_falls_through_to_generic(self, mock_exec):
+        """When neither stdout nor stderr has JSON, falls through to generic SubprocessError."""
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr="Connection refused: unable to reach API",
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "Gemini API error" not in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_malformed_stderr_json_falls_through(self, mock_exec):
+        """When stderr has truncated/malformed JSON, falls through gracefully without crash."""
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr='Some error\n{"error": {"code": 429, "message": "truncated...',
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "Gemini API error" not in primary_message
+
+
+class TestGeminiRunnerExtractLastJson:
+    """Test GeminiRunner._extract_last_json_object() helper staticmethod."""
+
+    def test_extracts_json_from_end_of_mixed_text(self):
+        """Extracts the JSON object appended at the end of a mixed-content string."""
+        text = 'log line 1\nlog line 2\n{"key": "value"}'
+        result = GeminiRunner._extract_last_json_object(text)
+        assert result == {"key": "value"}
+
+    def test_returns_none_for_no_json(self):
+        """Returns None when the text contains no JSON object."""
+        result = GeminiRunner._extract_last_json_object("just plain text with no JSON")
+        assert result is None
+
+    def test_returns_none_for_empty_string(self):
+        """Returns None for empty string input."""
+        result = GeminiRunner._extract_last_json_object("")
+        assert result is None
+
+    def test_handles_nested_braces(self):
+        """Correctly handles JSON with nested objects (brace-depth matching)."""
+        text = 'preamble\n{"outer": {"inner": "value", "count": 42}}'
+        result = GeminiRunner._extract_last_json_object(text)
+        assert result == {"outer": {"inner": "value", "count": 42}}
+
+    def test_picks_last_json_when_multiple_present(self):
+        """Returns the last JSON object when multiple are present in the text."""
+        text = '{"first": 1}\nsome text\n{"second": 2}'
+        result = GeminiRunner._extract_last_json_object(text)
+        assert result == {"second": 2}
+
+    def test_ignores_non_dict_json(self):
+        """Returns None when the extracted JSON is not a dict (e.g., an array)."""
+        text = "text before\n[1, 2, 3]"
+        result = GeminiRunner._extract_last_json_object(text)
+        assert result is None
+
+
 class TestGeminiRunnerFileReferences:
     """Test GeminiRunner file references handling."""
 

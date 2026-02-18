@@ -11,11 +11,13 @@ Expected JSON response:
     {"response": "...", "stats": {...}}  # stats field is optional
 """
 
+import contextlib
 import json
+from typing import Any
 
 from nexus_mcp.cli_detector import detect_cli, get_cli_capabilities, get_cli_version
 from nexus_mcp.config import get_agent_env
-from nexus_mcp.exceptions import CLINotFoundError, ParseError
+from nexus_mcp.exceptions import CLINotFoundError, ParseError, SubprocessError
 from nexus_mcp.runners.base import AbstractRunner
 from nexus_mcp.types import AgentResponse, PromptRequest
 
@@ -149,13 +151,88 @@ class GeminiRunner(AbstractRunner):
             metadata=metadata,
         )
 
+    @staticmethod
+    def _extract_last_json_object(text: str) -> dict[str, Any] | None:
+        """Find and parse the last JSON object in a multi-line string.
+
+        Uses brace-depth matching (no regex) to locate the last complete {...}
+        block. Handles Gemini CLI's pattern of appending a JSON error block at
+        the end of stderr that may contain log lines and stack traces.
+
+        Args:
+            text: String that may contain JSON, possibly mixed with other content.
+
+        Returns:
+            Parsed dict if a valid JSON object is found, None otherwise.
+        """
+        if not text:
+            return None
+
+        last_close = text.rfind("}")
+        if last_close == -1:
+            return None
+
+        depth = 0
+        for i in range(last_close, -1, -1):
+            if text[i] == "}":
+                depth += 1
+            elif text[i] == "{":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        parsed = json.loads(text[i : last_close + 1])
+                        return parsed if isinstance(parsed, dict) else None
+                    except (json.JSONDecodeError, ValueError):
+                        return None
+
+        return None
+
+    def _try_extract_error(self, stdout: str, stderr: str, returncode: int) -> None:
+        """Extract and raise a structured API error from stdout or stderr JSON.
+
+        Looks for Gemini API error format: {"error": {"code": N, "message": "...", "status": "..."}}
+        Tries stdout first (richer API error format); falls back to stderr JSON extraction.
+
+        Args:
+            stdout: Subprocess stdout to inspect first.
+            stderr: Subprocess stderr used as fallback JSON source and passed through to error.
+            returncode: Exit code (passed through to SubprocessError).
+
+        Raises:
+            SubprocessError: If stdout or stderr contains a Gemini API error object.
+        """
+        data: dict[str, Any] | None = None
+        with contextlib.suppress(json.JSONDecodeError, ValueError):
+            data = json.loads(stdout)
+
+        if data is None:
+            data = self._extract_last_json_object(stderr)
+
+        if data is None:
+            return
+
+        error = data.get("error")
+        if not isinstance(error, dict):
+            return
+
+        code = error.get("code", "unknown")
+        message = error.get("message", "unknown error")
+        status = error.get("status", "")
+        raise SubprocessError(
+            f"Gemini API error {code}: {message} ({status})",
+            stderr=stderr,
+            stdout=stdout,
+            returncode=returncode,
+        )
+
     def _recover_from_error(
         self, stdout: str, stderr: str, returncode: int
     ) -> AgentResponse | None:
         """Attempt to parse stdout even on non-zero exit code.
 
         Gemini CLI sometimes produces valid JSON in stdout even when
-        encountering errors (e.g., rate limits, warnings).
+        encountering errors (e.g., rate limits, warnings). If stdout contains
+        a structured API error object, raises a descriptive SubprocessError.
 
         Args:
             stdout: Subprocess stdout
@@ -164,6 +241,9 @@ class GeminiRunner(AbstractRunner):
 
         Returns:
             Recovered AgentResponse if stdout is valid JSON, None otherwise
+
+        Raises:
+            SubprocessError: If stdout contains a Gemini API error object.
         """
         try:
             response = self.parse_output(stdout, stderr)
@@ -180,5 +260,6 @@ class GeminiRunner(AbstractRunner):
                 metadata=metadata,
             )
         except Exception:
-            # Recovery failed - let AbstractRunner raise SubprocessError
-            return None
+            # Try to extract structured API error; raises SubprocessError if found
+            self._try_extract_error(stdout, stderr, returncode)
+            return None  # Falls through to base.py's generic SubprocessError

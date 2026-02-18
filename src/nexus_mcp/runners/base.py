@@ -101,6 +101,7 @@ class AbstractRunner(ABC):
                 stderr=result.stderr,
                 command=command,
                 returncode=result.returncode,
+                stdout=result.stdout,
             )
 
         # Step 4: Parse output
