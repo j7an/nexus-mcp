@@ -99,7 +99,7 @@ class GeminiRunner(AbstractRunner):
         """Parse Gemini CLI JSON output into AgentResponse.
 
         Args:
-            stdout: JSON output from Gemini CLI.
+            stdout: JSON output from Gemini CLI (may contain Node.js warning prefix).
             stderr: Standard error output (not used for parsing).
 
         Returns:
@@ -116,15 +116,24 @@ class GeminiRunner(AbstractRunner):
         Expected JSON format:
             {"response": "answer text", "stats": {...}}
             # stats field is optional
+
+        Noisy stdout handling:
+            Gemini CLI v0.29.0+ (Node.js-based) may prepend deprecation warnings and
+            log lines before the JSON response. If json.loads() fails, falls back to
+            _extract_last_json_object() which uses brace-depth matching to locate the
+            JSON block within the mixed-content stdout.
         """
-        # Parse JSON
+        # Parse JSON — fast path for clean stdout
         try:
             data = json.loads(stdout)
-        except json.JSONDecodeError as e:
-            raise ParseError(
-                f"Invalid JSON from Gemini CLI: {e}",
-                raw_output=stdout,
-            ) from None
+        except json.JSONDecodeError:
+            # Fallback: extract JSON from noisy output (Node.js warnings, log lines)
+            data = self._extract_last_json_object(stdout)
+            if data is None:
+                raise ParseError(
+                    "Invalid JSON from Gemini CLI (stdout may contain non-JSON prefix)",
+                    raw_output=stdout,
+                ) from None
 
         # Validate 'response' field exists (guard against scalar JSON like null or 42)
         if not isinstance(data, dict) or "response" not in data:
