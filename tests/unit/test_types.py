@@ -176,3 +176,78 @@ def test_agent_response_with_metadata_does_not_mutate_original():
     original.with_metadata(k=999)
 
     assert original.metadata == {"k": 1}
+
+
+# ---------------------------------------------------------------------------
+# AgentTask / AgentTaskResult / MultiPromptResponse tests
+# ---------------------------------------------------------------------------
+
+
+def test_agent_task_requires_agent_and_prompt():
+    from nexus_mcp.types import AgentTask
+
+    task = AgentTask(agent="gemini", prompt="Hello")
+    assert task.agent == "gemini"
+    assert task.prompt == "Hello"
+    assert task.label is None
+    assert task.execution_mode == "default"
+
+
+def test_agent_task_rejects_empty_agent():
+    from nexus_mcp.types import AgentTask
+
+    with pytest.raises(ValidationError):
+        AgentTask(agent="", prompt="Hello")
+
+
+def test_agent_task_rejects_empty_prompt():
+    from nexus_mcp.types import AgentTask
+
+    with pytest.raises(ValidationError):
+        AgentTask(agent="gemini", prompt="")
+
+
+def test_agent_task_result_success():
+    from nexus_mcp.types import AgentTaskResult
+
+    result = AgentTaskResult(label="gemini", output="response text")
+    assert result.success is True
+    assert result.output == "response text"
+    assert result.error is None
+
+
+def test_agent_task_result_error():
+    from nexus_mcp.types import AgentTaskResult
+
+    result = AgentTaskResult(label="gemini", error="something failed")
+    assert result.success is False
+    assert result.error == "something failed"
+    assert result.output is None
+
+
+def test_agent_task_result_rejects_both_output_and_error():
+    from nexus_mcp.types import AgentTaskResult
+
+    with pytest.raises(ValidationError):
+        AgentTaskResult(label="gemini", output="ok", error="fail")
+
+
+def test_agent_task_result_rejects_neither_output_nor_error():
+    from nexus_mcp.types import AgentTaskResult
+
+    with pytest.raises(ValidationError):
+        AgentTaskResult(label="gemini")
+
+
+def test_multi_prompt_response_counts():
+    from nexus_mcp.types import AgentTaskResult, MultiPromptResponse
+
+    results = [
+        AgentTaskResult(label="a", output="ok"),
+        AgentTaskResult(label="b", error="fail"),
+        AgentTaskResult(label="c", output="ok"),
+    ]
+    response = MultiPromptResponse(results=results)
+    assert response.total == 3
+    assert response.succeeded == 2
+    assert response.failed == 1

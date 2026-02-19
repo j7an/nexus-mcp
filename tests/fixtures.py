@@ -3,7 +3,7 @@ import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
-from nexus_mcp.types import AgentResponse, PromptRequest, SubprocessResult
+from nexus_mcp.types import AgentResponse, AgentTask, PromptRequest, SubprocessResult
 
 # ---------------------------------------------------------------------------
 # Reusable test constants
@@ -137,6 +137,19 @@ def make_agent_response(**overrides: Any) -> AgentResponse:
         "raw_output": GEMINI_JSON_RESPONSE,
     }
     return AgentResponse(**(defaults | overrides))
+
+
+def make_agent_task(**overrides: Any) -> AgentTask:
+    """Create an AgentTask with sensible defaults.
+
+    Usage::
+
+        task = make_agent_task()                              # defaults
+        task = make_agent_task(agent="codex")                 # override agent
+        task = make_agent_task(prompt="Do X", label="my-task")
+    """
+    defaults: dict[str, Any] = {"agent": "gemini", "prompt": "Hello"}
+    return AgentTask(**(defaults | overrides))
 
 
 def make_subprocess_result(**overrides: Any) -> SubprocessResult:
