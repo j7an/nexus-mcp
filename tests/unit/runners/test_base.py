@@ -183,3 +183,33 @@ class TestAbstractRunner:
             mock_run.assert_awaited_once()
             _, kwargs = mock_run.call_args
             assert kwargs.get("timeout") == runner.timeout
+
+    def test_make_recovered_response_stamps_metadata(self, runner):
+        """_make_recovered_response adds recovery keys to a copy of the response."""
+        original = AgentResponse(agent="test", output="ok", raw_output="{}", metadata={"k": 1})
+
+        recovered = runner._make_recovered_response(original, returncode=2, stderr="err text")
+
+        assert recovered.metadata["recovered_from_error"] is True
+        assert recovered.metadata["original_exit_code"] == 2
+        assert recovered.metadata["stderr"] == "err text"
+        # Existing metadata preserved
+        assert recovered.metadata["k"] == 1
+
+    def test_make_recovered_response_does_not_mutate_original(self, runner):
+        """_make_recovered_response leaves the original response unchanged."""
+        original = AgentResponse(agent="test", output="ok", raw_output="{}", metadata={"k": 1})
+
+        runner._make_recovered_response(original, returncode=1, stderr="err")
+
+        assert "recovered_from_error" not in original.metadata
+
+    def test_try_extract_error_default_is_noop(self, runner):
+        """Default _try_extract_error returns None and does not raise."""
+        result = runner._try_extract_error(
+            stdout='{"error": {"code": 429}}',
+            stderr="rate limit",
+            returncode=1,
+            command=["test-cli"],
+        )
+        assert result is None

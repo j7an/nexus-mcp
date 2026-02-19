@@ -18,8 +18,13 @@ class RunnerFactory:
     """Factory for creating CLI agent runners.
 
     Creates appropriate runner instances based on agent name.
-    Uses match/case for clean agent dispatch.
+    Uses a registry dict for O(1) lookup and a single source of truth for
+    supported agents (add to _REGISTRY to support new CLIs).
     """
+
+    _REGISTRY: dict[str, type[AbstractRunner]] = {
+        "gemini": GeminiRunner,
+    }
 
     @staticmethod
     def create(agent: str) -> AbstractRunner:
@@ -37,20 +42,19 @@ class RunnerFactory:
         Example:
             runner = RunnerFactory.create("gemini")  # → GeminiRunner instance
         """
-        match agent:
-            case "gemini":
-                return GeminiRunner()
-            case _:
-                raise UnsupportedAgentError(agent)
+        runner_class = RunnerFactory._REGISTRY.get(agent)
+        if runner_class is None:
+            raise UnsupportedAgentError(agent)
+        return runner_class()
 
     @staticmethod
     def list_agents() -> list[str]:
-        """List all supported agent names.
+        """List all supported agent names in sorted order.
 
         Returns:
-            List of agent names that can be passed to create().
+            Sorted list of agent names that can be passed to create().
 
         Example:
             RunnerFactory.list_agents()  # → ["gemini"]
         """
-        return ["gemini"]
+        return sorted(RunnerFactory._REGISTRY)

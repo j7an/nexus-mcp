@@ -18,6 +18,7 @@ from typing import Any
 from nexus_mcp.cli_detector import detect_cli, get_cli_capabilities, get_cli_version
 from nexus_mcp.config import get_agent_env
 from nexus_mcp.exceptions import CLINotFoundError, ParseError, SubprocessError
+from nexus_mcp.parser import extract_last_json_array, extract_last_json_object
 from nexus_mcp.runners.base import AbstractRunner
 from nexus_mcp.types import AgentResponse, PromptRequest
 
@@ -128,7 +129,7 @@ class GeminiRunner(AbstractRunner):
             data = json.loads(stdout)
         except json.JSONDecodeError:
             # Fallback: extract JSON from noisy output (Node.js warnings, log lines)
-            data = self._extract_last_json_object(stdout)
+            data = extract_last_json_object(stdout)
             if data is None:
                 raise ParseError(
                     "Invalid JSON from Gemini CLI (stdout may contain non-JSON prefix)",
@@ -160,85 +161,6 @@ class GeminiRunner(AbstractRunner):
             metadata=metadata,
         )
 
-    @staticmethod
-    def _extract_last_json_object(text: str) -> dict[str, Any] | None:
-        """Find and parse the last JSON object in a multi-line string.
-
-        Uses brace-depth matching (no regex) to locate the last complete {...}
-        block. Handles Gemini CLI's pattern of appending a JSON error block at
-        the end of stderr that may contain log lines and stack traces.
-
-        Args:
-            text: String that may contain JSON, possibly mixed with other content.
-
-        Returns:
-            Parsed dict if a valid JSON object is found, None otherwise.
-        """
-        if not text:
-            return None
-
-        last_close = text.rfind("}")
-        if last_close == -1:
-            return None
-
-        depth = 0
-        for i in range(last_close, -1, -1):
-            if text[i] == "}":
-                depth += 1
-            elif text[i] == "{":
-                depth -= 1
-                if depth == 0:
-                    try:
-                        parsed = json.loads(text[i : last_close + 1])
-                        return parsed if isinstance(parsed, dict) else None
-                    except (json.JSONDecodeError, ValueError, RecursionError):
-                        return None
-
-        return None
-
-    @staticmethod
-    def _extract_last_json_array(text: str) -> dict[str, Any] | None:
-        """Find and parse the last JSON array in a multi-line string, returning its first element.
-
-        Scans rightward-to-left through ']' positions using bracket-depth matching.
-        Handles Gemini CLI's GaxiosError format where errors are wrapped in an array:
-        [{"error": {...}}]. Skips over ']' characters that appear inside string values
-        (e.g. "[object Object]" in the session summary) by trying each candidate in turn.
-
-        Args:
-            text: String that may contain a JSON array, possibly mixed with other content.
-
-        Returns:
-            First element of the parsed array if it's a dict, None otherwise.
-        """
-        if not text:
-            return None
-
-        search_end = len(text)
-        while True:
-            last_close = text.rfind("]", 0, search_end)
-            if last_close == -1:
-                return None
-
-            depth = 0
-            start = -1
-            for i in range(last_close, -1, -1):
-                if text[i] == "]":
-                    depth += 1
-                elif text[i] == "[":
-                    depth -= 1
-                    if depth == 0:
-                        start = i
-                        break
-
-            if start != -1:
-                with contextlib.suppress(json.JSONDecodeError, ValueError, RecursionError):
-                    parsed = json.loads(text[start : last_close + 1])
-                    if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
-                        return parsed[0]
-
-            search_end = last_close
-
     def _try_extract_error(
         self,
         stdout: str,
@@ -267,9 +189,9 @@ class GeminiRunner(AbstractRunner):
                 data = parsed
 
         if data is None:
-            data = self._extract_last_json_array(stderr)
+            data = extract_last_json_array(stderr)
         if data is None:
-            data = self._extract_last_json_object(stderr)
+            data = extract_last_json_object(stderr)
 
         if data is None:
             return
@@ -314,18 +236,7 @@ class GeminiRunner(AbstractRunner):
         """
         try:
             response = self.parse_output(stdout, stderr)
-            # Mark as recovered in metadata
-            metadata = response.metadata.copy()
-            metadata["recovered_from_error"] = True
-            metadata["original_exit_code"] = returncode
-            metadata["stderr"] = stderr
-
-            return AgentResponse(
-                agent=response.agent,
-                output=response.output,
-                raw_output=response.raw_output,
-                metadata=metadata,
-            )
+            return self._make_recovered_response(response, returncode, stderr)
         except ParseError:
             # Try to extract structured API error; raises SubprocessError if found
             self._try_extract_error(stdout, stderr, returncode, command)

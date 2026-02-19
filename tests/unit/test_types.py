@@ -144,3 +144,35 @@ def test_prompt_request_file_refs_must_be_strings():
             prompt="test",
             file_refs=["valid.py", 123, None],  # Invalid types
         )
+
+
+def test_agent_response_with_metadata_adds_keys():
+    """with_metadata() returns a new response with additional metadata keys."""
+    from nexus_mcp.types import AgentResponse
+
+    original = AgentResponse(agent="gemini", output="hello", raw_output="{}", metadata={"k": 1})
+    updated = original.with_metadata(new_key="value", count=42)
+
+    assert updated.metadata == {"k": 1, "new_key": "value", "count": 42}
+
+
+def test_agent_response_with_metadata_preserves_other_fields():
+    """with_metadata() preserves agent, output, and raw_output unchanged."""
+    from nexus_mcp.types import AgentResponse
+
+    original = AgentResponse(agent="gemini", output="hello", raw_output="{}")
+    updated = original.with_metadata(x=1)
+
+    assert updated.agent == original.agent
+    assert updated.output == original.output
+    assert updated.raw_output == original.raw_output
+
+
+def test_agent_response_with_metadata_does_not_mutate_original():
+    """with_metadata() returns a new object; the original is unchanged."""
+    from nexus_mcp.types import AgentResponse
+
+    original = AgentResponse(agent="gemini", output="hello", raw_output="{}", metadata={"k": 1})
+    original.with_metadata(k=999)
+
+    assert original.metadata == {"k": 1}
