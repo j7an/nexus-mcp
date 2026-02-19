@@ -148,19 +148,48 @@ class AbstractRunner(ABC):
         truncated_output = truncated_bytes.decode("utf-8", errors="ignore")
         truncated_output += suffix
 
-        # Update metadata
-        metadata = response.metadata.copy()
-        metadata["truncated"] = True
-        metadata["full_output_path"] = temp_file_name
-        metadata["original_size_bytes"] = output_size
-        metadata["truncated_size_bytes"] = len(truncated_output.encode("utf-8"))
-
-        return AgentResponse(
-            agent=response.agent,
-            output=truncated_output,
-            raw_output=response.raw_output,
-            metadata=metadata,
+        return response.model_copy(update={"output": truncated_output}).with_metadata(
+            truncated=True,
+            full_output_path=temp_file_name,
+            original_size_bytes=output_size,
+            truncated_size_bytes=len(truncated_output.encode("utf-8")),
         )
+
+    def _make_recovered_response(
+        self, response: AgentResponse, returncode: int, stderr: str
+    ) -> AgentResponse:
+        """Stamp recovery metadata onto a response.
+
+        Args:
+            response: The successfully parsed AgentResponse from a failed subprocess call.
+            returncode: The non-zero exit code of the subprocess.
+            stderr: The subprocess stderr (preserved for caller inspection).
+
+        Returns:
+            A new AgentResponse with recovery metadata added.
+        """
+        return response.with_metadata(
+            recovered_from_error=True,
+            original_exit_code=returncode,
+            stderr=stderr,
+        )
+
+    def _try_extract_error(
+        self, stdout: str, stderr: str, returncode: int, command: list[str] | None = None
+    ) -> None:
+        """Hook for subclasses to raise structured errors from CLI output.
+
+        Called by _recover_from_error implementations when parse_output fails.
+        Default: no-op. Override to inspect stdout/stderr for agent-specific
+        error formats and raise SubprocessError with structured details.
+
+        Args:
+            stdout: Subprocess stdout to inspect.
+            stderr: Subprocess stderr to inspect.
+            returncode: Exit code (for forwarding to SubprocessError if raised).
+            command: The CLI command that was run (for forwarding to SubprocessError).
+        """
+        return
 
     def _recover_from_error(
         self, stdout: str, stderr: str, returncode: int, command: list[str] | None = None

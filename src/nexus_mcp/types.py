@@ -35,6 +35,12 @@ class AgentResponse(BaseModel):
     raw_output: str
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    def with_metadata(self, **updates: Any) -> "AgentResponse":
+        """Return a copy with updated metadata keys."""
+        metadata = self.metadata.copy()
+        metadata.update(updates)
+        return self.model_copy(update={"metadata": metadata})
+
 
 class SubprocessResult(BaseModel):
     stdout: str

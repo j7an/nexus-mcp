@@ -566,64 +566,6 @@ class TestGeminiRunnerDualFieldRecovery:
         assert response.metadata.get("recovered_from_error") is True
 
 
-class TestGeminiRunnerExtractLastJson:
-    """Test GeminiRunner._extract_last_json_object() helper staticmethod."""
-
-    def test_extracts_json_from_end_of_mixed_text(self):
-        """Extracts the JSON object appended at the end of a mixed-content string."""
-        text = 'log line 1\nlog line 2\n{"key": "value"}'
-        result = GeminiRunner._extract_last_json_object(text)
-        assert result == {"key": "value"}
-
-    def test_returns_none_for_no_json(self):
-        """Returns None when the text contains no JSON object."""
-        result = GeminiRunner._extract_last_json_object("just plain text with no JSON")
-        assert result is None
-
-    def test_returns_none_for_empty_string(self):
-        """Returns None for empty string input."""
-        result = GeminiRunner._extract_last_json_object("")
-        assert result is None
-
-    def test_handles_nested_braces(self):
-        """Correctly handles JSON with nested objects (brace-depth matching)."""
-        text = 'preamble\n{"outer": {"inner": "value", "count": 42}}'
-        result = GeminiRunner._extract_last_json_object(text)
-        assert result == {"outer": {"inner": "value", "count": 42}}
-
-    def test_picks_last_json_when_multiple_present(self):
-        """Returns the last JSON object when multiple are present in the text."""
-        text = '{"first": 1}\nsome text\n{"second": 2}'
-        result = GeminiRunner._extract_last_json_object(text)
-        assert result == {"second": 2}
-
-    def test_ignores_non_dict_json(self):
-        """Returns None when the extracted JSON is not a dict (e.g., an array)."""
-        text = "text before\n[1, 2, 3]"
-        result = GeminiRunner._extract_last_json_object(text)
-        assert result is None
-
-    def test_known_limitation_braces_in_string_values(self):
-        """Documents known limitation: brace chars in string values confuse depth tracking.
-
-        Balanced brace chars (e.g. '{foo}') cancel out and accidentally find the right
-        boundary; unbalanced ones (e.g. lone '}') cause json.loads to fail and return None.
-        In practice, Google API error messages rarely contain literal brace characters.
-        """
-        # Balanced braces in string values — algorithm accidentally gets the right answer
-        text = 'log\n{"key": "{balanced}"}'
-        result = GeminiRunner._extract_last_json_object(text)
-        assert result == {"key": "{balanced}"}
-
-        # Unbalanced closing brace in string value — algorithm mis-identifies boundary,
-        # json.loads fails, returns None (falls through to generic SubprocessError)
-        text_unbalanced = 'log\n{"key": "has a } brace"}'
-        result_unbalanced = GeminiRunner._extract_last_json_object(text_unbalanced)
-        # NOTE: Returns None due to brace-depth mis-parsing. Raw stderr is still
-        # preserved in the generic SubprocessError at base.py:99-105.
-        assert result_unbalanced is None
-
-
 class TestGeminiRunnerFileReferences:
     """Test GeminiRunner file references handling."""
 
@@ -713,6 +655,105 @@ class TestGeminiRunnerNoisyStdout:
             runner.parse_output(noisy_no_json, stderr="")
 
         assert exc_info.value.raw_output == noisy_no_json
+
+
+# Realistic GaxiosError stderr emitted by Gemini CLI on HTTP 429.
+# The real error arrives in a JSON array; the session summary (buggy garbage)
+# follows as a bare JSON object appended by the CLI after the array.
+_GAXIOS_STDERR_429_ONLY = (
+    "Gemini CLI encountered an API error\n"
+    '[{"error": {"code": 429, "message": "No capacity available for gemini-2.5-pro",'
+    ' "status": "RESOURCE_EXHAUSTED"}}]'
+)
+_SESSION_SUMMARY_ONLY = '{"error": {"code": 1, "message": "[object Object]", "status": ""}}'
+_GAXIOS_PLUS_SUMMARY = (
+    "Gemini CLI encountered an API error\n"
+    '[{"error": {"code": 429, "message": "No capacity available for gemini-2.5-pro",'
+    ' "status": "RESOURCE_EXHAUSTED"}}]\n'
+    '{"error": {"code": 1, "message": "[object Object]", "status": ""}}'
+)
+
+
+class TestGaxiosErrorExtraction:
+    """Test _try_extract_error surfaces real GaxiosError from stderr JSON array.
+
+    Covers the fix for Issue #14: GaxiosError 429 embedded in a JSON array
+    was being ignored in favour of the session summary bare object that follows it.
+    """
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_gaxios_array_in_stderr_raises_429(self, mock_exec):
+        """GaxiosError array in stderr (no session summary) → SubprocessError with '429'."""
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr=_GAXIOS_STDERR_429_ONLY,
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "429" in primary_message
+        assert "Gemini API error" in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_session_summary_only_falls_through_to_generic(self, mock_exec):
+        """Session summary alone (code=1, message='[object Object]') → generic SubprocessError.
+
+        The guard `if code == 1 and message == "[object Object]": return` must reject
+        the known-buggy session summary so it does not produce a misleading message.
+        """
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr=_SESSION_SUMMARY_ONLY,
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "Gemini API error" not in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_gaxios_array_wins_over_session_summary(self, mock_exec):
+        """When both GaxiosError array and session summary are in stderr, array wins."""
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr=_GAXIOS_PLUS_SUMMARY,
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "429" in primary_message
+        assert "Gemini API error" in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_real_error_message_preserved(self, mock_exec):
+        """The full error message text from the GaxiosError array is preserved in the exception."""
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr=_GAXIOS_PLUS_SUMMARY,
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "No capacity available for gemini-2.5-pro" in primary_message
 
 
 class TestGeminiRunnerEnvConfiguration:

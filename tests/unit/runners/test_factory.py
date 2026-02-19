@@ -49,3 +49,9 @@ class TestRunnerFactory:
 
         assert runner1 is not runner2  # Different instances
         assert type(runner1) is type(runner2)  # Same type
+
+    def test_list_agents_returns_sorted_order(self):
+        """list_agents() should return agents in sorted (alphabetical) order."""
+        agents = RunnerFactory.list_agents()
+
+        assert agents == sorted(agents)
