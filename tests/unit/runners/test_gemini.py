@@ -715,6 +715,151 @@ class TestGeminiRunnerNoisyStdout:
         assert exc_info.value.raw_output == noisy_no_json
 
 
+class TestExtractLastJsonArray:
+    """Test GeminiRunner._extract_last_json_array() helper staticmethod."""
+
+    def test_extracts_first_element_from_gaxios_error_array(self):
+        """Extracts the first dict from a GaxiosError array embedded in mixed text."""
+        text = (
+            "Gemini CLI error log\n"
+            '[{"error": {"code": 429, "message": "No capacity available"}}]\n'
+            "additional log line"
+        )
+        result = GeminiRunner._extract_last_json_array(text)
+        assert result == {"error": {"code": 429, "message": "No capacity available"}}
+
+    def test_returns_none_for_empty_string(self):
+        """Returns None for empty string input."""
+        result = GeminiRunner._extract_last_json_array("")
+        assert result is None
+
+    def test_returns_none_for_no_array(self):
+        """Returns None when text contains no JSON array (bare object only)."""
+        result = GeminiRunner._extract_last_json_array('{"key": "value"}')
+        assert result is None
+
+    def test_returns_none_for_non_dict_first_element(self):
+        """Returns None when the array's first element is not a dict (e.g., a number)."""
+        result = GeminiRunner._extract_last_json_array("[1, 2, 3]")
+        assert result is None
+
+    def test_returns_none_for_empty_array(self):
+        """Returns None for an empty JSON array."""
+        result = GeminiRunner._extract_last_json_array("[]")
+        assert result is None
+
+    def test_handles_nested_objects_in_array(self):
+        """Correctly parses arrays whose elements contain nested objects."""
+        text = '[{"error": {"code": 429, "details": [{"type": "quota"}]}}]'
+        result = GeminiRunner._extract_last_json_array(text)
+        assert result == {"error": {"code": 429, "details": [{"type": "quota"}]}}
+
+    def test_picks_last_array_when_multiple_present(self):
+        """Returns the first element of the last array when multiple arrays exist."""
+        text = '[{"first": 1}]\nsome text\n[{"second": 2}]'
+        result = GeminiRunner._extract_last_json_array(text)
+        assert result == {"second": 2}
+
+
+# Realistic GaxiosError stderr emitted by Gemini CLI on HTTP 429.
+# The real error arrives in a JSON array; the session summary (buggy garbage)
+# follows as a bare JSON object appended by the CLI after the array.
+_GAXIOS_STDERR_429_ONLY = (
+    "Gemini CLI encountered an API error\n"
+    '[{"error": {"code": 429, "message": "No capacity available for gemini-2.5-pro",'
+    ' "status": "RESOURCE_EXHAUSTED"}}]'
+)
+_SESSION_SUMMARY_ONLY = '{"error": {"code": 1, "message": "[object Object]", "status": ""}}'
+_GAXIOS_PLUS_SUMMARY = (
+    "Gemini CLI encountered an API error\n"
+    '[{"error": {"code": 429, "message": "No capacity available for gemini-2.5-pro",'
+    ' "status": "RESOURCE_EXHAUSTED"}}]\n'
+    '{"error": {"code": 1, "message": "[object Object]", "status": ""}}'
+)
+
+
+class TestGaxiosErrorExtraction:
+    """Test _try_extract_error surfaces real GaxiosError from stderr JSON array.
+
+    Covers the fix for Issue #14: GaxiosError 429 embedded in a JSON array
+    was being ignored in favour of the session summary bare object that follows it.
+    """
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_gaxios_array_in_stderr_raises_429(self, mock_exec):
+        """GaxiosError array in stderr (no session summary) → SubprocessError with '429'."""
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr=_GAXIOS_STDERR_429_ONLY,
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "429" in primary_message
+        assert "Gemini API error" in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_session_summary_only_falls_through_to_generic(self, mock_exec):
+        """Session summary alone (code=1, message='[object Object]') → generic SubprocessError.
+
+        The guard `if code == 1 and message == "[object Object]": return` must reject
+        the known-buggy session summary so it does not produce a misleading message.
+        """
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr=_SESSION_SUMMARY_ONLY,
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "Gemini API error" not in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_gaxios_array_wins_over_session_summary(self, mock_exec):
+        """When both GaxiosError array and session summary are in stderr, array wins."""
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr=_GAXIOS_PLUS_SUMMARY,
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "429" in primary_message
+        assert "Gemini API error" in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_real_error_message_preserved(self, mock_exec):
+        """The full error message text from the GaxiosError array is preserved in the exception."""
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr=_GAXIOS_PLUS_SUMMARY,
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "No capacity available for gemini-2.5-pro" in primary_message
+
+
 class TestGeminiRunnerEnvConfiguration:
     """Test GeminiRunner environment variable configuration."""
 

@@ -196,6 +196,49 @@ class GeminiRunner(AbstractRunner):
 
         return None
 
+    @staticmethod
+    def _extract_last_json_array(text: str) -> dict[str, Any] | None:
+        """Find and parse the last JSON array in a multi-line string, returning its first element.
+
+        Scans rightward-to-left through ']' positions using bracket-depth matching.
+        Handles Gemini CLI's GaxiosError format where errors are wrapped in an array:
+        [{"error": {...}}]. Skips over ']' characters that appear inside string values
+        (e.g. "[object Object]" in the session summary) by trying each candidate in turn.
+
+        Args:
+            text: String that may contain a JSON array, possibly mixed with other content.
+
+        Returns:
+            First element of the parsed array if it's a dict, None otherwise.
+        """
+        if not text:
+            return None
+
+        search_end = len(text)
+        while True:
+            last_close = text.rfind("]", 0, search_end)
+            if last_close == -1:
+                return None
+
+            depth = 0
+            start = -1
+            for i in range(last_close, -1, -1):
+                if text[i] == "]":
+                    depth += 1
+                elif text[i] == "[":
+                    depth -= 1
+                    if depth == 0:
+                        start = i
+                        break
+
+            if start != -1:
+                with contextlib.suppress(json.JSONDecodeError, ValueError, RecursionError):
+                    parsed = json.loads(text[start : last_close + 1])
+                    if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                        return parsed[0]
+
+            search_end = last_close
+
     def _try_extract_error(
         self,
         stdout: str,
@@ -224,6 +267,8 @@ class GeminiRunner(AbstractRunner):
                 data = parsed
 
         if data is None:
+            data = self._extract_last_json_array(stderr)
+        if data is None:
             data = self._extract_last_json_object(stderr)
 
         if data is None:
@@ -236,6 +281,8 @@ class GeminiRunner(AbstractRunner):
         code = error.get("code", "unknown")
         message = error.get("message", "unknown error")
         status = error.get("status", "")
+        if code == 1 and message == "[object Object]":
+            return
         raise SubprocessError(
             f"Gemini API error {code}: {message} ({status})",
             stderr=stderr,
