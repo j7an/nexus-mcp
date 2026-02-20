@@ -3,10 +3,10 @@
 
 Exposes three MCP tools:
 - batch_prompt: Send multiple prompts to CLI agents in parallel (primary tool)
-- prompt_agent: Send a prompt to a CLI agent (background task) — DEPRECATED, use batch_prompt
+- prompt: Send a single prompt to a CLI agent, routes to batch_prompt
 - list_agents: Return list of supported agent names
 
-Background task design: both prompt_agent and batch_prompt use @mcp.tool(task=True) so they
+Background task design: both prompt and batch_prompt use @mcp.tool(task=True) so they
 run asynchronously and return task IDs immediately. This prevents MCP timeouts for long
 operations like YOLO mode (2-5 minutes).
 
@@ -80,7 +80,7 @@ async def batch_prompt(
 
     Fans out tasks server-side with asyncio.gather and a semaphore, enabling
     true parallel agent execution within a single MCP call. Single-task usage
-    is perfectly valid — batch_prompt replaces prompt_agent (now deprecated).
+    is perfectly valid — use prompt for convenience when sending one task.
 
     Args:
         tasks: List of AgentTask objects, each with agent, prompt, and optional fields.
@@ -90,6 +90,7 @@ async def batch_prompt(
     Returns:
         JSON string containing MultiPromptResponse with results for each task.
     """
+
     labelled = _assign_labels(tasks)
     semaphore = asyncio.Semaphore(max_concurrency)
 
@@ -117,7 +118,7 @@ async def batch_prompt(
     return MultiPromptResponse(results=list(results)).model_dump_json()
 
 
-async def prompt_agent(
+async def prompt(
     agent: str,
     prompt: str,
     progress: Progress = Progress(),  # noqa: B008 -- FastMCP DI sentinel pattern
@@ -126,11 +127,6 @@ async def prompt_agent(
     model: str | None = None,
 ) -> str:
     """Send a prompt to a CLI agent as a background task.
-
-    .. deprecated::
-        Use ``batch_prompt`` instead. ``batch_prompt`` handles both single and
-        multi-task cases and is the primary tool going forward. ``prompt_agent``
-        remains functional for backward compatibility during the transition.
 
     Returns immediately with a task ID. Client polls for results.
     This prevents timeouts for long operations (YOLO mode: 2-5 minutes).
@@ -146,35 +142,26 @@ async def prompt_agent(
     Returns:
         Agent's response text
     """
-    await progress.set_total(100)
-    await progress.increment(10)
-
-    request = PromptRequest(
+    task = AgentTask(
         agent=agent,
         prompt=prompt,
         context=context or {},
         execution_mode=execution_mode,
         model=model,
     )
-
-    await progress.increment(20)
-
-    runner = RunnerFactory.create(agent)
-
-    await progress.increment(30)
-
-    response = await runner.run(request)
-
-    await progress.increment(40)
-
-    return response.output
+    raw = await batch_prompt(tasks=[task], progress=progress)
+    result = MultiPromptResponse.model_validate_json(raw)
+    task_result = result.results[0]
+    if task_result.error:
+        raise RuntimeError(task_result.error)
+    return task_result.output  # type: ignore[return-value]
 
 
 def list_agents() -> list[str]:
     """Return list of supported agent names.
 
     Returns:
-        List of agent names that can be used with prompt_agent.
+        List of agent names that can be used with prompt or batch_prompt.
     """
     return RunnerFactory.list_agents()
 
@@ -182,5 +169,5 @@ def list_agents() -> list[str]:
 # Register functions as MCP tools after definition so tests can import
 # and call the raw functions directly (not the FunctionTool wrappers).
 mcp.tool(task=True)(batch_prompt)
-mcp.tool(task=True)(prompt_agent)
+mcp.tool(task=True)(prompt)
 mcp.tool()(list_agents)
