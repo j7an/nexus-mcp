@@ -64,6 +64,15 @@ class TestExtractLastJsonObject:
         result_unbalanced = extract_last_json_object(text_unbalanced)
         assert result_unbalanced is None
 
+    def test_balanced_braces_but_invalid_json_returns_none(self):
+        """Returns None when brace-matching finds a span but json.loads rejects the content.
+
+        '{not: valid json}' has balanced outer braces so _find_balanced_span succeeds,
+        but unquoted keys make json.loads raise JSONDecodeError (lines 63-64).
+        """
+        result = extract_last_json_object("{not: valid json}")
+        assert result is None
+
 
 class TestExtractLastJsonArray:
     """Test extract_last_json_array() finds the last JSON array and returns its first dict."""

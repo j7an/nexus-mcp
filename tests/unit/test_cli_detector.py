@@ -119,6 +119,14 @@ class TestSupportsJsonOutput:
     def test_unknown_cli_no_json(self):
         assert supports_json_output("unknown", "1.0.0") is False
 
+    def test_gemini_invalid_version_string_returns_false(self):
+        """Completely unparseable version after pre-release stripping returns False.
+
+        'not.a.version'.split('-')[0] → 'not.a.version', which raises
+        pkg_version.InvalidVersion since release segments must be integers.
+        """
+        assert supports_json_output("gemini", "not.a.version") is False
+
 
 class TestGetCLICapabilities:
     """Test get_cli_capabilities() aggregates feature support."""
