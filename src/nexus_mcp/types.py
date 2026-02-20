@@ -62,7 +62,7 @@ class AgentTask(BaseModel):
 
     @field_validator("agent", "prompt")
     @classmethod
-    def must_not_be_empty(cls, v: str) -> str:
+    def must_be_non_empty(cls, v: str) -> str:
         if not v:
             raise ValueError("must not be empty")
         return v
@@ -76,7 +76,7 @@ class AgentTaskResult(BaseModel):
     error: str | None = None
 
     @model_validator(mode="after")
-    def validate_xor(self) -> "AgentTaskResult":
+    def exactly_one_of_output_or_error(self) -> "AgentTaskResult":
         if self.output is not None and self.error is not None:
             raise ValueError("output and error are mutually exclusive")
         if self.output is None and self.error is None:
