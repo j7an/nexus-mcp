@@ -11,6 +11,31 @@ import json
 from typing import Any
 
 
+def _find_balanced_span(
+    text: str, open_char: str, close_char: str, search_end: int
+) -> tuple[int, int] | None:
+    """Find the rightmost balanced bracket span ending at or before search_end.
+
+    Scans right-to-left from the last close_char position, tracking bracket
+    depth to locate the matching open_char. Returns (start, end) indices of
+    the span (both inclusive), or None if no balanced span is found.
+    """
+    last_close = text.rfind(close_char, 0, search_end)
+    if last_close == -1:
+        return None
+
+    depth = 0
+    for i in range(last_close, -1, -1):
+        if text[i] == close_char:
+            depth += 1
+        elif text[i] == open_char:
+            depth -= 1
+            if depth == 0:
+                return (i, last_close)
+
+    return None
+
+
 def extract_last_json_object(text: str) -> dict[str, Any] | None:
     """Find and parse the last JSON object in a multi-line string.
 
@@ -27,24 +52,16 @@ def extract_last_json_object(text: str) -> dict[str, Any] | None:
     if not text:
         return None
 
-    last_close = text.rfind("}")
-    if last_close == -1:
+    span = _find_balanced_span(text, "{", "}", len(text))
+    if span is None:
         return None
 
-    depth = 0
-    for i in range(last_close, -1, -1):
-        if text[i] == "}":
-            depth += 1
-        elif text[i] == "{":
-            depth -= 1
-            if depth == 0:
-                try:
-                    parsed = json.loads(text[i : last_close + 1])
-                    return parsed if isinstance(parsed, dict) else None
-                except (json.JSONDecodeError, ValueError, RecursionError):
-                    return None
-
-    return None
+    start, end = span
+    try:
+        parsed = json.loads(text[start : end + 1])
+        return parsed if isinstance(parsed, dict) else None
+    except (json.JSONDecodeError, ValueError, RecursionError):
+        return None
 
 
 def extract_last_json_array(text: str) -> dict[str, Any] | None:
@@ -66,25 +83,14 @@ def extract_last_json_array(text: str) -> dict[str, Any] | None:
 
     search_end = len(text)
     while True:
-        last_close = text.rfind("]", 0, search_end)
-        if last_close == -1:
+        span = _find_balanced_span(text, "[", "]", search_end)
+        if span is None:
             return None
 
-        depth = 0
-        start = -1
-        for i in range(last_close, -1, -1):
-            if text[i] == "]":
-                depth += 1
-            elif text[i] == "[":
-                depth -= 1
-                if depth == 0:
-                    start = i
-                    break
-
-        if start != -1:
-            with contextlib.suppress(json.JSONDecodeError, ValueError, RecursionError):
-                parsed = json.loads(text[start : last_close + 1])
-                if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
-                    return parsed[0]
+        start, last_close = span
+        with contextlib.suppress(json.JSONDecodeError, ValueError, RecursionError):
+            parsed = json.loads(text[start : last_close + 1])
+            if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                return parsed[0]
 
         search_end = last_close

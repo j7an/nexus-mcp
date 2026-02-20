@@ -23,7 +23,7 @@ class RunnerFactory:
     """
 
     _REGISTRY: dict[str, type[AbstractRunner]] = {
-        "gemini": GeminiRunner,
+        GeminiRunner.AGENT_NAME: GeminiRunner,
     }
 
     @staticmethod

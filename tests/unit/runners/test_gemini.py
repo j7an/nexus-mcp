@@ -755,6 +755,29 @@ class TestGaxiosErrorExtraction:
         primary_message = exc_info.value.args[0]
         assert "No capacity available for gemini-2.5-pro" in primary_message
 
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_scalar_error_field_falls_through_to_generic_error(self, mock_exec):
+        """When 'error' is a scalar (string) rather than a dict, _try_extract_error returns early.
+
+        Line 204 guards: `if not isinstance(error, dict): return`. A scalar error field
+        (e.g. {"error": "something went wrong"}) should not raise a structured SubprocessError
+        and instead fall through to the generic CLI command failed message.
+        """
+        mock_exec.return_value = create_mock_process(
+            stdout='{"error": "something went wrong"}',
+            stderr="",
+            returncode=1,
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        primary_message = exc_info.value.args[0]
+        assert "Gemini API error" not in primary_message
+        assert "CLI command failed" in primary_message
+
 
 class TestGeminiRunnerEnvConfiguration:
     """Test GeminiRunner environment variable configuration."""

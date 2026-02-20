@@ -13,9 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from nexus_mcp.server import list_agents, prompt
-
-# Minimal prompt to reduce API latency in slow tests.
-_PING_PROMPT = "Reply with exactly the word 'pong'"
+from tests.fixtures import PING_PROMPT
 
 
 class TestServerListAgentsSmokeTest:
@@ -52,7 +50,7 @@ class TestServerPromptPipeline:
         """prompt() should return a non-empty string from real CLI output."""
         result = await prompt(
             agent="gemini",
-            prompt=_PING_PROMPT,
+            prompt=PING_PROMPT,
             progress=progress,
         )
 
@@ -66,7 +64,7 @@ class TestServerPromptPipeline:
         """prompt() should call set_total(1) and increment once via batch_prompt."""
         await prompt(
             agent="gemini",
-            prompt=_PING_PROMPT,
+            prompt=PING_PROMPT,
             progress=progress,
         )
 

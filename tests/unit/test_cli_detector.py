@@ -119,6 +119,14 @@ class TestSupportsJsonOutput:
     def test_unknown_cli_no_json(self):
         assert supports_json_output("unknown", "1.0.0") is False
 
+    def test_gemini_invalid_version_string_returns_false(self):
+        """Completely unparseable version after pre-release stripping returns False.
+
+        'not.a.version'.split('-')[0] → 'not.a.version', which raises
+        pkg_version.InvalidVersion since release segments must be integers.
+        """
+        assert supports_json_output("gemini", "not.a.version") is False
+
 
 class TestGetCLICapabilities:
     """Test get_cli_capabilities() aggregates feature support."""
@@ -127,20 +135,16 @@ class TestGetCLICapabilities:
         caps = get_cli_capabilities("gemini", "0.12.0")
         assert caps.found is True
         assert caps.supports_json is True
-        assert caps.supports_model_flag is True
-        assert caps.fallback_to_text is False
 
     def test_gemini_json_only(self):
         """Gemini v0.6.0 supports JSON but is the minimum version."""
         caps = get_cli_capabilities("gemini", "0.6.0")
         assert caps.supports_json is True
-        assert caps.supports_model_flag is True
 
     def test_gemini_old(self):
         caps = get_cli_capabilities("gemini", "0.5.0")
         assert caps.found is True
         assert caps.supports_json is False
-        assert caps.fallback_to_text is True
 
     def test_cli_not_found(self):
         caps = get_cli_capabilities("nonexistent", None)

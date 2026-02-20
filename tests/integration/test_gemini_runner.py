@@ -14,10 +14,7 @@ import pytest
 
 from nexus_mcp.runners.gemini import GeminiRunner
 from nexus_mcp.types import AgentResponse
-from tests.fixtures import make_prompt_request
-
-# Minimal prompt designed to get a short, deterministic response quickly.
-_PING_PROMPT = "Reply with exactly the word 'pong'"
+from tests.fixtures import PING_PROMPT, make_prompt_request
 
 
 @pytest.mark.integration
@@ -47,7 +44,7 @@ class TestGeminiRunnerEndToEnd:
         self, gemini_runner: GeminiRunner
     ) -> None:
         """run() should return an AgentResponse with non-empty output."""
-        request = make_prompt_request(prompt=_PING_PROMPT)
+        request = make_prompt_request(prompt=PING_PROMPT)
         response = await gemini_runner.run(request)
 
         assert isinstance(response, AgentResponse)
@@ -56,7 +53,7 @@ class TestGeminiRunnerEndToEnd:
 
     async def test_run_returns_json_parsed_output(self, gemini_runner: GeminiRunner) -> None:
         """run() should populate all AgentResponse fields from parsed JSON."""
-        request = make_prompt_request(prompt=_PING_PROMPT)
+        request = make_prompt_request(prompt=PING_PROMPT)
         response = await gemini_runner.run(request)
 
         assert isinstance(response.output, str)
@@ -67,7 +64,7 @@ class TestGeminiRunnerEndToEnd:
 
     async def test_run_with_model_flag(self, gemini_runner: GeminiRunner) -> None:
         """run() with an explicit model should succeed and return output."""
-        request = make_prompt_request(prompt=_PING_PROMPT, model="gemini-2.5-flash")
+        request = make_prompt_request(prompt=PING_PROMPT, model="gemini-2.5-flash")
         response = await gemini_runner.run(request)
 
         assert isinstance(response, AgentResponse)

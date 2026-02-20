@@ -1,9 +1,11 @@
 # tests/fixtures.py
 import asyncio
+from contextlib import contextmanager
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
-from nexus_mcp.types import AgentResponse, AgentTask, PromptRequest, SubprocessResult
+from nexus_mcp.cli_detector import CLIInfo
+from nexus_mcp.types import AgentResponse, AgentTask, PromptRequest
 
 # ---------------------------------------------------------------------------
 # Reusable test constants
@@ -26,6 +28,40 @@ GEMINI_NOISY_STDOUT = (
 
 # Phase 6/7: Add CODEX_NDJSON_RESPONSE and CLAUDE_JSON_RESPONSE constants
 # when implementing CodexRunner and ClaudeCodeRunner respectively.
+
+# ---------------------------------------------------------------------------
+# Integration test constants
+# ---------------------------------------------------------------------------
+
+PING_PROMPT = "Reply with exactly the word 'pong'"
+
+
+# ---------------------------------------------------------------------------
+# CLI detection mock helpers
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def cli_detection_mocks():
+    """Context manager that mocks Gemini CLI detection for unit tests.
+
+    Patches detect_cli() and get_cli_version() so tests don't require
+    the real Gemini binary. Version "0.12.0" → supports_json=True,
+    keeping existing command assertions valid.
+
+    Usage in conftest.py::
+
+        @pytest.fixture
+        def mock_cli_detection():
+            with cli_detection_mocks() as mock:
+                yield mock
+    """
+    with (
+        patch("nexus_mcp.runners.gemini.detect_cli") as mock_detect,
+        patch("nexus_mcp.runners.gemini.get_cli_version", return_value="0.12.0"),
+    ):
+        mock_detect.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
+        yield mock_detect
 
 
 # ---------------------------------------------------------------------------
@@ -150,20 +186,3 @@ def make_agent_task(**overrides: Any) -> AgentTask:
     """
     defaults: dict[str, Any] = {"agent": "gemini", "prompt": "Hello"}
     return AgentTask(**(defaults | overrides))
-
-
-def make_subprocess_result(**overrides: Any) -> SubprocessResult:
-    """Create a SubprocessResult with sensible defaults.
-
-    Usage::
-
-        res = make_subprocess_result()                          # defaults
-        res = make_subprocess_result(returncode=1)              # override one field
-        res = make_subprocess_result(stderr="err", returncode=2)  # override multiple
-    """
-    defaults: dict[str, Any] = {
-        "stdout": GEMINI_JSON_RESPONSE,
-        "stderr": "",
-        "returncode": 0,
-    }
-    return SubprocessResult(**(defaults | overrides))

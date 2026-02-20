@@ -1,11 +1,9 @@
 # tests/unit/runners/conftest.py
 """Shared fixtures for runner tests."""
 
-from unittest.mock import patch
-
 import pytest
 
-from nexus_mcp.cli_detector import CLIInfo
+from tests.fixtures import cli_detection_mocks
 
 
 @pytest.fixture(autouse=True)
@@ -17,9 +15,5 @@ def mock_cli_detection():
     get_cli_capabilities is NOT mocked — it runs with the mocked version
     ("0.12.0" → supports_json=True), keeping existing command assertions valid.
     """
-    with (
-        patch("nexus_mcp.runners.gemini.detect_cli") as mock_detect,
-        patch("nexus_mcp.runners.gemini.get_cli_version", return_value="0.12.0"),
-    ):
-        mock_detect.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
-        yield mock_detect
+    with cli_detection_mocks() as mock:
+        yield mock

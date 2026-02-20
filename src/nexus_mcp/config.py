@@ -11,6 +11,14 @@ import os
 from nexus_mcp.exceptions import ConfigurationError
 
 
+def _get_int_env(env_var: str, default: str, label: str) -> int:
+    raw = os.getenv(env_var, default)
+    try:
+        return int(raw)
+    except ValueError:
+        raise ConfigurationError(f"Invalid {label} value: {raw!r}", config_key=env_var) from None
+
+
 def get_global_output_limit() -> int:
     """Get maximum output size in bytes from env var.
 
@@ -23,13 +31,7 @@ def get_global_output_limit() -> int:
     Environment Variable:
         NEXUS_OUTPUT_LIMIT_BYTES: Max output size in bytes
     """
-    raw = os.getenv("NEXUS_OUTPUT_LIMIT_BYTES", "50000")
-    try:
-        return int(raw)
-    except ValueError:
-        raise ConfigurationError(
-            f"Invalid output limit value: {raw!r}", config_key="NEXUS_OUTPUT_LIMIT_BYTES"
-        ) from None
+    return _get_int_env("NEXUS_OUTPUT_LIMIT_BYTES", "50000", "output limit")
 
 
 def get_global_timeout() -> int:
@@ -44,13 +46,7 @@ def get_global_timeout() -> int:
     Environment Variable:
         NEXUS_TIMEOUT_SECONDS: Subprocess timeout in seconds
     """
-    raw = os.getenv("NEXUS_TIMEOUT_SECONDS", "600")
-    try:
-        return int(raw)
-    except ValueError:
-        raise ConfigurationError(
-            f"Invalid timeout value: {raw!r}", config_key="NEXUS_TIMEOUT_SECONDS"
-        ) from None
+    return _get_int_env("NEXUS_TIMEOUT_SECONDS", "600", "timeout")
 
 
 def get_agent_env(agent: str, key: str, default: str | None = None) -> str | None:
