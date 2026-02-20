@@ -33,6 +33,8 @@ class GeminiRunner(AbstractRunner):
         {"response": "text", "stats": {...}}
     """
 
+    AGENT_NAME: str = "gemini"
+
     def __init__(self) -> None:
         """Initialize GeminiRunner with CLI detection and env configuration.
 
@@ -40,16 +42,18 @@ class GeminiRunner(AbstractRunner):
             CLINotFoundError: If gemini CLI is not found in PATH.
         """
         # Phase 3: CLI detection
-        info = detect_cli("gemini")
+        info = detect_cli(self.AGENT_NAME)
         if not info.found:
-            raise CLINotFoundError("gemini")
-        version = get_cli_version("gemini")
-        self.capabilities = get_cli_capabilities("gemini", version)
+            raise CLINotFoundError(self.AGENT_NAME)
+        version = get_cli_version(self.AGENT_NAME)
+        self.capabilities = get_cli_capabilities(self.AGENT_NAME, version)
 
         # Phase 3.7: env config layer
         super().__init__()  # sets self.timeout from AbstractRunner
-        self.cli_path: str = get_agent_env("gemini", "PATH", default="gemini") or "gemini"
-        self.default_model: str | None = get_agent_env("gemini", "MODEL")
+        self.cli_path: str = (
+            get_agent_env(self.AGENT_NAME, "PATH", default=self.AGENT_NAME) or self.AGENT_NAME
+        )
+        self.default_model: str | None = get_agent_env(self.AGENT_NAME, "MODEL")
 
     def build_command(self, request: PromptRequest) -> list[str]:
         """Build Gemini CLI command from request.
@@ -155,7 +159,7 @@ class GeminiRunner(AbstractRunner):
         metadata = data.get("stats", {})
 
         return AgentResponse(
-            agent="gemini",
+            agent=self.AGENT_NAME,
             output=response_text.strip(),
             raw_output=stdout,
             metadata=metadata,

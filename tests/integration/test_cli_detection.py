@@ -75,8 +75,6 @@ class TestGetCLICapabilitiesReal:
 
         assert capabilities.found is True
         assert isinstance(capabilities.supports_json, bool)
-        assert isinstance(capabilities.supports_model_flag, bool)
-        assert isinstance(capabilities.fallback_to_text, bool)
 
     def test_gemini_modern_version_supports_json(self, gemini_cli_available: str) -> None:  # noqa: ARG002
         """Installed Gemini CLI should be >= 0.6.0 and support JSON output."""

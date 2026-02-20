@@ -20,11 +20,6 @@ class PromptRequest(BaseModel):
         description="Optional model name (uses CLI default if not specified)",
         min_length=1,
     )
-    session_id: str | None = Field(
-        default=None,
-        description="Optional session ID for resumable sessions (Claude Code --resume)",
-        min_length=1,
-    )
     file_refs: list[str] = Field(
         default_factory=list,
         description="Optional file paths for agent context (appended to prompt)",

@@ -89,8 +89,6 @@ class CLICapabilities:
 
     found: bool
     supports_json: bool = False
-    supports_model_flag: bool = False
-    fallback_to_text: bool = False
 
 
 def get_cli_capabilities(cli: str, version: str | None) -> CLICapabilities:
@@ -99,9 +97,4 @@ def get_cli_capabilities(cli: str, version: str | None) -> CLICapabilities:
         return CLICapabilities(found=False)
 
     json_supported = supports_json_output(cli, version)
-    return CLICapabilities(
-        found=True,
-        supports_json=json_supported,
-        supports_model_flag=True,
-        fallback_to_text=not json_supported,
-    )
+    return CLICapabilities(found=True, supports_json=json_supported)

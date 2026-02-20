@@ -17,15 +17,33 @@ from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY
 from tests.fixtures import make_agent_response, make_agent_task
 
 
+def _setup_mock_runner(mock_factory, *, output: str = "test output", side_effect=None) -> AsyncMock:
+    """Configure mock_factory.create() to return a runner with preset run() behavior.
+
+    Args:
+        mock_factory: The patched RunnerFactory mock.
+        output: The output string for run.return_value (used when side_effect is None).
+        side_effect: If set, assigned to run.side_effect instead of return_value.
+
+    Returns:
+        The configured AsyncMock runner (for further assertion access).
+    """
+    mock_runner = AsyncMock()
+    if side_effect is not None:
+        mock_runner.run.side_effect = side_effect
+    else:
+        mock_runner.run.return_value = make_agent_response(output=output)
+    mock_factory.create.return_value = mock_runner
+    return mock_runner
+
+
 class TestPrompt:
     """Tests for the prompt tool function."""
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_prompt_returns_response(self, mock_factory, progress):
         """prompt dispatches to runner via batch_prompt and returns output text."""
-        mock_runner = AsyncMock()
-        mock_runner.run.return_value = make_agent_response(output="Agent response")
-        mock_factory.create.return_value = mock_runner
+        mock_runner = _setup_mock_runner(mock_factory, output="Agent response")
 
         result = await prompt(
             agent="gemini",
@@ -44,9 +62,7 @@ class TestPrompt:
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_prompt_passes_execution_mode(self, mock_factory, progress):
         """execution_mode is passed through to the PromptRequest."""
-        mock_runner = AsyncMock()
-        mock_runner.run.return_value = make_agent_response(output="Done")
-        mock_factory.create.return_value = mock_runner
+        mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
             agent="gemini",
@@ -61,9 +77,7 @@ class TestPrompt:
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_prompt_passes_model(self, mock_factory, progress):
         """model parameter is passed through to the PromptRequest."""
-        mock_runner = AsyncMock()
-        mock_runner.run.return_value = make_agent_response(output="Done")
-        mock_factory.create.return_value = mock_runner
+        mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
             agent="gemini",
@@ -78,9 +92,7 @@ class TestPrompt:
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_prompt_passes_context(self, mock_factory, progress):
         """context is passed through to the PromptRequest."""
-        mock_runner = AsyncMock()
-        mock_runner.run.return_value = make_agent_response(output="Done")
-        mock_factory.create.return_value = mock_runner
+        mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
             agent="gemini",
@@ -95,9 +107,7 @@ class TestPrompt:
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_prompt_reports_progress(self, mock_factory, progress):
         """progress.set_total(1) and increment(1) are called via batch_prompt."""
-        mock_runner = AsyncMock()
-        mock_runner.run.return_value = make_agent_response(output="Done")
-        mock_factory.create.return_value = mock_runner
+        _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
             agent="gemini",
@@ -123,11 +133,10 @@ class TestPrompt:
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_prompt_handles_subprocess_error(self, mock_factory, progress):
         """RuntimeError raised when runner.run() fails."""
-        mock_runner = AsyncMock()
-        mock_runner.run.side_effect = SubprocessError(
-            "CLI command failed", stderr="error output", returncode=1
+        _setup_mock_runner(
+            mock_factory,
+            side_effect=SubprocessError("CLI command failed", stderr="error output", returncode=1),
         )
-        mock_factory.create.return_value = mock_runner
 
         with pytest.raises(RuntimeError, match="CLI command failed"):
             await prompt(
@@ -213,9 +222,7 @@ class TestBatchPrompt:
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_all_success(self, mock_factory, progress):
         """All tasks succeed → succeeded=2, failed=0."""
-        mock_runner = AsyncMock()
-        mock_runner.run.return_value = make_agent_response(output="ok")
-        mock_factory.create.return_value = mock_runner
+        _setup_mock_runner(mock_factory, output="ok")
 
         tasks = [make_agent_task(), make_agent_task(prompt="Second")]
         raw = await batch_prompt(tasks=tasks, progress=progress)
@@ -228,15 +235,13 @@ class TestBatchPrompt:
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_partial_failure(self, mock_factory, progress):
         """One task ok, one errors → succeeded=1, failed=1, good result preserved."""
-        mock_runner = AsyncMock()
 
         async def run_side_effect(request):
             if request.prompt == "ok":
                 return make_agent_response(output="good output")
             raise RuntimeError("agent exploded")
 
-        mock_runner.run.side_effect = run_side_effect
-        mock_factory.create.return_value = mock_runner
+        _setup_mock_runner(mock_factory, side_effect=run_side_effect)
 
         tasks = [make_agent_task(prompt="ok"), make_agent_task(prompt="bad")]
         raw = await batch_prompt(tasks=tasks, progress=progress)
@@ -250,9 +255,7 @@ class TestBatchPrompt:
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_all_failures(self, mock_factory, progress):
         """All tasks error → succeeded=0, failed=N."""
-        mock_runner = AsyncMock()
-        mock_runner.run.side_effect = RuntimeError("always fails")
-        mock_factory.create.return_value = mock_runner
+        _setup_mock_runner(mock_factory, side_effect=RuntimeError("always fails"))
 
         tasks = [make_agent_task() for _ in range(3)]
         raw = await batch_prompt(tasks=tasks, progress=progress)
@@ -275,9 +278,7 @@ class TestBatchPrompt:
             current -= 1
             return make_agent_response()
 
-        mock_runner = AsyncMock()
-        mock_runner.run.side_effect = slow_run
-        mock_factory.create.return_value = mock_runner
+        _setup_mock_runner(mock_factory, side_effect=slow_run)
 
         tasks = [make_agent_task() for _ in range(5)]
         await batch_prompt(tasks=tasks, progress=progress, max_concurrency=2)
@@ -287,9 +288,7 @@ class TestBatchPrompt:
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_progress_called_per_task(self, mock_factory, progress):
         """progress.increment() is called exactly once per task."""
-        mock_runner = AsyncMock()
-        mock_runner.run.return_value = make_agent_response()
-        mock_factory.create.return_value = mock_runner
+        _setup_mock_runner(mock_factory)
 
         tasks = [make_agent_task() for _ in range(4)]
         await batch_prompt(tasks=tasks, progress=progress)
@@ -305,9 +304,7 @@ class TestBatchPrompt:
             call_order.append(request.prompt)
             return make_agent_response(output=f"result-{request.prompt}")
 
-        mock_runner = AsyncMock()
-        mock_runner.run.side_effect = ordered_run
-        mock_factory.create.return_value = mock_runner
+        _setup_mock_runner(mock_factory, side_effect=ordered_run)
 
         tasks = [make_agent_task(prompt=f"p{i}") for i in range(3)]
         raw = await batch_prompt(tasks=tasks, progress=progress)
@@ -319,9 +316,7 @@ class TestBatchPrompt:
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_returns_json_string(self, mock_factory, progress):
         """Output is a valid JSON string with a 'results' key."""
-        mock_runner = AsyncMock()
-        mock_runner.run.return_value = make_agent_response()
-        mock_factory.create.return_value = mock_runner
+        _setup_mock_runner(mock_factory)
 
         raw = await batch_prompt(tasks=[make_agent_task()], progress=progress)
 
@@ -332,9 +327,7 @@ class TestBatchPrompt:
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_labels_auto_assigned(self, mock_factory, progress):
         """Unlabeled tasks receive unique auto-assigned labels."""
-        mock_runner = AsyncMock()
-        mock_runner.run.return_value = make_agent_response()
-        mock_factory.create.return_value = mock_runner
+        _setup_mock_runner(mock_factory)
 
         tasks = [make_agent_task(agent="gemini"), make_agent_task(agent="gemini")]
         raw = await batch_prompt(tasks=tasks, progress=progress)
@@ -355,9 +348,7 @@ class TestBatchPrompt:
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_unexpected_exception_captured(self, mock_factory, progress):
         """RuntimeError from runner is captured as task error, not propagated."""
-        mock_runner = AsyncMock()
-        mock_runner.run.side_effect = RuntimeError("unexpected boom")
-        mock_factory.create.return_value = mock_runner
+        _setup_mock_runner(mock_factory, side_effect=RuntimeError("unexpected boom"))
 
         raw = await batch_prompt(tasks=[make_agent_task()], progress=progress)
         data = json.loads(raw)
@@ -372,9 +363,7 @@ class TestBatchPrompt:
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_progress_set_total_called_once(self, mock_factory, progress):
         """progress.set_total() is called exactly once with the task count."""
-        mock_runner = AsyncMock()
-        mock_runner.run.return_value = make_agent_response()
-        mock_factory.create.return_value = mock_runner
+        _setup_mock_runner(mock_factory)
 
         tasks = [make_agent_task() for _ in range(3)]
         await batch_prompt(tasks=tasks, progress=progress)
@@ -384,9 +373,7 @@ class TestBatchPrompt:
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_single_task_no_suffix(self, mock_factory, progress):
         """A single task's label is the agent name without any suffix."""
-        mock_runner = AsyncMock()
-        mock_runner.run.return_value = make_agent_response()
-        mock_factory.create.return_value = mock_runner
+        _setup_mock_runner(mock_factory)
 
         raw = await batch_prompt(tasks=[make_agent_task(agent="gemini")], progress=progress)
         data = json.loads(raw)

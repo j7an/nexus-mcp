@@ -48,24 +48,19 @@ class SubprocessError(NexusMCPError):
 
     _MAX_OUTPUT_DISPLAY = 500
 
+    def _truncate(self, text: str) -> str:
+        if len(text) > self._MAX_OUTPUT_DISPLAY:
+            return text[: self._MAX_OUTPUT_DISPLAY] + "[truncated]"
+        return text
+
     def __str__(self) -> str:
         parts = [self.args[0] if self.args else ""]
         if self.returncode is not None:
             parts.append(f"returncode={self.returncode}")
         if self.stderr:
-            stderr_display = (
-                self.stderr[: self._MAX_OUTPUT_DISPLAY] + "[truncated]"
-                if len(self.stderr) > self._MAX_OUTPUT_DISPLAY
-                else self.stderr
-            )
-            parts.append(f"stderr='{stderr_display}'")
+            parts.append(f"stderr='{self._truncate(self.stderr)}'")
         if self.stdout:
-            stdout_display = (
-                self.stdout[: self._MAX_OUTPUT_DISPLAY] + "[truncated]"
-                if len(self.stdout) > self._MAX_OUTPUT_DISPLAY
-                else self.stdout
-            )
-            parts.append(f"stdout='{stdout_display}'")
+            parts.append(f"stdout='{self._truncate(self.stdout)}'")
         return " | ".join(parts)
 
 
