@@ -19,7 +19,7 @@ import asyncio
 from typing import Any
 
 from fastmcp import FastMCP
-from fastmcp.dependencies import Progress
+from fastmcp.dependencies import Progress, ProgressLike
 
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import (
@@ -73,7 +73,7 @@ def _assign_labels(tasks: list[AgentTask]) -> list[AgentTask]:
 
 async def batch_prompt(
     tasks: list[AgentTask],
-    progress: Progress = Progress(),  # noqa: B008 -- FastMCP DI sentinel pattern
+    progress: ProgressLike = Progress(),  # type: ignore[assignment]  # noqa: B008
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
 ) -> str:
     """Send multiple prompts to CLI agents in parallel (primary tool).
@@ -121,7 +121,7 @@ async def batch_prompt(
 async def prompt(
     agent: str,
     prompt: str,
-    progress: Progress = Progress(),  # noqa: B008 -- FastMCP DI sentinel pattern
+    progress: ProgressLike = Progress(),  # type: ignore[assignment]  # noqa: B008
     context: dict[str, Any] | None = None,
     execution_mode: ExecutionMode = "default",
     model: str | None = None,
