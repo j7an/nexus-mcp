@@ -10,7 +10,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  update-lockfile:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref }}
+      - uses: astral-sh/setup-uv@v7
+      - run: uv lock
+      - name: Commit updated lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          git diff --cached --quiet || git commit -m "deps: update uv.lock"
+          git push
+
   test:
+    needs: [update-lockfile]
+    if: ${{ !cancelled() && needs.update-lockfile.result != 'failure' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -20,6 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.actor == 'dependabot[bot]' && github.head_ref || '' }}
           fetch-depth: 0
       - uses: ./.github/actions/setup-uv
         with:
@@ -31,9 +53,13 @@ jobs:
         run: uv run diff-cover coverage.xml --fail-under=90 --compare-branch=origin/${{ github.base_ref }}
 
   lint:
+    needs: [update-lockfile]
+    if: ${{ !cancelled() && needs.update-lockfile.result != 'failure' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.actor == 'dependabot[bot]' && github.head_ref || '' }}
       - uses: ./.github/actions/setup-uv
       - name: Ruff check
         run: uv run ruff check .
@@ -41,9 +67,13 @@ jobs:
         run: uv run ruff format --check .
 
   typecheck:
+    needs: [update-lockfile]
+    if: ${{ !cancelled() && needs.update-lockfile.result != 'failure' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.actor == 'dependabot[bot]' && github.head_ref || '' }}
       - uses: ./.github/actions/setup-uv
       - name: Mypy
         run: uv run mypy src/nexus_mcp
