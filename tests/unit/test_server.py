@@ -6,14 +6,13 @@ Server tests should be decoupled from runner internals.
 """
 
 import asyncio
-import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from nexus_mcp.exceptions import SubprocessError, UnsupportedAgentError
 from nexus_mcp.server import _assign_labels, batch_prompt, list_agents, prompt
-from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY
+from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY, MultiPromptResponse
 from tests.fixtures import make_agent_response, make_agent_task
 
 
@@ -145,6 +144,21 @@ class TestPrompt:
                 progress=progress,
             )
 
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_ctx_forwarded_to_batch_prompt(self, mock_factory, progress, ctx):
+        """ctx passed to prompt() is forwarded through to batch_prompt()."""
+        _setup_mock_runner(mock_factory, output="Done")
+
+        await prompt(
+            agent="gemini",
+            prompt="Test prompt",
+            progress=progress,
+            ctx=ctx,
+        )
+
+        # batch_prompt calls ctx.info() twice — once at start, once at completion
+        assert ctx.info.await_count == 2
+
 
 class TestListAgents:
     """Tests for the list_agents tool function."""
@@ -225,12 +239,11 @@ class TestBatchPrompt:
         _setup_mock_runner(mock_factory, output="ok")
 
         tasks = [make_agent_task(), make_agent_task(prompt="Second")]
-        raw = await batch_prompt(tasks=tasks, progress=progress)
-        data = json.loads(raw)
+        result = await batch_prompt(tasks=tasks, progress=progress)
 
-        assert data["succeeded"] == 2
-        assert data["failed"] == 0
-        assert data["total"] == 2
+        assert result.succeeded == 2
+        assert result.failed == 0
+        assert result.total == 2
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_partial_failure(self, mock_factory, progress):
@@ -244,12 +257,11 @@ class TestBatchPrompt:
         _setup_mock_runner(mock_factory, side_effect=run_side_effect)
 
         tasks = [make_agent_task(prompt="ok"), make_agent_task(prompt="bad")]
-        raw = await batch_prompt(tasks=tasks, progress=progress)
-        data = json.loads(raw)
+        result = await batch_prompt(tasks=tasks, progress=progress)
 
-        assert data["succeeded"] == 1
-        assert data["failed"] == 1
-        ok_result = next(r for r in data["results"] if r.get("output") == "good output")
+        assert result.succeeded == 1
+        assert result.failed == 1
+        ok_result = next(r for r in result.results if r.output == "good output")
         assert ok_result is not None
 
     @patch("nexus_mcp.server.RunnerFactory")
@@ -258,11 +270,10 @@ class TestBatchPrompt:
         _setup_mock_runner(mock_factory, side_effect=RuntimeError("always fails"))
 
         tasks = [make_agent_task() for _ in range(3)]
-        raw = await batch_prompt(tasks=tasks, progress=progress)
-        data = json.loads(raw)
+        result = await batch_prompt(tasks=tasks, progress=progress)
 
-        assert data["succeeded"] == 0
-        assert data["failed"] == 3
+        assert result.succeeded == 0
+        assert result.failed == 3
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_concurrency_limit(self, mock_factory, progress):
@@ -307,22 +318,20 @@ class TestBatchPrompt:
         _setup_mock_runner(mock_factory, side_effect=ordered_run)
 
         tasks = [make_agent_task(prompt=f"p{i}") for i in range(3)]
-        raw = await batch_prompt(tasks=tasks, progress=progress)
-        data = json.loads(raw)
+        result = await batch_prompt(tasks=tasks, progress=progress)
 
-        outputs = [r["output"] for r in data["results"]]
+        outputs = [r.output for r in result.results]
         assert outputs == ["result-p0", "result-p1", "result-p2"]
 
     @patch("nexus_mcp.server.RunnerFactory")
-    async def test_returns_json_string(self, mock_factory, progress):
-        """Output is a valid JSON string with a 'results' key."""
+    async def test_returns_multi_prompt_response(self, mock_factory, progress):
+        """Output is a MultiPromptResponse Pydantic model with a 'results' attribute."""
         _setup_mock_runner(mock_factory)
 
-        raw = await batch_prompt(tasks=[make_agent_task()], progress=progress)
+        result = await batch_prompt(tasks=[make_agent_task()], progress=progress)
 
-        assert isinstance(raw, str)
-        data = json.loads(raw)
-        assert "results" in data
+        assert isinstance(result, MultiPromptResponse)
+        assert hasattr(result, "results")
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_labels_auto_assigned(self, mock_factory, progress):
@@ -330,31 +339,28 @@ class TestBatchPrompt:
         _setup_mock_runner(mock_factory)
 
         tasks = [make_agent_task(agent="gemini"), make_agent_task(agent="gemini")]
-        raw = await batch_prompt(tasks=tasks, progress=progress)
-        data = json.loads(raw)
+        result = await batch_prompt(tasks=tasks, progress=progress)
 
-        labels = [r["label"] for r in data["results"]]
+        labels = [r.label for r in result.results]
         assert len(set(labels)) == 2  # all unique
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_empty_task_list(self, mock_factory, progress):
         """An empty task list returns total=0 and empty results."""
-        raw = await batch_prompt(tasks=[], progress=progress)
-        data = json.loads(raw)
+        result = await batch_prompt(tasks=[], progress=progress)
 
-        assert data["total"] == 0
-        assert data["results"] == []
+        assert result.total == 0
+        assert result.results == []
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_unexpected_exception_captured(self, mock_factory, progress):
         """RuntimeError from runner is captured as task error, not propagated."""
         _setup_mock_runner(mock_factory, side_effect=RuntimeError("unexpected boom"))
 
-        raw = await batch_prompt(tasks=[make_agent_task()], progress=progress)
-        data = json.loads(raw)
+        result = await batch_prompt(tasks=[make_agent_task()], progress=progress)
 
-        assert data["failed"] == 1
-        assert "unexpected boom" in data["results"][0]["error"]
+        assert result.failed == 1
+        assert "unexpected boom" in result.results[0].error
 
     def test_default_concurrency_is_three(self):
         """DEFAULT_MAX_CONCURRENCY constant equals 3."""
@@ -375,7 +381,24 @@ class TestBatchPrompt:
         """A single task's label is the agent name without any suffix."""
         _setup_mock_runner(mock_factory)
 
-        raw = await batch_prompt(tasks=[make_agent_task(agent="gemini")], progress=progress)
-        data = json.loads(raw)
+        result = await batch_prompt(tasks=[make_agent_task(agent="gemini")], progress=progress)
 
-        assert data["results"][0]["label"] == "gemini"
+        assert result.results[0].label == "gemini"
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_ctx_info_called_on_start_and_complete(self, mock_factory, progress, ctx):
+        """ctx.info() is awaited exactly twice: once at start, once at completion."""
+        _setup_mock_runner(mock_factory)
+
+        await batch_prompt(tasks=[make_agent_task()], progress=progress, ctx=ctx)
+
+        assert ctx.info.await_count == 2
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_ctx_none_does_not_raise(self, mock_factory, progress):
+        """Default ctx=None completes without error (documents the None contract)."""
+        _setup_mock_runner(mock_factory)
+
+        # Should not raise even though ctx is None (the default)
+        result = await batch_prompt(tasks=[make_agent_task()], progress=progress)
+        assert isinstance(result, MultiPromptResponse)
