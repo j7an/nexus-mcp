@@ -18,7 +18,7 @@ going through the FunctionTool wrapper.
 import asyncio
 from typing import Any
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.dependencies import Progress, ProgressLike
 
 from nexus_mcp.runners.factory import RunnerFactory
@@ -75,7 +75,8 @@ async def batch_prompt(
     tasks: list[AgentTask],
     progress: ProgressLike = Progress(),  # type: ignore[assignment]  # noqa: B008
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
-) -> str:
+    ctx: Context | None = None,
+) -> MultiPromptResponse:
     """Send multiple prompts to CLI agents in parallel (primary tool).
 
     Fans out tasks server-side with asyncio.gather and a semaphore, enabling
@@ -86,15 +87,18 @@ async def batch_prompt(
         tasks: List of AgentTask objects, each with agent, prompt, and optional fields.
         progress: Progress tracker (auto-injected by FastMCP).
         max_concurrency: Max parallel agent invocations (default: 3).
+        ctx: MCP context (auto-injected by FastMCP). None when called directly in tests.
 
     Returns:
-        JSON string containing MultiPromptResponse with results for each task.
+        MultiPromptResponse with results for each task.
     """
 
     labelled = _assign_labels(tasks)
     semaphore = asyncio.Semaphore(max_concurrency)
 
     await progress.set_total(len(labelled))
+    if ctx:
+        await ctx.info(f"Starting batch of {len(labelled)} tasks (concurrency={max_concurrency})")
 
     async def _run_single(task: AgentTask) -> AgentTaskResult:
         async with semaphore:
@@ -115,7 +119,10 @@ async def batch_prompt(
                 return AgentTaskResult(label=task.label, error=str(e))  # type: ignore[arg-type]
 
     results = await asyncio.gather(*[_run_single(t) for t in labelled])
-    return MultiPromptResponse(results=list(results)).model_dump_json()
+    response = MultiPromptResponse(results=list(results))
+    if ctx:
+        await ctx.info(f"Batch complete: {response.succeeded}/{response.total} succeeded")
+    return response
 
 
 async def prompt(
@@ -125,6 +132,7 @@ async def prompt(
     context: dict[str, Any] | None = None,
     execution_mode: ExecutionMode = "default",
     model: str | None = None,
+    ctx: Context | None = None,
 ) -> str:
     """Send a prompt to a CLI agent as a background task.
 
@@ -138,6 +146,7 @@ async def prompt(
         context: Optional context metadata
         execution_mode: 'default' (safe), 'sandbox', or 'yolo'
         model: Optional model name (uses CLI default if not specified)
+        ctx: MCP context (auto-injected by FastMCP). None when called directly in tests.
 
     Returns:
         Agent's response text
@@ -149,8 +158,7 @@ async def prompt(
         execution_mode=execution_mode,
         model=model,
     )
-    raw = await batch_prompt(tasks=[task], progress=progress)
-    result = MultiPromptResponse.model_validate_json(raw)
+    result = await batch_prompt(tasks=[task], progress=progress, ctx=ctx)
     task_result = result.results[0]
     if task_result.error:
         raise RuntimeError(task_result.error)

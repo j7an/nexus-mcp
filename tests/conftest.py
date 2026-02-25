@@ -8,6 +8,7 @@ any additional imports.
 from unittest.mock import AsyncMock
 
 import pytest
+from fastmcp import Context
 from fastmcp.server.dependencies import InMemoryProgress
 
 
@@ -23,3 +24,14 @@ def progress() -> AsyncMock:
     methods raise AttributeError instead of silently succeeding.
     """
     return AsyncMock(spec=InMemoryProgress)
+
+
+@pytest.fixture
+def ctx() -> AsyncMock:
+    """Minimal mock for FastMCP Context DI sentinel.
+
+    Context is None-defaulted in server functions, so tests that don't need
+    it can omit it. This fixture provides a spec'd mock for tests that
+    verify ctx.info() logging behavior.
+    """
+    return AsyncMock(spec=Context)
