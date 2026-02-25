@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from packaging import version as pkg_version
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class CLIInfo:
     """CLI detection result."""
 
@@ -83,7 +83,7 @@ def supports_json_output(cli: str, version: str) -> bool:
     return False
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class CLICapabilities:
     """Feature capabilities for a specific CLI + version."""
 
