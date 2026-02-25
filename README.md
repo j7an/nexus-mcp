@@ -9,7 +9,7 @@ A Model Context Protocol (MCP) server that enables AI models to invoke AI CLI ag
 ### Prerequisites
 
 **Required:**
-- **Python 3.12+** ([download](https://www.python.org/downloads/))
+- **Python 3.13+** ([download](https://www.python.org/downloads/))
 - **uv** dependency manager ([install guide](https://github.com/astral-sh/uv))
   ```bash
   curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -140,7 +140,7 @@ uv run pre-commit run --all-files
 
 ## Python Requirements
 
-- **Python 3.12+** required for modern syntax:
+- **Python 3.13+** required for modern syntax:
   - `type` keyword for type aliases: `type AgentName = str`
   - Union syntax: `str | None` (not `Optional[str]`)
   - `match` statements for complex conditionals
