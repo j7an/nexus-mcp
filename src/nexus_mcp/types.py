@@ -1,6 +1,6 @@
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 type ExecutionMode = Literal["default", "sandbox", "yolo"]
 
@@ -27,12 +27,14 @@ class PromptRequest(BaseModel):
 
 
 class AgentResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     agent: str
     output: str
     raw_output: str
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    def with_metadata(self, **updates: Any) -> "AgentResponse":
+    def with_metadata(self, **updates: Any) -> Self:
         """Return a copy with updated metadata keys."""
         metadata = self.metadata.copy()
         metadata.update(updates)
@@ -40,6 +42,8 @@ class AgentResponse(BaseModel):
 
 
 class SubprocessResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     stdout: str
     stderr: str
     returncode: int
@@ -66,12 +70,14 @@ class AgentTask(BaseModel):
 class AgentTaskResult(BaseModel):
     """Per-task output for batch_prompt — exactly one of output/error is set."""
 
+    model_config = ConfigDict(frozen=True)
+
     label: str
     output: str | None = None
     error: str | None = None
 
     @model_validator(mode="after")
-    def exactly_one_of_output_or_error(self) -> "AgentTaskResult":
+    def exactly_one_of_output_or_error(self) -> Self:
         if self.output is not None and self.error is not None:
             raise ValueError("output and error are mutually exclusive")
         if self.output is None and self.error is None:
@@ -86,14 +92,21 @@ class AgentTaskResult(BaseModel):
 class MultiPromptResponse(BaseModel):
     """Aggregate response from batch_prompt with auto-computed counts."""
 
-    results: list[AgentTaskResult]
-    total: int = 0
-    succeeded: int = 0
-    failed: int = 0
+    model_config = ConfigDict(frozen=True)
 
-    @model_validator(mode="after")
-    def compute_counts(self) -> "MultiPromptResponse":
-        self.total = len(self.results)
-        self.succeeded = sum(1 for r in self.results if r.success)
-        self.failed = self.total - self.succeeded
-        return self
+    results: list[AgentTaskResult]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total(self) -> int:
+        return len(self.results)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def succeeded(self) -> int:
+        return sum(1 for r in self.results if r.success)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def failed(self) -> int:
+        return self.total - self.succeeded
