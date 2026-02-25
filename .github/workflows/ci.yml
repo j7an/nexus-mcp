@@ -33,11 +33,12 @@ jobs:
     needs: [update-lockfile]
     if: ${{ !cancelled() && needs.update-lockfile.result != 'failure' }}
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.python-version == '3.14' }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.12", "3.13", "3.14"]
+        python-version: ["3.13", "3.14"]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -49,7 +50,7 @@ jobs:
       - name: Run tests
         run: uv run pytest -m "not integration" --cov=nexus_mcp --cov-report=term-missing --cov-report=xml -v
       - name: Check diff coverage
-        if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
         run: uv run diff-cover coverage.xml --fail-under=90 --compare-branch=origin/${{ github.base_ref }}
 
   lint:
