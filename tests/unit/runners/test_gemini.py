@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from nexus_mcp.cli_detector import CLIInfo
-from nexus_mcp.exceptions import CLINotFoundError, ParseError, SubprocessError
+from nexus_mcp.exceptions import CLINotFoundError, ParseError, RetryableError, SubprocessError
 from nexus_mcp.runners.gemini import GeminiRunner
 from tests.fixtures import (
     GEMINI_JSON_RESPONSE,
@@ -777,6 +777,98 @@ class TestGaxiosErrorExtraction:
         primary_message = exc_info.value.args[0]
         assert "Gemini API error" not in primary_message
         assert "CLI command failed" in primary_message
+
+
+class TestGeminiRunnerRetryableErrors:
+    """Test GeminiRunner raises RetryableError for transient error codes (429, 503).
+
+    These tests verify _try_extract_error classifies codes correctly and
+    that the retry loop in run() triggers on RetryableError.
+    """
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_429_raises_retryable_error(self, mock_exec):
+        """HTTP 429 (rate limit) → RetryableError, not plain SubprocessError."""
+        error_stdout = (
+            '{"error": {"code": 429, "message": "Quota exceeded", "status": "RESOURCE_EXHAUSTED"}}'
+        )
+        mock_exec.return_value = create_mock_process(stdout=error_stdout, stderr="", returncode=1)
+        runner = GeminiRunner()
+        request = make_prompt_request(max_retries=1)  # single attempt to isolate behavior
+
+        with pytest.raises(RetryableError) as exc_info:
+            await runner.run(request)
+
+        assert exc_info.value.returncode == 1
+        assert "429" in exc_info.value.args[0]
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_503_raises_retryable_error(self, mock_exec):
+        """HTTP 503 (service unavailable) → RetryableError."""
+        error_stdout = (
+            '{"error": {"code": 503, "message": "Service unavailable", "status": "UNAVAILABLE"}}'
+        )
+        mock_exec.return_value = create_mock_process(stdout=error_stdout, stderr="", returncode=1)
+        runner = GeminiRunner()
+        request = make_prompt_request(max_retries=1)
+
+        with pytest.raises(RetryableError) as exc_info:
+            await runner.run(request)
+
+        assert "503" in exc_info.value.args[0]
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_401_raises_non_retryable_subprocess_error(self, mock_exec):
+        """HTTP 401 (auth failure) → plain SubprocessError, NOT RetryableError."""
+        error_stdout = (
+            '{"error": {"code": 401, "message": "API key not valid", "status": "UNAUTHENTICATED"}}'
+        )
+        mock_exec.return_value = create_mock_process(stdout=error_stdout, stderr="", returncode=1)
+        runner = GeminiRunner()
+        request = make_prompt_request(max_retries=1)
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(request)
+
+        # Verify it's NOT a RetryableError subclass
+        assert not isinstance(exc_info.value, RetryableError)
+        assert "401" in exc_info.value.args[0]
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_gaxios_429_in_stderr_raises_retryable_error(self, mock_exec):
+        """GaxiosError 429 embedded in stderr JSON array → RetryableError."""
+        stderr_with_429 = (
+            "Gemini CLI encountered an API error\n"
+            '[{"error": {"code": 429, "message": "No capacity", "status": "RESOURCE_EXHAUSTED"}}]'
+        )
+        mock_exec.return_value = create_mock_process(
+            stdout="", stderr=stderr_with_429, returncode=1
+        )
+        runner = GeminiRunner()
+        request = make_prompt_request(max_retries=1)
+
+        with pytest.raises(RetryableError) as exc_info:
+            await runner.run(request)
+
+        assert "429" in exc_info.value.args[0]
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_retry_on_429_succeeds_on_second_attempt(self, mock_exec):
+        """Full integration: first call returns 429 RetryableError, second succeeds."""
+        error_stdout = (
+            '{"error": {"code": 429, "message": "Quota exceeded", "status": "RESOURCE_EXHAUSTED"}}'
+        )
+        mock_exec.side_effect = [
+            create_mock_process(stdout=error_stdout, stderr="", returncode=1),
+            create_mock_process(stdout='{"response": "Success after retry"}', returncode=0),
+        ]
+        runner = GeminiRunner()
+        request = make_prompt_request(max_retries=2)
+
+        response = await runner.run(request)
+
+        assert response.output == "Success after retry"
+        assert mock_exec.await_count == 2
 
 
 class TestGeminiRunnerEnvConfiguration:

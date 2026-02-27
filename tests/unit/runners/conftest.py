@@ -17,3 +17,18 @@ def mock_cli_detection():
     """
     with cli_detection_mocks() as mock:
         yield mock
+
+
+@pytest.fixture(autouse=True)
+def fast_retry_sleep(monkeypatch):
+    """Patch asyncio.sleep to be instant for all runner unit tests.
+
+    Prevents real waiting during the retry backoff loop. Tests in
+    tests/unit/test_process.py (timeout tests) are unaffected since
+    they are outside this directory.
+    """
+
+    async def instant_sleep(_: float) -> None:
+        pass
+
+    monkeypatch.setattr("asyncio.sleep", instant_sleep)

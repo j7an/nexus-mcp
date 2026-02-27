@@ -142,6 +142,47 @@ class SubprocessTimeoutError(SubprocessError):
         self.timeout = timeout
 
 
+class RetryableError(SubprocessError):
+    """Transient subprocess error that should be retried.
+
+    Raised when a CLI subprocess returns an error code indicating a temporary
+    condition (e.g., rate limiting HTTP 429, service unavailability HTTP 503).
+    The retry loop in AbstractRunner will catch this and retry with backoff.
+
+    Attributes:
+        retry_after: Suggested wait time in seconds before retrying (None = no hint).
+        stderr: Inherited from SubprocessError.
+        command: Inherited from SubprocessError.
+        returncode: Inherited from SubprocessError.
+        stdout: Inherited from SubprocessError.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_after: float | None = None,
+        stderr: str = "",
+        command: list[str] | None = None,
+        returncode: int | None = None,
+        stdout: str = "",
+    ):
+        """Initialize RetryableError.
+
+        Args:
+            message: Human-readable error description.
+            retry_after: Suggested seconds to wait before retrying (keyword-only, default: None).
+            stderr: Standard error output from the subprocess (default: "").
+            command: The command that failed (default: None).
+            returncode: The subprocess exit code (default: None).
+            stdout: Standard output from the subprocess (default: "").
+        """
+        super().__init__(
+            message, stderr=stderr, command=command, returncode=returncode, stdout=stdout
+        )
+        self.retry_after = retry_after
+
+
 class CLINotFoundError(NexusMCPError):
     """CLI binary not found in PATH.
 

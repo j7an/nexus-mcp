@@ -17,10 +17,12 @@ from typing import Any
 
 from nexus_mcp.cli_detector import detect_cli, get_cli_capabilities, get_cli_version
 from nexus_mcp.config import get_agent_env
-from nexus_mcp.exceptions import CLINotFoundError, ParseError, SubprocessError
+from nexus_mcp.exceptions import CLINotFoundError, ParseError, RetryableError, SubprocessError
 from nexus_mcp.parser import extract_last_json_array, extract_last_json_object
 from nexus_mcp.runners.base import AbstractRunner
 from nexus_mcp.types import AgentResponse, PromptRequest
+
+_RETRYABLE_CODES: frozenset[int] = frozenset({429, 503})
 
 
 class GeminiRunner(AbstractRunner):
@@ -209,8 +211,17 @@ class GeminiRunner(AbstractRunner):
         status = error.get("status", "")
         if code == 1 and message == "[object Object]":
             return
+        error_msg = f"Gemini API error {code}: {message} ({status})"
+        if isinstance(code, int) and code in _RETRYABLE_CODES:
+            raise RetryableError(
+                error_msg,
+                stderr=stderr,
+                stdout=stdout,
+                returncode=returncode,
+                command=command,
+            )
         raise SubprocessError(
-            f"Gemini API error {code}: {message} ({status})",
+            error_msg,
             stderr=stderr,
             stdout=stdout,
             returncode=returncode,

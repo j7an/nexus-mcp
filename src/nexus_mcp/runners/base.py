@@ -5,22 +5,38 @@ Defines:
 - CLIRunner: Protocol specifying the runner interface
 - AbstractRunner: ABC implementing Template Method pattern
 
-Template Method pattern in AbstractRunner.run():
+Template Method pattern in AbstractRunner._execute():
 1. build_command(request) → list[str]
 2. run_subprocess(command) → SubprocessResult
 3. Check returncode != 0 → raise SubprocessError (fail fast)
 4. parse_output(stdout, stderr) → AgentResponse
 5. _apply_output_limit(response) → AgentResponse (truncate if needed)
+
+AbstractRunner.run() wraps _execute() in a retry loop:
+- Retries on RetryableError with exponential backoff + full jitter
+- Non-retryable errors (SubprocessError, ParseError) propagate immediately
+- max_attempts from request.max_retries or NEXUS_RETRY_MAX_ATTEMPTS env var
 """
 
+import asyncio
+import logging
+import random
 import tempfile
 from abc import ABC, abstractmethod
 from typing import Protocol
 
-from nexus_mcp.config import get_global_output_limit, get_global_timeout
-from nexus_mcp.exceptions import SubprocessError
+from nexus_mcp.config import (
+    get_global_output_limit,
+    get_global_timeout,
+    get_retry_base_delay,
+    get_retry_max_attempts,
+    get_retry_max_delay,
+)
+from nexus_mcp.exceptions import RetryableError, SubprocessError
 from nexus_mcp.process import run_subprocess
 from nexus_mcp.types import AgentResponse, PromptRequest
+
+logger = logging.getLogger(__name__)
 
 
 class CLIRunner(Protocol):
@@ -64,9 +80,51 @@ class AbstractRunner(ABC):
     def __init__(self) -> None:
         """Initialize runner with global configuration."""
         self.timeout = get_global_timeout()
+        self.base_delay = get_retry_base_delay()
+        self.max_delay = get_retry_max_delay()
+        self.default_max_attempts = get_retry_max_attempts()
 
     async def run(self, request: PromptRequest) -> AgentResponse:
-        """Execute CLI agent using Template Method pattern.
+        """Execute CLI agent with retry on transient errors.
+
+        Wraps _execute() in a retry loop. RetryableError triggers exponential
+        backoff with full jitter. All other exceptions propagate immediately.
+
+        Args:
+            request: Prompt request with agent, prompt, execution mode, etc.
+                     request.max_retries overrides the env-var default when set.
+
+        Returns:
+            AgentResponse with parsed output and metadata.
+
+        Raises:
+            RetryableError: If all retry attempts are exhausted.
+            SubprocessError: If CLI fails with a non-retryable error code.
+            ParseError: If output parsing fails.
+        """
+        max_attempts = (
+            request.max_retries if request.max_retries is not None else self.default_max_attempts
+        )
+        for attempt in range(max_attempts):
+            try:
+                return await self._execute(request)
+            except RetryableError as e:
+                if attempt == max_attempts - 1:
+                    raise
+                delay = self._compute_backoff(attempt, e.retry_after)
+                logger.warning(
+                    "Retryable error (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1,
+                    max_attempts,
+                    delay,
+                    e,
+                )
+                await asyncio.sleep(delay)
+        # Unreachable: loop always returns or raises — satisfies type checker
+        raise AssertionError("unreachable: retry loop exited without result or exception")
+
+    async def _execute(self, request: PromptRequest) -> AgentResponse:
+        """Execute CLI agent once using Template Method pattern.
 
         Template steps:
         1. build_command(request) → command list
@@ -82,6 +140,7 @@ class AbstractRunner(ABC):
             AgentResponse with parsed output and metadata.
 
         Raises:
+            RetryableError: If _recover_from_error raises for a retryable error code.
             SubprocessError: If CLI fails (non-zero exit) or subprocess execution errors.
             ParseError: If output parsing fails (from parse_output()).
         """
@@ -111,6 +170,28 @@ class AbstractRunner(ABC):
 
         # Step 5: Apply output limiting
         return self._apply_output_limit(response)
+
+    def _compute_backoff(self, attempt: int, retry_after: float | None) -> float:
+        """Compute exponential backoff delay with full jitter.
+
+        Uses AWS-recommended full jitter formula:
+            delay = random.uniform(0, min(max_delay, base_delay * 2^attempt))
+
+        If retry_after hint is provided, uses max(computed, retry_after) to
+        respect the server's suggested wait time.
+
+        Args:
+            attempt: Zero-based attempt index (0 = first retry after first failure).
+            retry_after: Optional server-suggested wait time in seconds.
+
+        Returns:
+            Delay in seconds to wait before the next attempt.
+        """
+        cap = min(self.max_delay, self.base_delay * (2**attempt))
+        computed = random.uniform(0, cap)
+        if retry_after is not None:
+            return max(computed, retry_after)
+        return computed
 
     def _apply_output_limit(self, response: AgentResponse) -> AgentResponse:
         """Truncate output if exceeds limit, save full output to temp file.
