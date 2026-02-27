@@ -109,6 +109,7 @@ async def batch_prompt(
                     context=task.context,
                     execution_mode=task.execution_mode,
                     model=task.model,
+                    max_retries=task.max_retries,
                 )
                 runner = RunnerFactory.create(task.agent)
                 response = await runner.run(request)
@@ -132,6 +133,7 @@ async def prompt(
     context: dict[str, Any] | None = None,
     execution_mode: ExecutionMode = "default",
     model: str | None = None,
+    max_retries: int | None = None,
     ctx: Context | None = None,
 ) -> str:
     """Send a prompt to a CLI agent as a background task.
@@ -146,6 +148,7 @@ async def prompt(
         context: Optional context metadata
         execution_mode: 'default' (safe), 'sandbox', or 'yolo'
         model: Optional model name (uses CLI default if not specified)
+        max_retries: Max retry attempts for transient errors (None uses env default)
         ctx: MCP context (auto-injected by FastMCP). None when called directly in tests.
 
     Returns:
@@ -157,6 +160,7 @@ async def prompt(
         context=context or {},
         execution_mode=execution_mode,
         model=model,
+        max_retries=max_retries,
     )
     result = await batch_prompt(tasks=[task], progress=progress, ctx=ctx)
     task_result = result.results[0]

@@ -24,6 +24,10 @@ class PromptRequest(BaseModel):
         default_factory=list,
         description="Optional file paths for agent context (appended to prompt)",
     )
+    max_retries: int | None = Field(
+        default=None,
+        description="Max retry attempts for transient errors (None uses NEXUS_RETRY_MAX_ATTEMPTS)",
+    )
 
 
 class AgentResponse(BaseModel):
@@ -58,6 +62,7 @@ class AgentTask(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
     execution_mode: ExecutionMode = "default"
     model: str | None = None
+    max_retries: int | None = None
 
     @field_validator("agent", "prompt")
     @classmethod

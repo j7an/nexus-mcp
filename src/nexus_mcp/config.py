@@ -19,6 +19,14 @@ def _get_int_env(env_var: str, default: str, label: str) -> int:
         raise ConfigurationError(f"Invalid {label} value: {raw!r}", config_key=env_var) from None
 
 
+def _get_float_env(env_var: str, default: str, label: str) -> float:
+    raw = os.getenv(env_var, default)
+    try:
+        return float(raw)
+    except ValueError:
+        raise ConfigurationError(f"Invalid {label} value: {raw!r}", config_key=env_var) from None
+
+
 def get_global_output_limit() -> int:
     """Get maximum output size in bytes from env var.
 
@@ -47,6 +55,51 @@ def get_global_timeout() -> int:
         NEXUS_TIMEOUT_SECONDS: Subprocess timeout in seconds
     """
     return _get_int_env("NEXUS_TIMEOUT_SECONDS", "600", "timeout")
+
+
+def get_retry_max_attempts() -> int:
+    """Get maximum retry attempts from env var.
+
+    Returns:
+        Max retry attempts (default: 3)
+
+    Raises:
+        ConfigurationError: If env var value is not a valid integer
+
+    Environment Variable:
+        NEXUS_RETRY_MAX_ATTEMPTS: Max number of attempts (including the first)
+    """
+    return _get_int_env("NEXUS_RETRY_MAX_ATTEMPTS", "3", "retry max attempts")
+
+
+def get_retry_base_delay() -> float:
+    """Get retry base delay in seconds from env var.
+
+    Returns:
+        Base delay in seconds for exponential backoff (default: 2.0s)
+
+    Raises:
+        ConfigurationError: If env var value is not a valid float
+
+    Environment Variable:
+        NEXUS_RETRY_BASE_DELAY: Base seconds for exponential backoff
+    """
+    return _get_float_env("NEXUS_RETRY_BASE_DELAY", "2.0", "retry base delay")
+
+
+def get_retry_max_delay() -> float:
+    """Get retry max delay cap in seconds from env var.
+
+    Returns:
+        Maximum delay cap in seconds (default: 60.0s)
+
+    Raises:
+        ConfigurationError: If env var value is not a valid float
+
+    Environment Variable:
+        NEXUS_RETRY_MAX_DELAY: Maximum seconds to wait between retries
+    """
+    return _get_float_env("NEXUS_RETRY_MAX_DELAY", "60.0", "retry max delay")
 
 
 def get_agent_env(agent: str, key: str, default: str | None = None) -> str | None:

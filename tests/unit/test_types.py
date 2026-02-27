@@ -186,3 +186,38 @@ def test_multi_prompt_response_counts():
     assert response.total == 3
     assert response.succeeded == 2
     assert response.failed == 1
+
+
+# ---------------------------------------------------------------------------
+# max_retries field tests
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_request_max_retries_defaults_to_none():
+    """PromptRequest.max_retries defaults to None (falls back to env default)."""
+    req = PromptRequest(agent="gemini", prompt="Hello")
+    assert req.max_retries is None
+
+
+def test_prompt_request_max_retries_accepts_custom_value():
+    """PromptRequest.max_retries accepts a positive integer."""
+    req = PromptRequest(agent="gemini", prompt="Hello", max_retries=5)
+    assert req.max_retries == 5
+
+
+def test_prompt_request_max_retries_accepts_one():
+    """max_retries=1 disables retry (run once, no retry on failure)."""
+    req = PromptRequest(agent="gemini", prompt="Hello", max_retries=1)
+    assert req.max_retries == 1
+
+
+def test_agent_task_max_retries_defaults_to_none():
+    """AgentTask.max_retries defaults to None."""
+    task = AgentTask(agent="gemini", prompt="Hello")
+    assert task.max_retries is None
+
+
+def test_agent_task_max_retries_accepts_custom_value():
+    """AgentTask.max_retries accepts a positive integer."""
+    task = AgentTask(agent="gemini", prompt="Hello", max_retries=2)
+    assert task.max_retries == 2

@@ -145,6 +145,35 @@ class TestPrompt:
             )
 
     @patch("nexus_mcp.server.RunnerFactory")
+    async def test_prompt_passes_max_retries(self, mock_factory, progress):
+        """max_retries parameter is passed through to the PromptRequest."""
+        mock_runner = _setup_mock_runner(mock_factory, output="Done")
+
+        await prompt(
+            agent="gemini",
+            prompt="Test prompt",
+            progress=progress,
+            max_retries=7,
+        )
+
+        call_args = mock_runner.run.call_args.args[0]
+        assert call_args.max_retries == 7
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_prompt_max_retries_defaults_to_none(self, mock_factory, progress):
+        """max_retries defaults to None when not specified in prompt()."""
+        mock_runner = _setup_mock_runner(mock_factory, output="Done")
+
+        await prompt(
+            agent="gemini",
+            prompt="Test prompt",
+            progress=progress,
+        )
+
+        call_args = mock_runner.run.call_args.args[0]
+        assert call_args.max_retries is None
+
+    @patch("nexus_mcp.server.RunnerFactory")
     async def test_ctx_forwarded_to_batch_prompt(self, mock_factory, progress, ctx):
         """ctx passed to prompt() is forwarded through to batch_prompt()."""
         _setup_mock_runner(mock_factory, output="Done")
@@ -402,3 +431,25 @@ class TestBatchPrompt:
         # Should not raise even though ctx is None (the default)
         result = await batch_prompt(tasks=[make_agent_task()], progress=progress)
         assert isinstance(result, MultiPromptResponse)
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_batch_prompt_passes_max_retries_to_request(self, mock_factory, progress):
+        """AgentTask.max_retries is threaded through to PromptRequest."""
+        mock_runner = _setup_mock_runner(mock_factory)
+
+        tasks = [make_agent_task(max_retries=5)]
+        await batch_prompt(tasks=tasks, progress=progress)
+
+        call_args = mock_runner.run.call_args.args[0]
+        assert call_args.max_retries == 5
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_batch_prompt_max_retries_none_by_default(self, mock_factory, progress):
+        """When AgentTask.max_retries is None, PromptRequest.max_retries is also None."""
+        mock_runner = _setup_mock_runner(mock_factory)
+
+        tasks = [make_agent_task()]  # max_retries not specified → None
+        await batch_prompt(tasks=tasks, progress=progress)
+
+        call_args = mock_runner.run.call_args.args[0]
+        assert call_args.max_retries is None

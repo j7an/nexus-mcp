@@ -5,6 +5,7 @@ Verifies all runner features work together in a single execution:
 2. Error recovery (parse stdout despite non-zero exit)
 3. File references (appended to prompt)
 4. Environment variable configuration (custom path, model, limits)
+5. Retry + output truncation work together end-to-end
 """
 
 import os
@@ -56,3 +57,29 @@ async def test_all_enhancements_together(mock_exec):
     # 4. Output was truncated
     assert response.metadata.get("truncated") is True
     assert len(response.output.encode("utf-8")) <= 1000
+
+
+@patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+async def test_retry_and_output_truncation_together(mock_exec):
+    """Verify retry + output truncation work together: fail once, then succeed with large output."""
+    error_stdout = (
+        '{"error": {"code": 429, "message": "Quota exceeded", "status": "RESOURCE_EXHAUSTED"}}'
+    )
+    # Use output larger than the 50KB default limit to guarantee truncation
+    large_output = "y" * 60_000
+    mock_exec.side_effect = [
+        create_mock_process(stdout=error_stdout, returncode=1),  # 429 → RetryableError
+        create_mock_process(stdout='{"response": "' + large_output + '"}', returncode=0),  # success
+    ]
+
+    runner = GeminiRunner()
+    request = make_prompt_request(prompt="test", max_retries=2)
+
+    response = await runner.run(request)
+
+    # Retried after 429 and succeeded
+    assert mock_exec.await_count == 2
+
+    # Output was truncated after retry success (60KB > 50KB default limit)
+    assert response.metadata.get("truncated") is True
+    assert len(response.output.encode("utf-8")) <= 50_000

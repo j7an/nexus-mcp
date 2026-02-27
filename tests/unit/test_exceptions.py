@@ -3,6 +3,7 @@ from nexus_mcp.exceptions import (
     ConfigurationError,
     NexusMCPError,
     ParseError,
+    RetryableError,
     SubprocessError,
     SubprocessTimeoutError,
     UnsupportedAgentError,
@@ -175,3 +176,67 @@ def test_subprocess_timeout_error_stdout_defaults_to_empty():
     """SubprocessTimeoutError stdout defaults to empty string."""
     err = SubprocessTimeoutError("Timed out", timeout=30.0)
     assert err.stdout == ""
+
+
+# ---------------------------------------------------------------------------
+# RetryableError tests
+# ---------------------------------------------------------------------------
+
+
+def test_retryable_error_inherits_subprocess_error():
+    """RetryableError should inherit from SubprocessError and NexusMCPError."""
+    assert issubclass(RetryableError, SubprocessError)
+    assert issubclass(RetryableError, NexusMCPError)
+
+
+def test_retryable_error_retry_after_defaults_to_none():
+    """retry_after defaults to None when not provided."""
+    err = RetryableError("Rate limited")
+    assert err.retry_after is None
+
+
+def test_retryable_error_stores_retry_after():
+    """retry_after stores custom wait hint (keyword-only)."""
+    err = RetryableError("Rate limited", retry_after=30.0)
+    assert err.retry_after == 30.0
+
+
+def test_retryable_error_stores_subprocess_fields():
+    """RetryableError stores all SubprocessError fields."""
+    err = RetryableError(
+        "Rate limited",
+        stderr="quota exceeded",
+        command=["gemini", "-p", "test"],
+        returncode=429,
+        stdout='{"error": {"code": 429}}',
+    )
+    assert err.stderr == "quota exceeded"
+    assert err.command == ["gemini", "-p", "test"]
+    assert err.returncode == 429
+    assert err.stdout == '{"error": {"code": 429}}'
+
+
+def test_retryable_error_str_inherits_subprocess_format():
+    """__str__ uses SubprocessError format including returncode and stderr."""
+    err = RetryableError("Rate limited", returncode=429, stderr="quota exceeded")
+    result = str(err)
+    assert "Rate limited" in result
+    assert "returncode=429" in result
+    assert "quota exceeded" in result
+
+
+def test_retryable_error_default_subprocess_fields():
+    """All SubprocessError fields default to empty/None."""
+    err = RetryableError("Rate limited")
+    assert err.stderr == ""
+    assert err.command is None
+    assert err.returncode is None
+    assert err.stdout == ""
+
+
+def test_retryable_error_caught_by_subprocess_error_handler():
+    """pytest.raises(SubprocessError) catches RetryableError (subclass relationship)."""
+    import pytest
+
+    with pytest.raises(SubprocessError):
+        raise RetryableError("Rate limited")
