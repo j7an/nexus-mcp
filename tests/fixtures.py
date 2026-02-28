@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 from nexus_mcp.cli_detector import CLIInfo
+from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import AgentResponse, AgentTask, PromptRequest
 
 # ---------------------------------------------------------------------------
@@ -62,6 +63,7 @@ def cli_detection_mocks():
     ):
         mock_detect.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
         yield mock_detect
+    RunnerFactory.clear_cache()
 
 
 # ---------------------------------------------------------------------------

@@ -16,10 +16,12 @@ going through the FunctionTool wrapper.
 """
 
 import asyncio
+import logging
 from typing import Any
 
 from fastmcp import Context, FastMCP
 from fastmcp.dependencies import Progress, ProgressLike
+from fastmcp.exceptions import ToolError
 
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import (
@@ -28,10 +30,30 @@ from nexus_mcp.types import (
     AgentTaskResult,
     ExecutionMode,
     MultiPromptResponse,
-    PromptRequest,
 )
 
 mcp = FastMCP("nexus-mcp")
+logger = logging.getLogger(__name__)
+
+
+def _next_available_label(base: str, reserved: set[str]) -> str:
+    """Return the first available label derived from base, avoiding reserved names.
+
+    Returns base if available, otherwise base-2, base-3, etc.
+
+    Args:
+        base: Preferred label (typically agent name).
+        reserved: Set of already-taken labels.
+
+    Returns:
+        base if not reserved, otherwise base-N for the lowest N >= 2 not in reserved.
+    """
+    if base not in reserved:
+        return base
+    n = 2
+    while f"{base}-{n}" in reserved:
+        n += 1
+    return f"{base}-{n}"
 
 
 def _assign_labels(tasks: list[AgentTask]) -> list[AgentTask]:
@@ -56,17 +78,9 @@ def _assign_labels(tasks: list[AgentTask]) -> list[AgentTask]:
             result.append(task)
             continue
 
-        base = task.agent
-        if base not in reserved:
-            reserved.add(base)
-            result.append(task.model_copy(update={"label": base}))
-        else:
-            n = 2
-            while f"{base}-{n}" in reserved:
-                n += 1
-            label = f"{base}-{n}"
-            reserved.add(label)
-            result.append(task.model_copy(update={"label": label}))
+        label = _next_available_label(task.agent, reserved)
+        reserved.add(label)
+        result.append(task.model_copy(update={"label": label}))
 
     return result
 
@@ -103,21 +117,15 @@ async def batch_prompt(
     async def _run_single(task: AgentTask) -> AgentTaskResult:
         async with semaphore:
             try:
-                request = PromptRequest(
-                    agent=task.agent,
-                    prompt=task.prompt,
-                    context=task.context,
-                    execution_mode=task.execution_mode,
-                    model=task.model,
-                    max_retries=task.max_retries,
-                )
+                request = task.to_request()
                 runner = RunnerFactory.create(task.agent)
                 response = await runner.run(request)
-                await progress.increment(1)
                 return AgentTaskResult(label=task.label, output=response.output)  # type: ignore[arg-type]
             except Exception as e:
+                logger.exception("Task %r failed: %s", task.label, e)
+                return AgentTaskResult(label=task.label, error=str(e), error_type=type(e).__name__)  # type: ignore[arg-type]
+            finally:
                 await progress.increment(1)
-                return AgentTaskResult(label=task.label, error=str(e))  # type: ignore[arg-type]
 
     results = await asyncio.gather(*[_run_single(t) for t in labelled])
     response = MultiPromptResponse(results=list(results))
@@ -165,7 +173,7 @@ async def prompt(
     result = await batch_prompt(tasks=[task], progress=progress, ctx=ctx)
     task_result = result.results[0]
     if task_result.error:
-        raise RuntimeError(task_result.error)
+        raise ToolError(task_result.formatted_error)
     return task_result.output  # type: ignore[return-value]
 
 

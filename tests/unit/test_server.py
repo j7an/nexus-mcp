@@ -9,8 +9,9 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastmcp.exceptions import ToolError
 
-from nexus_mcp.exceptions import SubprocessError, UnsupportedAgentError
+from nexus_mcp.exceptions import ParseError, SubprocessError, UnsupportedAgentError
 from nexus_mcp.server import _assign_labels, batch_prompt, list_agents, prompt
 from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY, MultiPromptResponse
 from tests.fixtures import make_agent_response, make_agent_task
@@ -119,10 +120,10 @@ class TestPrompt:
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_prompt_handles_unsupported_agent(self, mock_factory, progress):
-        """RuntimeError raised when factory cannot create runner for unknown agent."""
+        """ToolError raised when factory cannot create runner for unknown agent."""
         mock_factory.create.side_effect = UnsupportedAgentError("unknown_agent")
 
-        with pytest.raises(RuntimeError, match="unknown_agent"):
+        with pytest.raises(ToolError, match="unknown_agent"):
             await prompt(
                 agent="unknown_agent",
                 prompt="Test prompt",
@@ -131,13 +132,13 @@ class TestPrompt:
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_prompt_handles_subprocess_error(self, mock_factory, progress):
-        """RuntimeError raised when runner.run() fails."""
+        """ToolError raised when runner.run() fails."""
         _setup_mock_runner(
             mock_factory,
             side_effect=SubprocessError("CLI command failed", stderr="error output", returncode=1),
         )
 
-        with pytest.raises(RuntimeError, match="CLI command failed"):
+        with pytest.raises(ToolError, match="CLI command failed"):
             await prompt(
                 agent="gemini",
                 prompt="Test prompt",
@@ -187,6 +188,21 @@ class TestPrompt:
 
         # batch_prompt calls ctx.info() twice — once at start, once at completion
         assert ctx.info.await_count == 2
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_prompt_raises_tool_error_with_type_prefix(self, mock_factory, progress):
+        """ToolError message includes [ErrorType] prefix when error_type is set."""
+        _setup_mock_runner(
+            mock_factory,
+            side_effect=ParseError("Invalid JSON from Gemini CLI"),
+        )
+
+        with pytest.raises(ToolError, match=r"\[ParseError\].*Invalid JSON from Gemini CLI"):
+            await prompt(
+                agent="gemini",
+                prompt="Test prompt",
+                progress=progress,
+            )
 
 
 class TestListAgents:
@@ -453,3 +469,42 @@ class TestBatchPrompt:
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.max_retries is None
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_batch_prompt_preserves_error_type(self, mock_factory, progress):
+        """error_type is set to the exception class name when runner raises."""
+        _setup_mock_runner(
+            mock_factory,
+            side_effect=ParseError("Invalid JSON from Gemini CLI"),
+        )
+
+        result = await batch_prompt(tasks=[make_agent_task()], progress=progress)
+
+        assert result.failed == 1
+        assert result.results[0].error_type == "ParseError"
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_batch_prompt_error_type_none_on_success(self, mock_factory, progress):
+        """error_type is None for successful tasks."""
+        _setup_mock_runner(mock_factory, output="ok")
+
+        result = await batch_prompt(tasks=[make_agent_task()], progress=progress)
+
+        assert result.succeeded == 1
+        assert result.results[0].error_type is None
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_batch_prompt_logs_exception(self, mock_factory, progress, caplog):
+        """logger.exception() is called when a task raises, capturing the traceback."""
+        import logging
+
+        _setup_mock_runner(
+            mock_factory,
+            side_effect=ParseError("Invalid JSON from Gemini CLI"),
+        )
+
+        with caplog.at_level(logging.ERROR, logger="nexus_mcp.server"):
+            await batch_prompt(tasks=[make_agent_task()], progress=progress)
+
+        assert len(caplog.records) == 1
+        assert caplog.records[0].exc_info is not None
