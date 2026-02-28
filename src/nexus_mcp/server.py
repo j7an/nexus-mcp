@@ -108,12 +108,12 @@ async def batch_prompt(
                 request = task.to_request()
                 runner = RunnerFactory.create(task.agent)
                 response = await runner.run(request)
-                await progress.increment(1)
                 return AgentTaskResult(label=task.label, output=response.output)  # type: ignore[arg-type]
             except Exception as e:
                 logger.exception("Task %r failed: %s", task.label, e)
-                await progress.increment(1)
                 return AgentTaskResult(label=task.label, error=str(e), error_type=type(e).__name__)  # type: ignore[arg-type]
+            finally:
+                await progress.increment(1)
 
     results = await asyncio.gather(*[_run_single(t) for t in labelled])
     response = MultiPromptResponse(results=list(results))

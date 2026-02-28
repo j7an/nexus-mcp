@@ -33,8 +33,8 @@ class RunnerFactory:
 
     _instances: dict[str, AbstractRunner] = {}
 
-    @staticmethod
-    def create(agent: str) -> AbstractRunner:
+    @classmethod
+    def create(cls, agent: str) -> AbstractRunner:
         """Return cached runner instance for the specified agent.
 
         Constructs and caches the runner on first call; subsequent calls with
@@ -53,18 +53,18 @@ class RunnerFactory:
         Example:
             runner = RunnerFactory.create("gemini")  # → GeminiRunner instance
         """
-        cached = RunnerFactory._instances.get(agent)
+        cached = cls._instances.get(agent)
         if cached is not None:
             return cached
-        runner_class = RunnerFactory._REGISTRY.get(agent)
+        runner_class = cls._REGISTRY.get(agent)
         if runner_class is None:
             raise UnsupportedAgentError(agent)
         instance = runner_class()
-        RunnerFactory._instances[agent] = instance
+        cls._instances[agent] = instance
         return instance
 
-    @staticmethod
-    def clear_cache() -> None:
+    @classmethod
+    def clear_cache(cls) -> None:
         """Clear the runner instance cache.
 
         Forces the next create() call to construct a fresh runner instance.
@@ -74,10 +74,10 @@ class RunnerFactory:
         Example:
             RunnerFactory.clear_cache()  # reset between tests
         """
-        RunnerFactory._instances.clear()
+        cls._instances.clear()
 
-    @staticmethod
-    def list_agents() -> list[str]:
+    @classmethod
+    def list_agents(cls) -> list[str]:
         """List all supported agent names in sorted order.
 
         Returns:
@@ -86,4 +86,4 @@ class RunnerFactory:
         Example:
             RunnerFactory.list_agents()  # → ["gemini"]
         """
-        return sorted(RunnerFactory._REGISTRY)
+        return sorted(cls._REGISTRY)
