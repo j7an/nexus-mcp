@@ -1,8 +1,36 @@
 # Nexus MCP
 
-> **Work in progress / Non-functional**
+An MCP server that enables AI models to invoke AI CLI agents (Gemini CLI, Codex, Claude Code) as
+tools. Provides parallel execution, automatic retries with exponential backoff, JSON-first response
+parsing, and structured output through three MCP tools.
 
-A Model Context Protocol (MCP) server that enables AI models to invoke AI CLI agents (Gemini CLI, Codex, Claude Code) as tools. Provides structured prompting and response handling through MCP tools with JSON-first parsing and text fallback strategies.
+## Features
+
+- **Parallel execution** — `batch_prompt` fans out tasks with `asyncio.gather` and a configurable
+  semaphore (default concurrency: 3)
+- **Automatic retries** — exponential backoff with full jitter for transient errors (HTTP 429/503)
+- **Output handling** — JSON-first parsing, brace-depth fallback for noisy stdout, temp-file
+  spillover for outputs exceeding 50 KB
+- **Execution modes** — `default` (safe), `sandbox` (restricted), `yolo` (full auto-approve)
+- **CLI detection** — auto-detects binary path, version, and JSON output capability at startup
+- **Extensible** — implement `build_command` + `parse_output`, register in `RunnerFactory`
+
+| Agent | Status |
+|-------|--------|
+| Gemini CLI | Supported |
+| Codex | Planned |
+| Claude Code | Planned |
+
+## MCP Tools
+
+All prompt tools run as background tasks — they return a task ID immediately so the client can
+poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2–5 minutes).
+
+| Tool | Task? | Description |
+|------|-------|-------------|
+| `batch_prompt` | Yes | Fan out prompts to multiple agents in parallel; returns `MultiPromptResponse` |
+| `prompt` | Yes | Single-agent convenience wrapper; routes to `batch_prompt` |
+| `list_agents` | No | Returns list of supported agent names |
 
 ## Quick Start
 
@@ -17,7 +45,7 @@ A Model Context Protocol (MCP) server that enables AI models to invoke AI CLI ag
   ```
 
 **Optional (for integration tests):**
-- **Gemini CLI** v0.12.0+ — `npm install -g @google/gemini-cli`
+- **Gemini CLI** v0.6.0+ — `npm install -g @google/gemini-cli`
 - **Codex** — check with `codex --version`
 - **Claude Code** — check with `claude --version`
 
@@ -41,9 +69,30 @@ uv run pytest                    # Run tests
 uv run mypy src/nexus_mcp        # Type checking
 uv run ruff check .              # Linting
 
-# 5. Run the MCP server (after implementation)
+# 5. Run the MCP server
 uv run python -m nexus_mcp
 ```
+
+## Configuration
+
+### Global Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NEXUS_OUTPUT_LIMIT_BYTES` | `50000` | Max output size in bytes before temp-file spillover |
+| `NEXUS_TIMEOUT_SECONDS` | `600` | Subprocess timeout in seconds (10 minutes) |
+| `NEXUS_RETRY_MAX_ATTEMPTS` | `3` | Max attempts including the first (set to 1 to disable retries) |
+| `NEXUS_RETRY_BASE_DELAY` | `2.0` | Base seconds for exponential backoff |
+| `NEXUS_RETRY_MAX_DELAY` | `60.0` | Maximum seconds to wait between retries |
+
+### Agent-Specific Environment Variables
+
+Pattern: `NEXUS_{AGENT}_{KEY}` (agent name uppercased)
+
+| Variable | Description |
+|----------|-------------|
+| `NEXUS_GEMINI_PATH` | Override Gemini CLI binary path |
+| `NEXUS_GEMINI_MODEL` | Default Gemini model (e.g. `gemini-2.5-flash`) |
 
 ## Development Workflow
 
@@ -105,18 +154,25 @@ uv run pytest tests/unit/runners/test_gemini.py
 
 ```
 nexus-mcp/
-├── src/nexus_mcp/          # Main package (implementation pending)
+├── src/nexus_mcp/
+│   ├── __main__.py         # Entry point
 │   ├── server.py           # FastMCP server + tools
 │   ├── types.py            # Pydantic models
 │   ├── exceptions.py       # Exception hierarchy
-│   └── runners/            # CLI agent runners
+│   ├── config.py           # Environment variable config
+│   ├── process.py          # Subprocess wrapper
+│   ├── parser.py           # JSON→text fallback parsing
+│   ├── cli_detector.py     # CLI binary detection + version checks
+│   └── runners/
 │       ├── base.py         # Protocol + ABC
 │       ├── factory.py      # RunnerFactory
 │       └── gemini.py       # GeminiRunner
 ├── tests/
 │   ├── unit/               # Fast, mocked tests
-│   ├── integration/        # Real CLI tests (future)
+│   ├── integration/        # Real CLI tests
 │   └── fixtures.py         # Shared test utilities
+├── .github/
+│   └── workflows/          # CI, security, dependabot
 ├── pyproject.toml          # Dependencies + tool config
 └── .pre-commit-config.yaml # Git hooks configuration
 ```
@@ -124,7 +180,7 @@ nexus-mcp/
 ## Common Commands
 
 ```bash
-# Start MCP server (after implementation)
+# Start MCP server
 uv run python -m nexus_mcp
 
 # Run TDD cycle
@@ -146,26 +202,12 @@ uv run pre-commit run --all-files
   - `match` statements for complex conditionals
   - **NO** `from __future__ import annotations`
 
-## Configuration
+## Tool Configuration
 
-### Ruff (Linter + Formatter)
-- Line length: 100 characters
-- 17 rule sets enabled (E/F/I/W core + UP/FA/B/C4/SIM/RET/ICN/TID/TC/ISC/PTH/TD/NPY)
-- Config: `pyproject.toml` → `[tool.ruff]`
-
-### Mypy (Type Checker)
-- Strict mode enabled
-- All type annotations required
-- Config: `pyproject.toml` → `[tool.mypy]`
-
-### Pytest
-- `pytest-asyncio>=1.1.0` with `asyncio_mode = "auto"`
-- No `@pytest.mark.asyncio` decorators needed
-- Config: `pyproject.toml` → `[tool.pytest.ini_options]`
-
-### Pre-commit Hooks
-- ruff-check, ruff-format, mypy, trailing-whitespace, end-of-file-fixer
-- Config: `.pre-commit-config.yaml`
+- **Ruff:** line length 100, 17 rule sets (E/F/I/W + UP/FA/B/C4/SIM/RET/ICN/TID/TC/ISC/PTH/TD/NPY) — `pyproject.toml → [tool.ruff]`
+- **Mypy:** strict mode, all type annotations required — `pyproject.toml → [tool.mypy]`
+- **Pytest:** `asyncio_mode = "auto"`, no `@pytest.mark.asyncio` needed — `pyproject.toml → [tool.pytest.ini_options]`
+- **Pre-commit:** ruff-check, ruff-format, mypy, trailing-whitespace, end-of-file-fixer — `.pre-commit-config.yaml`
 
 ## License
 
