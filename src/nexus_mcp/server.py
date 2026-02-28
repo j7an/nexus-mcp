@@ -30,7 +30,6 @@ from nexus_mcp.types import (
     AgentTaskResult,
     ExecutionMode,
     MultiPromptResponse,
-    PromptRequest,
 )
 
 mcp = FastMCP("nexus-mcp")
@@ -106,14 +105,7 @@ async def batch_prompt(
     async def _run_single(task: AgentTask) -> AgentTaskResult:
         async with semaphore:
             try:
-                request = PromptRequest(
-                    agent=task.agent,
-                    prompt=task.prompt,
-                    context=task.context,
-                    execution_mode=task.execution_mode,
-                    model=task.model,
-                    max_retries=task.max_retries,
-                )
+                request = task.to_request()
                 runner = RunnerFactory.create(task.agent)
                 response = await runner.run(request)
                 await progress.increment(1)
@@ -169,8 +161,7 @@ async def prompt(
     result = await batch_prompt(tasks=[task], progress=progress, ctx=ctx)
     task_result = result.results[0]
     if task_result.error:
-        prefix = f"[{task_result.error_type}] " if task_result.error_type else ""
-        raise ToolError(f"{prefix}{task_result.error}")
+        raise ToolError(task_result.formatted_error)
     return task_result.output  # type: ignore[return-value]
 
 

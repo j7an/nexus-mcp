@@ -71,6 +71,17 @@ class AgentTask(BaseModel):
             raise ValueError("must not be empty")
         return v
 
+    def to_request(self) -> "PromptRequest":
+        """Convert this task to a PromptRequest for runner execution."""
+        return PromptRequest(
+            agent=self.agent,
+            prompt=self.prompt,
+            context=self.context,
+            execution_mode=self.execution_mode,
+            model=self.model,
+            max_retries=self.max_retries,
+        )
+
 
 class AgentTaskResult(BaseModel):
     """Per-task output for batch_prompt — exactly one of output/error is set."""
@@ -93,6 +104,12 @@ class AgentTaskResult(BaseModel):
     @property
     def success(self) -> bool:
         return self.output is not None
+
+    @property
+    def formatted_error(self) -> str:
+        """Error message with [ErrorType] prefix, for use in ToolError messages."""
+        prefix = f"[{self.error_type}] " if self.error_type else ""
+        return f"{prefix}{self.error}"
 
 
 class MultiPromptResponse(BaseModel):

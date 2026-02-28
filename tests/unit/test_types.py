@@ -239,3 +239,55 @@ def test_agent_task_result_error_type_defaults_none():
     """AgentTaskResult.error_type defaults to None when not provided."""
     result = AgentTaskResult(label="t", output="ok")
     assert result.error_type is None
+
+
+# ---------------------------------------------------------------------------
+# AgentTask.to_request() tests
+# ---------------------------------------------------------------------------
+
+
+def test_agent_task_to_request_maps_all_fields():
+    """to_request() produces a PromptRequest with all AgentTask fields copied."""
+    from nexus_mcp.types import PromptRequest
+
+    task = AgentTask(
+        agent="gemini",
+        prompt="Hello",
+        execution_mode="sandbox",
+        model="gemini-2.5-flash",
+        max_retries=2,
+    )
+    req = task.to_request()
+    assert isinstance(req, PromptRequest)
+    assert req.agent == "gemini"
+    assert req.prompt == "Hello"
+    assert req.execution_mode == "sandbox"
+    assert req.model == "gemini-2.5-flash"
+    assert req.max_retries == 2
+
+
+def test_agent_task_to_request_defaults():
+    """to_request() preserves default values when optional fields are unset."""
+    task = AgentTask(agent="gemini", prompt="Hi")
+    req = task.to_request()
+    assert req.execution_mode == "default"
+    assert req.model is None
+    assert req.max_retries is None
+    assert req.context == {}
+
+
+# ---------------------------------------------------------------------------
+# AgentTaskResult.formatted_error tests
+# ---------------------------------------------------------------------------
+
+
+def test_agent_task_result_formatted_error_with_type():
+    """formatted_error prefixes the message with [ErrorType] when error_type is set."""
+    result = AgentTaskResult(label="t", error="bad input", error_type="ParseError")
+    assert result.formatted_error == "[ParseError] bad input"
+
+
+def test_agent_task_result_formatted_error_without_type():
+    """formatted_error returns the bare message when error_type is None."""
+    result = AgentTaskResult(label="t", error="something went wrong")
+    assert result.formatted_error == "something went wrong"
