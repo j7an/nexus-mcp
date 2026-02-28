@@ -3,6 +3,7 @@
 
 import pytest
 
+from nexus_mcp.runners.factory import RunnerFactory
 from tests.fixtures import cli_detection_mocks
 
 
@@ -14,9 +15,13 @@ def mock_cli_detection():
     Mock both so tests don't require actual Gemini CLI installed.
     get_cli_capabilities is NOT mocked — it runs with the mocked version
     ("0.12.0" → supports_json=True), keeping existing command assertions valid.
+
+    Also clears the RunnerFactory cache on teardown so cached runner instances
+    built under mocked CLI detection don't leak into subsequent tests.
     """
     with cli_detection_mocks() as mock:
         yield mock
+    RunnerFactory.clear_cache()
 
 
 @pytest.fixture(autouse=True)

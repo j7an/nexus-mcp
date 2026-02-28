@@ -5,6 +5,8 @@ Tests verify:
 - create("gemini") → GeminiRunner instance
 - create("unknown") → UnsupportedAgentError
 - list_agents() → ["gemini"]
+- create() returns cached instance for same agent
+- clear_cache() forces fresh instance on next create()
 """
 
 import pytest
@@ -42,13 +44,29 @@ class TestRunnerFactory:
 
         assert agents == ["gemini"]
 
-    def test_create_returns_new_instance_each_time(self):
-        """create() should return a new instance on each call (no singleton)."""
+    def test_create_returns_cached_instance(self):
+        """create() should return the same cached instance for the same agent."""
         runner1 = RunnerFactory.create("gemini")
         runner2 = RunnerFactory.create("gemini")
 
-        assert runner1 is not runner2  # Different instances
-        assert type(runner1) is type(runner2)  # Same type
+        assert runner1 is runner2  # Same cached instance
+
+    def test_clear_cache_forces_new_instance(self):
+        """clear_cache() should cause next create() to return a fresh instance."""
+        runner1 = RunnerFactory.create("gemini")
+        RunnerFactory.clear_cache()
+        runner2 = RunnerFactory.create("gemini")
+
+        assert runner1 is not runner2  # Different instances after cache clear
+        assert isinstance(runner2, GeminiRunner)
+
+    def test_create_caches_by_agent_name(self):
+        """Cache key is the agent name; same name returns same object."""
+        runner_a = RunnerFactory.create("gemini")
+        runner_b = RunnerFactory.create("gemini")
+
+        assert runner_a is runner_b
+        assert isinstance(runner_a, GeminiRunner)
 
     def test_list_agents_returns_sorted_order(self):
         """list_agents() should return agents in sorted (alphabetical) order."""
