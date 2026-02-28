@@ -221,3 +221,21 @@ def test_agent_task_max_retries_accepts_custom_value():
     """AgentTask.max_retries accepts a positive integer."""
     task = AgentTask(agent="gemini", prompt="Hello", max_retries=2)
     assert task.max_retries == 2
+
+
+# ---------------------------------------------------------------------------
+# error_type field tests
+# ---------------------------------------------------------------------------
+
+
+def test_agent_task_result_with_error_type():
+    """AgentTaskResult accepts error_type alongside error."""
+    result = AgentTaskResult(label="t", error="bad", error_type="ParseError")
+    assert result.error_type == "ParseError"
+    assert result.error == "bad"
+
+
+def test_agent_task_result_error_type_defaults_none():
+    """AgentTaskResult.error_type defaults to None when not provided."""
+    result = AgentTaskResult(label="t", output="ok")
+    assert result.error_type is None

@@ -16,10 +16,12 @@ going through the FunctionTool wrapper.
 """
 
 import asyncio
+import logging
 from typing import Any
 
 from fastmcp import Context, FastMCP
 from fastmcp.dependencies import Progress, ProgressLike
+from fastmcp.exceptions import ToolError
 
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import (
@@ -32,6 +34,7 @@ from nexus_mcp.types import (
 )
 
 mcp = FastMCP("nexus-mcp")
+logger = logging.getLogger(__name__)
 
 
 def _assign_labels(tasks: list[AgentTask]) -> list[AgentTask]:
@@ -116,8 +119,9 @@ async def batch_prompt(
                 await progress.increment(1)
                 return AgentTaskResult(label=task.label, output=response.output)  # type: ignore[arg-type]
             except Exception as e:
+                logger.exception("Task %r failed: %s", task.label, e)
                 await progress.increment(1)
-                return AgentTaskResult(label=task.label, error=str(e))  # type: ignore[arg-type]
+                return AgentTaskResult(label=task.label, error=str(e), error_type=type(e).__name__)  # type: ignore[arg-type]
 
     results = await asyncio.gather(*[_run_single(t) for t in labelled])
     response = MultiPromptResponse(results=list(results))
@@ -165,7 +169,8 @@ async def prompt(
     result = await batch_prompt(tasks=[task], progress=progress, ctx=ctx)
     task_result = result.results[0]
     if task_result.error:
-        raise RuntimeError(task_result.error)
+        prefix = f"[{task_result.error_type}] " if task_result.error_type else ""
+        raise ToolError(f"{prefix}{task_result.error}")
     return task_result.output  # type: ignore[return-value]
 
 

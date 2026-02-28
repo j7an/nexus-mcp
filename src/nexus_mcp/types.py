@@ -80,6 +80,7 @@ class AgentTaskResult(BaseModel):
     label: str
     output: str | None = None
     error: str | None = None
+    error_type: str | None = None  # e.g. "ParseError", "SubprocessError"
 
     @model_validator(mode="after")
     def exactly_one_of_output_or_error(self) -> Self:

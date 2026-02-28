@@ -11,6 +11,7 @@ pattern established in tests/unit/test_server.py.
 from unittest.mock import AsyncMock
 
 import pytest
+from fastmcp.exceptions import ToolError
 
 from nexus_mcp.server import list_agents, prompt
 from tests.fixtures import PING_PROMPT
@@ -30,8 +31,8 @@ class TestServerPromptValidation:
     """Input-validation tests for prompt() that require no CLI."""
 
     async def test_prompt_rejects_unsupported_agent(self, progress: AsyncMock) -> None:
-        """prompt() should raise RuntimeError for unknown agent names."""
-        with pytest.raises(RuntimeError, match="nonexistent_agent_12345"):
+        """prompt() should raise ToolError for unknown agent names."""
+        with pytest.raises(ToolError, match="nonexistent_agent_12345"):
             await prompt(
                 agent="nonexistent_agent_12345",
                 prompt="test",
