@@ -106,6 +106,9 @@ async def batch_prompt(
     Returns:
         MultiPromptResponse with results for each task.
     """
+    # Docket serializes/deserializes task arguments as JSON when task=True,
+    # converting AgentTask objects to plain dicts. Reconstruct them here.
+    tasks = [AgentTask(**t) if isinstance(t, dict) else t for t in tasks]
 
     labelled = _assign_labels(tasks)
     semaphore = asyncio.Semaphore(max_concurrency)

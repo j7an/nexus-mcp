@@ -9,6 +9,7 @@ Tests verify:
 - run() retries on RetryableError with exponential backoff
 """
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -77,8 +78,9 @@ class TestAbstractRunner:
             "test-cli",
             "-p",
             "test prompt",
-            stdout=-1,  # asyncio.subprocess.PIPE = -1
-            stderr=-1,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         assert response.agent == "test"
         assert response.output == "success output"
@@ -234,16 +236,8 @@ class TestRetryLoop:
 
         assert mock_exec.await_count == 1
 
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_retries_on_retryable_error_and_succeeds(self, mock_exec, runner):
+    async def test_retries_on_retryable_error_and_succeeds(self, runner):
         """Retries after RetryableError, returns AgentResponse on success attempt."""
-        # Fail twice with RetryableError, succeed on third attempt
-        mock_exec.side_effect = [
-            create_mock_process(stdout='{"error": {"code": 429}}', returncode=1),
-            create_mock_process(stdout='{"error": {"code": 429}}', returncode=1),
-            create_mock_process(stdout="success output", returncode=0),
-        ]
-
         # ConcreteRunner has no _try_extract_error override, so returncode=1 raises
         # plain SubprocessError (non-retryable) from _execute. We need a runner that
         # raises RetryableError. Use _execute mock instead.
@@ -260,8 +254,7 @@ class TestRetryLoop:
         assert response.output == "success output"
         assert runner._execute.await_count == 3
 
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_exhausts_attempts_reraises_retryable_error(self, mock_exec, runner):
+    async def test_exhausts_attempts_reraises_retryable_error(self, runner):
         """When all attempts fail with RetryableError, re-raises the last one."""
         retryable = RetryableError("rate limit", returncode=429)
         runner._execute = AsyncMock(side_effect=retryable)  # type: ignore[method-assign]
@@ -273,8 +266,7 @@ class TestRetryLoop:
         assert exc_info.value.returncode == 429
         assert runner._execute.await_count == 3
 
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_no_retry_on_plain_subprocess_error(self, mock_exec, runner):
+    async def test_no_retry_on_plain_subprocess_error(self, runner):
         """Non-retryable SubprocessError propagates immediately without retry."""
         runner._execute = AsyncMock(  # type: ignore[method-assign]
             side_effect=SubprocessError("auth failed", returncode=401)
@@ -288,8 +280,7 @@ class TestRetryLoop:
         assert runner._execute.await_count == 1
         assert exc_info.value.returncode == 401
 
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_no_retry_on_parse_error(self, mock_exec, runner):
+    async def test_no_retry_on_parse_error(self, runner):
         """ParseError propagates immediately without retry."""
         runner._execute = AsyncMock(  # type: ignore[method-assign]
             side_effect=ParseError("bad json")
@@ -356,8 +347,7 @@ class TestRetryLoop:
 
         assert runner._execute.await_count == 1
 
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_max_retries_none_falls_back_to_env_default(self, mock_exec, runner):
+    async def test_max_retries_none_falls_back_to_env_default(self, runner):
         """max_retries=None uses runner.default_max_attempts (from env)."""
         retryable = RetryableError("rate limit")
         runner._execute = AsyncMock(side_effect=retryable)  # type: ignore[method-assign]
@@ -369,8 +359,7 @@ class TestRetryLoop:
 
         assert runner._execute.await_count == 4
 
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_backoff_called_between_attempts(self, mock_exec, runner):
+    async def test_backoff_called_between_attempts(self, runner):
         """asyncio.sleep is called (max_attempts - 1) times between attempts."""
         retryable = RetryableError("rate limit")
         runner._execute = AsyncMock(side_effect=retryable)  # type: ignore[method-assign]

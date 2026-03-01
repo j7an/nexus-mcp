@@ -3,7 +3,6 @@
 
 import pytest
 
-from nexus_mcp.runners.factory import RunnerFactory
 from tests.fixtures import cli_detection_mocks
 
 
@@ -21,7 +20,6 @@ def mock_cli_detection():
     """
     with cli_detection_mocks() as mock:
         yield mock
-    RunnerFactory.clear_cache()
 
 
 @pytest.fixture(autouse=True)

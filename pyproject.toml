@@ -94,6 +94,7 @@ testpaths = ["tests"]  # Explicit test discovery
 markers = [
     "integration: tests that call real CLI subprocesses",
     "slow: tests that take >1 second",
+    "e2e: tests that exercise the full MCP protocol stack via in-process Client",
 ]
 
 [tool.coverage.run]
