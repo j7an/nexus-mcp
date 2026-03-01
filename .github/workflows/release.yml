@@ -1,0 +1,129 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify tag is on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor ${{ github.sha }} origin/main; then
+            echo "ERROR: Tagged commit $(git rev-parse --short HEAD) is not on main"
+            exit 1
+          fi
+
+      - uses: ./.github/actions/setup-uv
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Verify distributions
+        run: |
+          ls -la dist/
+          WHEEL=$(ls dist/*.whl 2>/dev/null | wc -l)
+          SDIST=$(ls dist/*.tar.gz 2>/dev/null | wc -l)
+          if [ "$WHEEL" -eq 0 ] || [ "$SDIST" -eq 0 ]; then
+            echo "ERROR: Expected both a wheel and sdist in dist/"
+            ls dist/
+            exit 1
+          fi
+          echo "Build produced: $(ls dist/)"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/nexus-mcp
+    permissions:
+      id-token: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@v1.13.0
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Verify TestPyPI install
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Waiting 30s for TestPyPI index to update..."
+          sleep 30
+          pip install \
+            --index-url https://test.pypi.org/simple/ \
+            --extra-index-url https://pypi.org/simple/ \
+            "nexus-mcp==${VERSION}"
+          python -c "import nexus_mcp; print('TestPyPI install OK')"
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [build, publish-testpypi]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/nexus-mcp
+    permissions:
+      id-token: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.13.0
+
+  github-release:
+    name: Create GitHub Release
+    needs: [build, publish-pypi]
+    if: needs.publish-pypi.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create GitHub Release with assets
+        uses: softprops/action-gh-release@v2.5.0
+        with:
+          generate_release_notes: true
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: dist/*
