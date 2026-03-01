@@ -11,6 +11,12 @@ import sys
 
 
 def main() -> None:
+    if len(sys.argv) == 2 and sys.argv[1] in ("--version", "-V"):
+        from nexus_mcp import __version__
+
+        print(f"nexus-mcp {__version__}")
+        return
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
