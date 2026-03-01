@@ -7,6 +7,7 @@ Tests verify:
 - Error handling: invalid JSON, missing fields, subprocess errors
 """
 
+import asyncio
 from unittest.mock import patch
 
 import pytest
@@ -218,9 +219,9 @@ class TestGeminiRunnerIntegration:
             "json",
             "--model",
             "gemini-2.5-flash",
-            stdin=-3,  # asyncio.subprocess.DEVNULL = -3
-            stdout=-1,  # asyncio.subprocess.PIPE = -1
-            stderr=-1,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
 
         # Assert: Response parsed correctly

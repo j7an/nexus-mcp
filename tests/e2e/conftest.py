@@ -30,7 +30,6 @@ def mock_cli_detection():
     """
     with cli_detection_mocks() as mock:
         yield mock
-    RunnerFactory.clear_cache()
 
 
 @pytest.fixture

@@ -9,6 +9,7 @@ Tests verify:
 - run() retries on RetryableError with exponential backoff
 """
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -77,9 +78,9 @@ class TestAbstractRunner:
             "test-cli",
             "-p",
             "test prompt",
-            stdin=-3,  # asyncio.subprocess.DEVNULL = -3
-            stdout=-1,  # asyncio.subprocess.PIPE = -1
-            stderr=-1,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         assert response.agent == "test"
         assert response.output == "success output"
