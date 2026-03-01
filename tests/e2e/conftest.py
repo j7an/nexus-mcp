@@ -68,13 +68,18 @@ async def mcp_client():
 
 @pytest.fixture
 def fast_retry_sleep(monkeypatch):
-    """Patch asyncio.sleep to be instant for retry-related E2E tests.
+    """Eliminate retry backoff delays for retry-related E2E tests.
 
-    Prevents real waiting during backoff delays when testing retry behavior.
-    Only applied to tests that explicitly use this fixture (not autouse).
+    Patches AbstractRunner._compute_backoff to return 0, so asyncio.sleep(0)
+    is called instead of asyncio.sleep(up-to-2s). asyncio.sleep(0) properly
+    yields to the event loop once (no busy-spin), while the real asyncio.sleep
+    is left untouched so the Docket worker's 250ms polling interval functions
+    normally.
+
+    Patching the global asyncio.sleep instead would cause the Docket worker to
+    busy-spin and starve the event loop, hanging the test indefinitely.
     """
-
-    async def instant_sleep(_: float) -> None:
-        pass
-
-    monkeypatch.setattr("asyncio.sleep", instant_sleep)
+    monkeypatch.setattr(
+        "nexus_mcp.runners.base.AbstractRunner._compute_backoff",
+        lambda self, attempt, retry_after: 0.0,
+    )
