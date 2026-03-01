@@ -14,7 +14,6 @@ from unittest.mock import patch
 import pytest
 from fastmcp import Client
 
-from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.server import mcp
 from tests.fixtures import cli_detection_mocks
 
@@ -44,7 +43,6 @@ def mock_subprocess():
     """
     with patch("nexus_mcp.process.asyncio.create_subprocess_exec") as mock_exec:
         yield mock_exec
-    RunnerFactory.clear_cache()
 
 
 @pytest.fixture
@@ -62,7 +60,9 @@ async def mcp_client():
     """
     async with Client(mcp) as client:
         yield client
-    # Reset FastMCP lifespan flag so the next test gets a fresh Docket setup.
+    # WORKAROUND: FastMCP _lifespan_result_set stays True after CancelledError,
+    # causing subsequent Client(mcp) connections to skip Docket initialization.
+    # Remove when upstream fixes lifespan state cleanup on CancelledError.
     mcp._lifespan_result_set = False
 
 

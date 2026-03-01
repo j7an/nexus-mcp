@@ -27,7 +27,7 @@ from tests.fixtures import GEMINI_NOISY_STDOUT, create_mock_process
 def _gemini_json(output: str, stats: dict | None = None) -> str:
     """Build a Gemini CLI JSON response string."""
     data: dict = {"response": output}
-    if stats:
+    if stats is not None:
         data["stats"] = stats
     return json.dumps(data)
 
@@ -37,11 +37,21 @@ def _gemini_error_json(code: int, message: str, status: str) -> str:
     return json.dumps({"error": {"code": code, "message": message, "status": status}})
 
 
+def _extract_prompt_from_args(args: tuple) -> str:
+    """Extract prompt from subprocess args.
+
+    Mirrors GeminiRunner.build_command argument layout: [..., -p, <prompt>, ...].
+    """
+    cmd = list(args)
+    return cmd[cmd.index("-p") + 1]
+
+
 # ---------------------------------------------------------------------------
 # Class 1: Tool discovery
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.e2e
 class TestToolDiscovery:
     """Verify MCP tool registration via list_tools() JSON-RPC call."""
 
@@ -82,6 +92,7 @@ class TestToolDiscovery:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.e2e
 class TestListAgentsProtocol:
     """Verify list_agents tool via the MCP protocol."""
 
@@ -97,7 +108,7 @@ class TestListAgentsProtocol:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("mock_subprocess")
+@pytest.mark.e2e
 class TestPromptProtocol:
     """Verify the prompt tool through the full MCP protocol stack.
 
@@ -177,13 +188,46 @@ class TestPromptProtocol:
         assert result.data == "ok after retry"
         assert mock_subprocess.call_count == 2
 
+    async def test_503_retry_then_success(self, mock_subprocess, mcp_client, fast_retry_sleep):
+        """HTTP 503 triggers retry through the full protocol; second attempt succeeds."""
+        error_json = _gemini_error_json(503, "Service unavailable", "UNAVAILABLE")
+        mock_subprocess.side_effect = [
+            create_mock_process(stdout=error_json, returncode=1),
+            create_mock_process(stdout=_gemini_json("ok after 503 retry")),
+        ]
+
+        result = await mcp_client.call_tool(
+            "prompt",
+            {"agent": "gemini", "prompt": "test", "max_retries": 2},
+        )
+
+        assert result.is_error is False
+        assert result.data == "ok after 503 retry"
+        assert mock_subprocess.call_count == 2
+
+    async def test_context_parameter_survives_json_rpc(self, mock_subprocess, mcp_client):
+        """context dict survives JSON-RPC round-trip; call succeeds (context is pass-through)."""
+        mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
+
+        result = await mcp_client.call_tool(
+            "prompt",
+            {
+                "agent": "gemini",
+                "prompt": "test",
+                "context": {"session_id": "abc-123", "metadata": {"nested": True}},
+            },
+        )
+
+        assert result.is_error is False
+        assert result.data == "ok"
+
 
 # ---------------------------------------------------------------------------
 # Class 4: batch_prompt protocol
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("mock_subprocess")
+@pytest.mark.e2e
 class TestBatchPromptProtocol:
     """Verify the batch_prompt tool through the full MCP protocol stack."""
 
@@ -209,8 +253,7 @@ class TestBatchPromptProtocol:
         """One task succeeds, one fails with ParseError → succeeded=1, failed=1."""
 
         def side_effect(*args, **kwargs):
-            cmd = list(args)
-            prompt_text = cmd[cmd.index("-p") + 1]
+            prompt_text = _extract_prompt_from_args(args)
             if "succeed" in prompt_text:
                 return create_mock_process(stdout=_gemini_json("ok"))
             return create_mock_process(stdout="not valid json", returncode=0)
@@ -282,12 +325,37 @@ class TestBatchPromptProtocol:
         assert result.is_error is False
         assert result.data.succeeded == 1
 
+    async def test_max_concurrency_parameter_accepted(self, mock_subprocess, mcp_client):
+        """max_concurrency=1 is accepted through JSON-RPC without error; both tasks succeed."""
+        mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
+
+        result = await mcp_client.call_tool(
+            "batch_prompt",
+            {
+                "tasks": [
+                    {"agent": "gemini", "prompt": "task 1"},
+                    {"agent": "gemini", "prompt": "task 2"},
+                ],
+                "max_concurrency": 1,
+            },
+        )
+
+        assert result.is_error is False
+        assert result.data.succeeded == 2
+        assert result.data.failed == 0
+
+    async def test_empty_tasks_raises_tool_error(self, mcp_client):
+        """batch_prompt with tasks=[] raises ToolError (progress.set_total requires total >= 1)."""
+        with pytest.raises(ToolError):
+            await mcp_client.call_tool("batch_prompt", {"tasks": []})
+
 
 # ---------------------------------------------------------------------------
 # Class 5: Error handling protocol
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.e2e
 class TestErrorHandlingProtocol:
     """Verify error propagation through the MCP protocol layer."""
 
@@ -307,3 +375,16 @@ class TestErrorHandlingProtocol:
         """Missing required 'agent' param is rejected at the MCP protocol/schema level."""
         with pytest.raises(ToolError):
             await mcp_client.call_tool("prompt", {"prompt": "test"})
+
+    async def test_non_retryable_error_raises_tool_error(self, mcp_client, mock_subprocess):
+        """HTTP 401 (non-retryable) raises ToolError immediately with no retry attempts."""
+        error_json = _gemini_error_json(401, "API key not valid", "UNAUTHENTICATED")
+        mock_subprocess.return_value = create_mock_process(stdout=error_json, returncode=1)
+
+        with pytest.raises(ToolError, match="SubprocessError"):
+            await mcp_client.call_tool(
+                "prompt",
+                {"agent": "gemini", "prompt": "test", "max_retries": 3},
+            )
+
+        assert mock_subprocess.call_count == 1
