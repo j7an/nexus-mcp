@@ -67,6 +67,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@v1.13.0
         with:
           repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
 
       - uses: actions/setup-python@v6
         with:
@@ -75,13 +76,20 @@ jobs:
       - name: Verify TestPyPI install
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          echo "Waiting 30s for TestPyPI index to update..."
-          sleep 30
-          pip install \
-            --index-url https://test.pypi.org/simple/ \
-            --extra-index-url https://pypi.org/simple/ \
-            "nexus-mcp==${VERSION}"
-          python -c "import nexus_mcp; print('TestPyPI install OK')"
+          echo "Waiting for nexus-mcp==${VERSION} to appear on TestPyPI..."
+          for i in 1 2 3 4 5; do
+            sleep $((i * 30))
+            if pip install \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple/ \
+              "nexus-mcp==${VERSION}" 2>/dev/null; then
+              python -c "import nexus_mcp; print('TestPyPI install OK')"
+              exit 0
+            fi
+            echo "Attempt $i: not yet available, retrying..."
+          done
+          echo "ERROR: nexus-mcp==${VERSION} not available on TestPyPI after 7.5 minutes"
+          exit 1
 
   publish-pypi:
     name: Publish to PyPI
