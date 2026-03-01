@@ -6,10 +6,23 @@ against the real installed Gemini CLI binary.
 """
 
 import re
+import subprocess
 
 import pytest
 
 from nexus_mcp.cli_detector import detect_cli, get_cli_capabilities, get_cli_version
+
+
+def _run_version_command(cli_name: str) -> str:
+    """Run '<cli> --version' and return a diagnostic string for assertion messages."""
+    try:
+        result = subprocess.run([cli_name, "--version"], capture_output=True, text=True, timeout=10)
+        return f"returncode={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}"
+    except FileNotFoundError:
+        return "FileNotFoundError: binary not found"
+    except subprocess.TimeoutExpired:
+        return "TimeoutExpired: exceeded 10s"
+
 
 # Semver pattern: MAJOR.MINOR.PATCH (optional pre-release suffix handled by parse_version)
 _SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+")
@@ -57,7 +70,10 @@ class TestGetCLIVersionReal:
         """get_cli_version('gemini') should parse a valid semver from the installed CLI."""
         version = get_cli_version("gemini")
 
-        assert version is not None
+        assert version is not None, (
+            f"get_cli_version('gemini') returned None — "
+            f"raw output: {_run_version_command('gemini')}"
+        )
         assert _SEMVER_PATTERN.match(version), f"Expected semver format, got: {version!r}"
 
 
@@ -69,7 +85,8 @@ class TestGetCLICapabilitiesReal:
         """get_cli_capabilities() should populate CLICapabilities from real version."""
         version = get_cli_version("gemini")
         assert version is not None, (
-            "get_cli_version('gemini') returned None — version output format may have changed"
+            f"get_cli_version('gemini') returned None — "
+            f"raw output: {_run_version_command('gemini')}"
         )
         capabilities = get_cli_capabilities("gemini", version)
 
@@ -80,7 +97,8 @@ class TestGetCLICapabilitiesReal:
         """Installed Gemini CLI should be >= 0.6.0 and support JSON output."""
         version = get_cli_version("gemini")
         assert version is not None, (
-            "get_cli_version('gemini') returned None — version output format may have changed"
+            f"get_cli_version('gemini') returned None — "
+            f"raw output: {_run_version_command('gemini')}"
         )
         capabilities = get_cli_capabilities("gemini", version)
 

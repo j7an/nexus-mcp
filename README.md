@@ -32,6 +32,62 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 | `prompt` | Yes | Single-agent convenience wrapper; routes to `batch_prompt` |
 | `list_agents` | No | Returns list of supported agent names |
 
+## Usage
+
+### Run with uvx (recommended)
+
+```bash
+uvx nexus-mcp
+```
+
+`uvx` installs the package in an ephemeral virtual environment and runs it — no cloning required.
+
+### MCP Client Configuration
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "nexus-mcp": {
+      "command": "uvx",
+      "args": ["nexus-mcp"]
+    }
+  }
+}
+```
+
+**Cursor** (`.cursor/mcp.json` in your project or `~/.cursor/mcp.json` globally):
+
+```json
+{
+  "mcpServers": {
+    "nexus-mcp": {
+      "command": "uvx",
+      "args": ["nexus-mcp"]
+    }
+  }
+}
+```
+
+**Claude Code** (CLI):
+
+```bash
+claude mcp add nexus-mcp uvx nexus-mcp
+```
+
+**Generic stdio config** (any MCP-compatible client):
+
+```json
+{
+  "command": "uvx",
+  "args": ["nexus-mcp"],
+  "transport": "stdio"
+}
+```
+
+> **Tip:** Pass environment variables (e.g. `NEXUS_GEMINI_MODEL`) via your client's `env` key.
+
 ## Quick Start
 
 ### Prerequisites
@@ -181,7 +237,8 @@ nexus-mcp/
 
 ```bash
 # Start MCP server
-uv run python -m nexus_mcp
+uvx nexus-mcp                    # Recommended (no clone needed)
+uv run python -m nexus_mcp      # Development (from cloned repo)
 
 # Run TDD cycle
 uv run pytest --cov=nexus_mcp -v
