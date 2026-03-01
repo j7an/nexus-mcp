@@ -20,6 +20,7 @@ from tests.fixtures import (
     GEMINI_JSON_WITH_STATS,
     GEMINI_NOISY_STDOUT,
     create_mock_process,
+    gemini_error_json,
     make_prompt_request,
 )
 
@@ -53,37 +54,20 @@ class TestGeminiRunnerCommandBuilding:
             "gemini-2.5-pro",
         ]
 
-    def test_build_command_sandbox_mode(self):
-        """Sandbox mode should add --sandbox flag."""
+    @pytest.mark.parametrize(
+        ("execution_mode", "expected_flag"),
+        [
+            ("sandbox", "--sandbox"),
+            ("yolo", "--yolo"),
+        ],
+        ids=["sandbox", "yolo"],
+    )
+    def test_build_command_execution_mode(self, execution_mode, expected_flag):
+        """Execution mode adds corresponding CLI flag."""
         runner = GeminiRunner()
-        request = make_prompt_request(prompt="test", execution_mode="sandbox")
-
+        request = make_prompt_request(prompt="test", execution_mode=execution_mode)
         command = runner.build_command(request)
-
-        assert command == [
-            "gemini",
-            "-p",
-            "test",
-            "--output-format",
-            "json",
-            "--sandbox",
-        ]
-
-    def test_build_command_yolo_mode(self):
-        """YOLO mode should add --yolo flag."""
-        runner = GeminiRunner()
-        request = make_prompt_request(prompt="test", execution_mode="yolo")
-
-        command = runner.build_command(request)
-
-        assert command == [
-            "gemini",
-            "-p",
-            "test",
-            "--output-format",
-            "json",
-            "--yolo",
-        ]
+        assert command == ["gemini", "-p", "test", "--output-format", "json", expected_flag]
 
     def test_build_command_all_options(self):
         """All options together: model + yolo mode."""
@@ -323,39 +307,21 @@ class TestGeminiRunnerErrorRecovery:
 class TestGeminiRunnerAPIErrorExtraction:
     """Test GeminiRunner extracts structured API error details from error JSON."""
 
+    @pytest.mark.parametrize(
+        ("code", "message", "status"),
+        [
+            (429, "Quota exceeded for quota metric", "RESOURCE_EXHAUSTED"),
+            (401, "API key not valid", "UNAUTHENTICATED"),
+        ],
+        ids=["429-rate-limit", "401-auth"],
+    )
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_gemini_error_json_surfaces_in_subprocess_error(self, mock_exec):
-        """429 rate limit error JSON should produce a structured SubprocessError message."""
-        error_stdout = (
-            '{"error": {"code": 429, "message": "Quota exceeded for quota metric",'
-            ' "status": "RESOURCE_EXHAUSTED"}}'
-        )
+    async def test_gemini_error_json_surfaces_in_subprocess_error(
+        self, mock_exec, code, message, status
+    ):
+        """API error JSON produces a structured SubprocessError with code and status."""
         mock_exec.return_value = create_mock_process(
-            stdout=error_stdout,
-            stderr="",
-            returncode=1,
-        )
-        runner = GeminiRunner()
-        request = make_prompt_request()
-
-        with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(request)
-
-        # The primary message (args[0]) should contain structured error info,
-        # not just raw JSON buried in stdout
-        primary_message = exc_info.value.args[0]
-        assert "429" in primary_message
-        assert "RESOURCE_EXHAUSTED" in primary_message
-        assert "Gemini API error" in primary_message
-
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_gemini_error_json_401_surfaces_auth_failure(self, mock_exec):
-        """401 auth error JSON should produce a structured SubprocessError message."""
-        error_stdout = (
-            '{"error": {"code": 401, "message": "API key not valid", "status": "UNAUTHENTICATED"}}'
-        )
-        mock_exec.return_value = create_mock_process(
-            stdout=error_stdout,
+            stdout=gemini_error_json(code, message, status),
             stderr="",
             returncode=1,
         )
@@ -366,16 +332,14 @@ class TestGeminiRunnerAPIErrorExtraction:
             await runner.run(request)
 
         primary_message = exc_info.value.args[0]
-        assert "401" in primary_message
-        assert "UNAUTHENTICATED" in primary_message
+        assert str(code) in primary_message
+        assert status in primary_message
         assert "Gemini API error" in primary_message
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_gemini_error_json_preserves_returncode(self, mock_exec):
         """SubprocessError from error JSON should preserve returncode and stdout."""
-        error_stdout = (
-            '{"error": {"code": 429, "message": "Rate limited", "status": "RESOURCE_EXHAUSTED"}}'
-        )
+        error_stdout = gemini_error_json(429, "Rate limited", "RESOURCE_EXHAUSTED")
         mock_exec.return_value = create_mock_process(
             stdout=error_stdout,
             stderr="rate limit hit",
@@ -393,10 +357,8 @@ class TestGeminiRunnerAPIErrorExtraction:
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_stderr_json_fallback_when_stdout_empty(self, mock_exec):
         """When stdout is empty but stderr has JSON error block, extracts structured error."""
-        stderr_with_json = (
-            "Gemini CLI error log\n"
-            "Stack trace...\n"
-            '{"error": {"code": 429, "message": "Quota exceeded", "status": "RESOURCE_EXHAUSTED"}}'
+        stderr_with_json = "Gemini CLI error log\nStack trace...\n" + gemini_error_json(
+            429, "Quota exceeded", "RESOURCE_EXHAUSTED"
         )
         mock_exec.return_value = create_mock_process(
             stdout="",
@@ -417,14 +379,8 @@ class TestGeminiRunnerAPIErrorExtraction:
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_stdout_takes_priority_over_stderr_json(self, mock_exec):
         """When both stdout and stderr have JSON error, stdout wins (richer API format)."""
-        stdout_error = (
-            '{"error": {"code": 429, "message": "Quota exceeded for stdout",'
-            ' "status": "RESOURCE_EXHAUSTED"}}'
-        )
-        stderr_with_json = (
-            "log line\n"
-            '{"error": {"code": 1, "message": "Generic exit code error", "status": "UNKNOWN"}}'
-        )
+        stdout_error = gemini_error_json(429, "Quota exceeded for stdout", "RESOURCE_EXHAUSTED")
+        stderr_with_json = "log line\n" + gemini_error_json(1, "Generic exit code error", "UNKNOWN")
         mock_exec.return_value = create_mock_process(
             stdout=stdout_error,
             stderr=stderr_with_json,
@@ -500,11 +456,8 @@ class TestGeminiRunnerAPIErrorExtraction:
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_structured_error_includes_command(self, mock_exec):
         """SubprocessError raised from structured API error JSON should include the command."""
-        error_stdout = (
-            '{"error": {"code": 429, "message": "Rate limited", "status": "RESOURCE_EXHAUSTED"}}'
-        )
         mock_exec.return_value = create_mock_process(
-            stdout=error_stdout,
+            stdout=gemini_error_json(429, "Rate limited", "RESOURCE_EXHAUSTED"),
             stderr="",
             returncode=1,
         )
@@ -788,44 +741,36 @@ class TestGeminiRunnerRetryableErrors:
     that the retry loop in run() triggers on RetryableError.
     """
 
+    @pytest.mark.parametrize(
+        ("code", "message", "status"),
+        [
+            (429, "Quota exceeded", "RESOURCE_EXHAUSTED"),
+            (503, "Service unavailable", "UNAVAILABLE"),
+        ],
+        ids=["429-rate-limit", "503-unavailable"],
+    )
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_429_raises_retryable_error(self, mock_exec):
-        """HTTP 429 (rate limit) → RetryableError, not plain SubprocessError."""
-        error_stdout = (
-            '{"error": {"code": 429, "message": "Quota exceeded", "status": "RESOURCE_EXHAUSTED"}}'
+    async def test_retryable_code_raises_retryable_error(self, mock_exec, code, message, status):
+        """Retryable HTTP codes raise RetryableError, not plain SubprocessError."""
+        mock_exec.return_value = create_mock_process(
+            stdout=gemini_error_json(code, message, status), stderr="", returncode=1
         )
-        mock_exec.return_value = create_mock_process(stdout=error_stdout, stderr="", returncode=1)
-        runner = GeminiRunner()
-        request = make_prompt_request(max_retries=1)  # single attempt to isolate behavior
-
-        with pytest.raises(RetryableError) as exc_info:
-            await runner.run(request)
-
-        assert exc_info.value.returncode == 1
-        assert "429" in exc_info.value.args[0]
-
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_503_raises_retryable_error(self, mock_exec):
-        """HTTP 503 (service unavailable) → RetryableError."""
-        error_stdout = (
-            '{"error": {"code": 503, "message": "Service unavailable", "status": "UNAVAILABLE"}}'
-        )
-        mock_exec.return_value = create_mock_process(stdout=error_stdout, stderr="", returncode=1)
         runner = GeminiRunner()
         request = make_prompt_request(max_retries=1)
 
         with pytest.raises(RetryableError) as exc_info:
             await runner.run(request)
 
-        assert "503" in exc_info.value.args[0]
+        assert str(code) in exc_info.value.args[0]
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_401_raises_non_retryable_subprocess_error(self, mock_exec):
         """HTTP 401 (auth failure) → plain SubprocessError, NOT RetryableError."""
-        error_stdout = (
-            '{"error": {"code": 401, "message": "API key not valid", "status": "UNAUTHENTICATED"}}'
+        mock_exec.return_value = create_mock_process(
+            stdout=gemini_error_json(401, "API key not valid", "UNAUTHENTICATED"),
+            stderr="",
+            returncode=1,
         )
-        mock_exec.return_value = create_mock_process(stdout=error_stdout, stderr="", returncode=1)
         runner = GeminiRunner()
         request = make_prompt_request(max_retries=1)
 
@@ -841,7 +786,7 @@ class TestGeminiRunnerRetryableErrors:
         """GaxiosError 429 embedded in stderr JSON array → RetryableError."""
         stderr_with_429 = (
             "Gemini CLI encountered an API error\n"
-            '[{"error": {"code": 429, "message": "No capacity", "status": "RESOURCE_EXHAUSTED"}}]'
+            f"[{gemini_error_json(429, 'No capacity', 'RESOURCE_EXHAUSTED')}]"
         )
         mock_exec.return_value = create_mock_process(
             stdout="", stderr=stderr_with_429, returncode=1
@@ -857,11 +802,12 @@ class TestGeminiRunnerRetryableErrors:
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_retry_on_429_succeeds_on_second_attempt(self, mock_exec):
         """Full integration: first call returns 429 RetryableError, second succeeds."""
-        error_stdout = (
-            '{"error": {"code": 429, "message": "Quota exceeded", "status": "RESOURCE_EXHAUSTED"}}'
-        )
         mock_exec.side_effect = [
-            create_mock_process(stdout=error_stdout, stderr="", returncode=1),
+            create_mock_process(
+                stdout=gemini_error_json(429, "Quota exceeded", "RESOURCE_EXHAUSTED"),
+                stderr="",
+                returncode=1,
+            ),
             create_mock_process(stdout='{"response": "Success after retry"}', returncode=0),
         ]
         runner = GeminiRunner()

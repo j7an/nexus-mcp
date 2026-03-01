@@ -12,29 +12,10 @@ Mock boundary: asyncio.create_subprocess_exec only.
 All layers above run for real, including JSON-RPC dispatch.
 """
 
-import json
-
 import pytest
 from fastmcp.exceptions import ToolError
 
-from tests.fixtures import GEMINI_NOISY_STDOUT, create_mock_process
-
-# ---------------------------------------------------------------------------
-# JSON response builder
-# ---------------------------------------------------------------------------
-
-
-def _gemini_json(output: str, stats: dict | None = None) -> str:
-    """Build a Gemini CLI JSON response string."""
-    data: dict = {"response": output}
-    if stats is not None:
-        data["stats"] = stats
-    return json.dumps(data)
-
-
-def _gemini_error_json(code: int, message: str, status: str) -> str:
-    """Build a Gemini API error JSON string."""
-    return json.dumps({"error": {"code": code, "message": message, "status": status}})
+from tests.fixtures import GEMINI_NOISY_STDOUT, create_mock_process, gemini_error_json, gemini_json
 
 
 def _extract_prompt_from_args(args: tuple) -> str:
@@ -118,7 +99,7 @@ class TestPromptProtocol:
 
     async def test_success_returns_parsed_output(self, mock_subprocess, mcp_client):
         """Full success path: subprocess returns valid JSON → call_tool returns output text."""
-        mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("hello from e2e"))
+        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("hello from e2e"))
 
         result = await mcp_client.call_tool("prompt", {"agent": "gemini", "prompt": "say hello"})
 
@@ -127,7 +108,7 @@ class TestPromptProtocol:
 
     async def test_task_true_lifecycle(self, mock_subprocess, mcp_client):
         """task=True returns a ToolTask; awaiting it resolves to the final output."""
-        mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("task result"))
+        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("task result"))
 
         task = await mcp_client.call_tool(
             "prompt", {"agent": "gemini", "prompt": "background task"}, task=True
@@ -139,7 +120,7 @@ class TestPromptProtocol:
 
     async def test_model_parameter_reaches_subprocess(self, mock_subprocess, mcp_client):
         """model parameter survives JSON-RPC round-trip and appears in subprocess args."""
-        mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
+        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
 
         await mcp_client.call_tool(
             "prompt",
@@ -152,7 +133,7 @@ class TestPromptProtocol:
 
     async def test_yolo_mode_reaches_subprocess(self, mock_subprocess, mcp_client):
         """execution_mode='yolo' survives JSON-RPC and appears as --yolo flag."""
-        mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
+        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
 
         await mcp_client.call_tool(
             "prompt",
@@ -171,12 +152,28 @@ class TestPromptProtocol:
         assert result.is_error is False
         assert result.data == "test output"
 
-    async def test_429_retry_then_success(self, mock_subprocess, mcp_client, fast_retry_sleep):
-        """HTTP 429 triggers retry through the full protocol; second attempt succeeds."""
-        error_json = _gemini_error_json(429, "Resource exhausted", "RESOURCE_EXHAUSTED")
+    @pytest.mark.parametrize(
+        ("error_code", "error_message", "error_status"),
+        [
+            (429, "Resource exhausted", "RESOURCE_EXHAUSTED"),
+            (503, "Service unavailable", "UNAVAILABLE"),
+        ],
+        ids=["429-rate-limit", "503-unavailable"],
+    )
+    async def test_retryable_error_retry_then_success(
+        self,
+        mock_subprocess,
+        mcp_client,
+        fast_retry_sleep,
+        error_code,
+        error_message,
+        error_status,
+    ):
+        """Retryable HTTP error triggers retry; second attempt succeeds."""
+        error_json = gemini_error_json(error_code, error_message, error_status)
         mock_subprocess.side_effect = [
             create_mock_process(stdout=error_json, returncode=1),
-            create_mock_process(stdout=_gemini_json("ok after retry")),
+            create_mock_process(stdout=gemini_json("ok after retry")),
         ]
 
         result = await mcp_client.call_tool(
@@ -188,26 +185,9 @@ class TestPromptProtocol:
         assert result.data == "ok after retry"
         assert mock_subprocess.call_count == 2
 
-    async def test_503_retry_then_success(self, mock_subprocess, mcp_client, fast_retry_sleep):
-        """HTTP 503 triggers retry through the full protocol; second attempt succeeds."""
-        error_json = _gemini_error_json(503, "Service unavailable", "UNAVAILABLE")
-        mock_subprocess.side_effect = [
-            create_mock_process(stdout=error_json, returncode=1),
-            create_mock_process(stdout=_gemini_json("ok after 503 retry")),
-        ]
-
-        result = await mcp_client.call_tool(
-            "prompt",
-            {"agent": "gemini", "prompt": "test", "max_retries": 2},
-        )
-
-        assert result.is_error is False
-        assert result.data == "ok after 503 retry"
-        assert mock_subprocess.call_count == 2
-
     async def test_context_parameter_survives_json_rpc(self, mock_subprocess, mcp_client):
         """context dict survives JSON-RPC round-trip; call succeeds (context is pass-through)."""
-        mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
+        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
 
         result = await mcp_client.call_tool(
             "prompt",
@@ -233,7 +213,7 @@ class TestBatchPromptProtocol:
 
     async def test_two_tasks_both_succeed(self, mock_subprocess, mcp_client):
         """Two tasks both succeed; response has correct succeeded/failed counts."""
-        mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
+        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
 
         result = await mcp_client.call_tool(
             "batch_prompt",
@@ -255,7 +235,7 @@ class TestBatchPromptProtocol:
         def side_effect(*args, **kwargs):
             prompt_text = _extract_prompt_from_args(args)
             if "succeed" in prompt_text:
-                return create_mock_process(stdout=_gemini_json("ok"))
+                return create_mock_process(stdout=gemini_json("ok"))
             return create_mock_process(stdout="not valid json", returncode=0)
 
         mock_subprocess.side_effect = side_effect
@@ -278,7 +258,7 @@ class TestBatchPromptProtocol:
 
     async def test_auto_labels_are_unique(self, mock_subprocess, mcp_client):
         """Auto-assigned labels for same-agent tasks are unique (gemini, gemini-2)."""
-        mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
+        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
 
         result = await mcp_client.call_tool(
             "batch_prompt",
@@ -296,7 +276,7 @@ class TestBatchPromptProtocol:
 
     async def test_explicit_labels_survive_json_rpc(self, mock_subprocess, mcp_client):
         """Explicit task labels survive JSON-RPC serialization round-trip."""
-        mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
+        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
 
         result = await mcp_client.call_tool(
             "batch_prompt",
@@ -313,7 +293,7 @@ class TestBatchPromptProtocol:
 
     async def test_task_true_docket_coercion(self, mock_subprocess, mcp_client):
         """batch_prompt with task=True handles dict→AgentTask coercion after Docket."""
-        mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("docket ok"))
+        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("docket ok"))
 
         task = await mcp_client.call_tool(
             "batch_prompt",
@@ -327,7 +307,7 @@ class TestBatchPromptProtocol:
 
     async def test_max_concurrency_parameter_accepted(self, mock_subprocess, mcp_client):
         """max_concurrency=1 is accepted through JSON-RPC without error; both tasks succeed."""
-        mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
+        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
 
         result = await mcp_client.call_tool(
             "batch_prompt",
@@ -378,7 +358,7 @@ class TestErrorHandlingProtocol:
 
     async def test_non_retryable_error_raises_tool_error(self, mcp_client, mock_subprocess):
         """HTTP 401 (non-retryable) raises ToolError immediately with no retry attempts."""
-        error_json = _gemini_error_json(401, "API key not valid", "UNAUTHENTICATED")
+        error_json = gemini_error_json(401, "API key not valid", "UNAUTHENTICATED")
         mock_subprocess.return_value = create_mock_process(stdout=error_json, returncode=1)
 
         with pytest.raises(ToolError, match="SubprocessError"):

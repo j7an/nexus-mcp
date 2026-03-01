@@ -1,5 +1,6 @@
 # tests/fixtures.py
 import asyncio
+import json
 from contextlib import contextmanager
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -12,10 +13,22 @@ from nexus_mcp.types import AgentResponse, AgentTask, PromptRequest
 # Reusable test constants
 # ---------------------------------------------------------------------------
 
-GEMINI_JSON_RESPONSE = '{"response": "test output"}'
-GEMINI_JSON_WITH_STATS = (
-    '{"response": "Hello, world!", "stats": {"models": {"gemini-2.5-flash": 1}}}'
-)
+
+def gemini_json(output: str, stats: dict | None = None) -> str:
+    """Build a Gemini CLI JSON response string."""
+    data: dict = {"response": output}
+    if stats is not None:
+        data["stats"] = stats
+    return json.dumps(data)
+
+
+def gemini_error_json(code: int, message: str, status: str) -> str:
+    """Build a Gemini API error JSON string."""
+    return json.dumps({"error": {"code": code, "message": message, "status": status}})
+
+
+GEMINI_JSON_RESPONSE = gemini_json("test output")
+GEMINI_JSON_WITH_STATS = gemini_json("Hello, world!", stats={"models": {"gemini-2.5-flash": 1}})
 
 # Realistic Node.js warning prefix emitted by Gemini CLI v0.29.0+ before JSON output.
 # Used to test parse_output() fallback for noisy stdout.
