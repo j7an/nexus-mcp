@@ -19,7 +19,10 @@ async def run_subprocess(command: list[str], timeout: float | None = 600.0) -> S
     """
     try:
         process = await asyncio.create_subprocess_exec(
-            *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *command,
+            stdin=asyncio.subprocess.DEVNULL,  # Prevent inheriting MCP server's stdio pipe
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
 
         # Wait for process with optional timeout

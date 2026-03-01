@@ -77,6 +77,7 @@ class TestAbstractRunner:
             "test-cli",
             "-p",
             "test prompt",
+            stdin=-3,  # asyncio.subprocess.DEVNULL = -3
             stdout=-1,  # asyncio.subprocess.PIPE = -1
             stderr=-1,
         )

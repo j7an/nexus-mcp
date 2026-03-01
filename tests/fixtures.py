@@ -131,7 +131,7 @@ def create_mock_process(
     mock.pid = _MOCK_PID  # Prevents MagicMock leaking if code logs pid
 
     # Stream attributes — explicitly None because create_subprocess_exec
-    # is called with stdout=PIPE, stderr=PIPE (streams accessed via communicate()).
+    # is called with stdin=DEVNULL, stdout=PIPE, stderr=PIPE (streams accessed via communicate()).
     mock.stdin = None
     mock.stdout = None
     mock.stderr = None

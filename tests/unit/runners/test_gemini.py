@@ -218,7 +218,8 @@ class TestGeminiRunnerIntegration:
             "json",
             "--model",
             "gemini-2.5-flash",
-            stdout=-1,
+            stdin=-3,  # asyncio.subprocess.DEVNULL = -3
+            stdout=-1,  # asyncio.subprocess.PIPE = -1
             stderr=-1,
         )
 
