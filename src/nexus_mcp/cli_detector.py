@@ -70,18 +70,20 @@ def parse_version(version_output: str, cli: str) -> str | None:
 
 def supports_json_output(cli: str, version: str) -> bool:
     """Check if CLI version supports JSON output."""
-    if cli == "gemini":
-        try:
-            # Strip pre-release suffix: "0.6.0-preview.4" → "0.6.0"
-            base_version = version.split("-")[0]
-            v = pkg_version.parse(base_version)
-            required = pkg_version.parse("0.6.0")
-            return v >= required
-        except pkg_version.InvalidVersion:
+    match cli:
+        case "gemini":
+            try:
+                # Strip pre-release suffix: "0.6.0-preview.4" → "0.6.0"
+                base_version = version.split("-")[0]
+                v = pkg_version.parse(base_version)
+                required = pkg_version.parse("0.6.0")
+                return v >= required
+            except pkg_version.InvalidVersion:
+                return False
+        case "codex" | "claude":
+            return True
+        case _:
             return False
-    elif cli in ("codex", "claude"):
-        return True
-    return False
 
 
 @dataclass(frozen=True, slots=True)
