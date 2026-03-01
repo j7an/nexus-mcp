@@ -46,8 +46,9 @@ def get_cli_version(cli_name: str) -> str | None:
             text=True,
             timeout=10,
         )
-        if result.returncode == 0:
-            return parse_version(result.stdout, cli=cli_name)
+        return parse_version(result.stdout, cli=cli_name) or parse_version(
+            result.stderr, cli=cli_name
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     return None

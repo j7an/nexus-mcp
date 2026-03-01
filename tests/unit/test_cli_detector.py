@@ -43,7 +43,7 @@ class TestGetCLIVersion:
 
     def test_get_cli_version_gemini(self):
         with patch("nexus_mcp.cli_detector.subprocess.run") as mock_run:
-            mock_run.return_value = Mock(stdout="Gemini CLI v0.12.0", returncode=0)
+            mock_run.return_value = Mock(stdout="Gemini CLI v0.12.0", stderr="", returncode=0)
             version = get_cli_version("gemini")
         assert version == "0.12.0"
         mock_run.assert_called_once_with(
@@ -55,11 +55,23 @@ class TestGetCLIVersion:
             version = get_cli_version("gemini")
         assert version is None
 
-    def test_get_cli_version_returns_none_on_nonzero_exit(self):
+    def test_get_cli_version_returns_none_on_empty_output(self):
         with patch("nexus_mcp.cli_detector.subprocess.run") as mock_run:
-            mock_run.return_value = Mock(stdout="", returncode=1)
+            mock_run.return_value = Mock(stdout="", stderr="", returncode=1)
             version = get_cli_version("gemini")
         assert version is None
+
+    def test_get_cli_version_parses_nonzero_exit(self):
+        with patch("nexus_mcp.cli_detector.subprocess.run") as mock_run:
+            mock_run.return_value = Mock(stdout="Gemini CLI v0.12.0", stderr="", returncode=1)
+            version = get_cli_version("gemini")
+        assert version == "0.12.0"
+
+    def test_get_cli_version_parses_stderr_fallback(self):
+        with patch("nexus_mcp.cli_detector.subprocess.run") as mock_run:
+            mock_run.return_value = Mock(stdout="", stderr="Gemini CLI v0.12.0", returncode=0)
+            version = get_cli_version("gemini")
+        assert version == "0.12.0"
 
     def test_get_cli_version_returns_none_on_timeout(self):
         with patch(

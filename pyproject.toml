@@ -19,6 +19,9 @@ dependencies = [
     "pydantic>=2.12.5,<3.0",
 ]
 
+[project.scripts]
+nexus-mcp = "nexus_mcp.__main__:main"
+
 [build-system]
 requires = ["hatchling>=1.28.0"]
 build-backend = "hatchling.build"
