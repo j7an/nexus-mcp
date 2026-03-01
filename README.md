@@ -37,6 +37,76 @@ parallel rather than sequentially:
 | Codex | Planned |
 | Claude Code | Planned |
 
+## Usage
+
+> **Note:** Currently only `gemini` is supported. `codex` and `claude` runner support are planned.
+
+Once nexus-mcp is configured in your MCP client, your AI assistant automatically sees its tools.
+The reliable trigger is **explicitly asking for output from an external AI agent** (e.g. Gemini, Codex).
+Generic "do this in parallel" prompts may be handled by the host AI's own capabilities instead.
+Because `agent` is a required parameter, the assistant typically calls `list_agents` first to discover
+what's available, then fans out your request accordingly.
+
+### Fan out a research question (batch_prompt)
+
+**You say to your AI assistant:**
+> "Get Gemini's perspective on transformer architectures — I want its summary of the Attention Is All You Need paper, its view on the main limitations, and its list of real-world applications beyond NLP."
+
+**Your AI assistant first calls `list_agents` to discover available agents:**
+
+```json
+{}
+```
+
+**Response:** `["gemini"]`
+
+**Then calls `batch_prompt` with the discovered agent:**
+
+```json
+{
+  "tasks": [
+    { "agent": "gemini", "prompt": "Summarize the key findings of the Attention Is All You Need paper", "label": "summary" },
+    { "agent": "gemini", "prompt": "What are the main limitations of transformer architectures?", "label": "limitations" },
+    { "agent": "gemini", "prompt": "List 3 real-world applications of transformers beyond NLP", "label": "applications" }
+  ],
+  "max_concurrency": 3
+}
+```
+
+Agent discovery happens once per session; subsequent examples skip the `list_agents` step.
+
+### Code review from multiple angles (batch_prompt)
+
+**You say to your AI assistant:**
+> "Have Gemini review this diff from three angles in parallel: security vulnerabilities, logic errors, and style issues."
+
+**Your AI assistant calls `batch_prompt`:**
+
+```json
+{
+  "tasks": [
+    { "agent": "gemini", "prompt": "Review this diff for security vulnerabilities:\n\n<paste diff>", "label": "security" },
+    { "agent": "gemini", "prompt": "Review this diff for correctness and logic errors:\n\n<paste diff>", "label": "correctness" },
+    { "agent": "gemini", "prompt": "Review this diff for style and maintainability:\n\n<paste diff>", "label": "style" }
+  ]
+}
+```
+
+### Single-agent prompt (prompt)
+
+**You say to your AI assistant:**
+> "Ask Gemini Flash to explain the difference between TCP and UDP in simple terms."
+
+**Your AI assistant calls `prompt`:**
+
+```json
+{
+  "agent": "gemini",
+  "prompt": "Explain the difference between TCP and UDP in simple terms",
+  "model": "gemini-2.5-flash"
+}
+```
+
 ## MCP Tools
 
 All prompt tools run as background tasks — they return a task ID immediately so the client can
@@ -48,7 +118,7 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 | `prompt` | Yes | Single-agent convenience wrapper; routes to `batch_prompt` |
 | `list_agents` | No | Returns list of supported agent names |
 
-## Usage
+## Installation
 
 ### Run with uvx (recommended)
 
