@@ -4,6 +4,22 @@ An MCP server that enables AI models to invoke AI CLI agents (Gemini CLI, Codex,
 tools. Provides parallel execution, automatic retries with exponential backoff, JSON-first response
 parsing, and structured output through three MCP tools.
 
+## Use Cases
+
+Nexus MCP is useful whenever a task benefits from querying multiple AI agents in
+parallel rather than sequentially:
+
+- **Research & summarization** — fan out a topic to multiple agents, then
+  synthesize their responses into a single summary with diverse perspectives
+- **Code review** — send different files or review angles (security, correctness,
+  style) to separate agents simultaneously
+- **Multi-model comparison** — prompt the same question to different models and
+  compare outputs side-by-side for quality or consistency
+- **Bulk content generation** — generate multiple test cases, translations, or
+  documentation pages concurrently instead of one at a time
+- **Second-opinion workflows** — get independent answers from separate agents
+  before making a decision, reducing single-model bias
+
 ## Features
 
 - **Parallel execution** — `batch_prompt` fans out tasks with `asyncio.gather` and a configurable
