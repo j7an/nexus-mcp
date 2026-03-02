@@ -47,6 +47,40 @@ Generic "do this in parallel" prompts may be handled by the host AI's own capabi
 Because `agent` is a required parameter, the assistant typically calls `list_agents` first to discover
 what's available, then fans out your request accordingly.
 
+### Parameter Reference
+
+#### `batch_prompt`
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `tasks` | Yes | — | List of task objects (see below) |
+| `max_concurrency` | No | `3` | Max parallel agent invocations |
+
+**Task object fields:**
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `agent` | Yes | — | Agent name (e.g. `"gemini"`) |
+| `prompt` | Yes | — | Prompt text |
+| `label` | No | auto | Display label for results (auto-assigned from agent name if omitted) |
+| `execution_mode` | No | `"default"` | `"default"`, `"sandbox"`, or `"yolo"` |
+| `model` | No | CLI default | Model name override |
+| `max_retries` | No | env default | Max retry attempts for transient errors |
+
+#### `prompt`
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `agent` | Yes | — | Agent name |
+| `prompt` | Yes | — | Prompt text |
+| `execution_mode` | No | `"default"` | `"default"`, `"sandbox"`, or `"yolo"` |
+| `model` | No | CLI default | Model name override |
+| `max_retries` | No | env default | Max retry attempts for transient errors |
+
+#### `list_agents`
+
+No parameters.
+
 ### Fan out a research question (batch_prompt)
 
 **You say to your AI assistant:**
@@ -68,8 +102,7 @@ what's available, then fans out your request accordingly.
     { "agent": "gemini", "prompt": "Summarize the key findings of the Attention Is All You Need paper", "label": "summary" },
     { "agent": "gemini", "prompt": "What are the main limitations of transformer architectures?", "label": "limitations" },
     { "agent": "gemini", "prompt": "List 3 real-world applications of transformers beyond NLP", "label": "applications" }
-  ],
-  "max_concurrency": 3
+  ]
 }
 ```
 
