@@ -35,6 +35,7 @@ jobs:
           branch: deps/pre-commit-autoupdate
           title: "deps: update pre-commit hooks"
           commit-message: "deps: update pre-commit hooks"
+          sign-commits: true
           body: |
             Automated update of pre-commit hook versions via `pre-commit autoupdate`.
 
