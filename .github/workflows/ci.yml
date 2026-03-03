@@ -22,12 +22,27 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: uv lock
       - name: Commit updated lockfile
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add uv.lock
-          git diff --cached --quiet || git commit -m "deps: update uv.lock"
-          git push
+          if git diff --quiet uv.lock; then
+            echo "No lockfile changes"
+            exit 0
+          fi
+          CONTENT=$(base64 -w0 uv.lock)
+          HEAD_OID=$(git rev-parse HEAD)
+          gh api graphql -f query='
+            mutation($input: CreateCommitOnBranchInput!) {
+              createCommitOnBranch(input: $input) {
+                commit { url }
+              }
+            }
+          ' -f "input[branchRef][repositoryNameWithOwner]=${{ github.repository }}" \
+            -f "input[branchRef][branchName]=${{ github.head_ref }}" \
+            -f "input[expectedHeadOid]=${HEAD_OID}" \
+            -f "input[message][headline]=deps: update uv.lock" \
+            -f "input[fileChanges][additions][0][path]=uv.lock" \
+            -f "input[fileChanges][additions][0][contents]=${CONTENT}"
 
   test:
     needs: [update-lockfile]
