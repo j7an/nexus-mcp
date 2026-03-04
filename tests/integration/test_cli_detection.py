@@ -11,17 +11,21 @@ import subprocess
 import pytest
 
 from nexus_mcp.cli_detector import detect_cli, get_cli_capabilities, get_cli_version
+from nexus_mcp.config import get_cli_detection_timeout
 
 
 def _run_version_command(cli_name: str) -> str:
     """Run '<cli> --version' and return a diagnostic string for assertion messages."""
+    timeout = get_cli_detection_timeout()
     try:
-        result = subprocess.run([cli_name, "--version"], capture_output=True, text=True, timeout=10)
+        result = subprocess.run(
+            [cli_name, "--version"], capture_output=True, text=True, timeout=timeout
+        )
         return f"returncode={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}"
     except FileNotFoundError:
         return "FileNotFoundError: binary not found"
     except subprocess.TimeoutExpired:
-        return "TimeoutExpired: exceeded 10s"
+        return f"TimeoutExpired: exceeded {timeout}s"
 
 
 # Semver pattern: MAJOR.MINOR.PATCH (optional pre-release suffix handled by parse_version)

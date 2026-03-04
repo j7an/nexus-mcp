@@ -4,6 +4,8 @@
 import subprocess
 from unittest.mock import Mock, patch
 
+import pytest
+
 from nexus_mcp.cli_detector import (
     CLIInfo,
     detect_cli,
@@ -40,6 +42,11 @@ class TestDetectCLI:
 
 class TestGetCLIVersion:
     """Test get_cli_version() runs '<cli> --version' and extracts version."""
+
+    @pytest.fixture(autouse=True)
+    def mock_timeout(self):
+        with patch("nexus_mcp.cli_detector.get_cli_detection_timeout", return_value=10):
+            yield
 
     def test_get_cli_version_gemini(self):
         with patch("nexus_mcp.cli_detector.subprocess.run") as mock_run:
