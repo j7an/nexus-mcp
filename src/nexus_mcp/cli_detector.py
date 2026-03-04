@@ -16,6 +16,8 @@ from dataclasses import dataclass
 
 from packaging import version as pkg_version
 
+from nexus_mcp.config import get_cli_detection_timeout
+
 
 @dataclass(frozen=True, slots=True)
 class CLIInfo:
@@ -44,7 +46,7 @@ def get_cli_version(cli_name: str) -> str | None:
             [cli_name, "--version"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=get_cli_detection_timeout(),
         )
         return parse_version(result.stdout, cli=cli_name) or parse_version(
             result.stderr, cli=cli_name

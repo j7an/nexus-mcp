@@ -102,6 +102,21 @@ def get_retry_max_delay() -> float:
     return _get_float_env("NEXUS_RETRY_MAX_DELAY", "60.0", "retry max delay")
 
 
+def get_cli_detection_timeout() -> int:
+    """Get CLI detection timeout in seconds from env var.
+
+    Returns:
+        Timeout in seconds (default: 30s)
+
+    Raises:
+        ConfigurationError: If env var value is not a valid integer
+
+    Environment Variable:
+        NEXUS_CLI_DETECTION_TIMEOUT: Seconds to wait for '<cli> --version'
+    """
+    return _get_int_env("NEXUS_CLI_DETECTION_TIMEOUT", "30", "CLI detection timeout")
+
+
 def get_agent_env(agent: str, key: str, default: str | None = None) -> str | None:
     """Get agent-specific environment variable.
 
