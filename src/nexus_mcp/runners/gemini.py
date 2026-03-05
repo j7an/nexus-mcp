@@ -15,14 +15,10 @@ import contextlib
 import json
 from typing import Any
 
-from nexus_mcp.cli_detector import detect_cli, get_cli_capabilities, get_cli_version
-from nexus_mcp.config import get_agent_env
-from nexus_mcp.exceptions import CLINotFoundError, ParseError, RetryableError, SubprocessError
+from nexus_mcp.exceptions import ParseError, RetryableError, SubprocessError
 from nexus_mcp.parser import extract_last_json_array, extract_last_json_object
 from nexus_mcp.runners.base import AbstractRunner
 from nexus_mcp.types import AgentResponse, PromptRequest
-
-_RETRYABLE_CODES: frozenset[int] = frozenset({429, 503})
 
 
 class GeminiRunner(AbstractRunner):
@@ -35,27 +31,7 @@ class GeminiRunner(AbstractRunner):
         {"response": "text", "stats": {...}}
     """
 
-    AGENT_NAME: str = "gemini"
-
-    def __init__(self) -> None:
-        """Initialize GeminiRunner with CLI detection and env configuration.
-
-        Raises:
-            CLINotFoundError: If gemini CLI is not found in PATH.
-        """
-        # Phase 3: CLI detection
-        info = detect_cli(self.AGENT_NAME)
-        if not info.found:
-            raise CLINotFoundError(self.AGENT_NAME)
-        version = get_cli_version(self.AGENT_NAME)
-        self.capabilities = get_cli_capabilities(self.AGENT_NAME, version)
-
-        # Phase 3.7: env config layer
-        super().__init__()  # sets self.timeout from AbstractRunner
-        self.cli_path: str = (
-            get_agent_env(self.AGENT_NAME, "PATH", default=self.AGENT_NAME) or self.AGENT_NAME
-        )
-        self.default_model: str | None = get_agent_env(self.AGENT_NAME, "MODEL")
+    AGENT_NAME = "gemini"
 
     def build_command(self, request: PromptRequest) -> list[str]:
         """Build Gemini CLI command from request.
@@ -73,14 +49,7 @@ class GeminiRunner(AbstractRunner):
             4. Add --sandbox if execution_mode == "sandbox"
             5. Add --yolo if execution_mode == "yolo"
         """
-        # Build prompt with file references if provided
-        prompt = request.prompt
-        if request.file_refs:
-            file_list = "\n".join(f"- {path}" for path in request.file_refs)
-            prompt = f"{prompt}\n\nFile references:\n{file_list}"
-
-        # Use configured CLI path
-        command = [self.cli_path, "-p", prompt]
+        command = [self.cli_path, "-p", self._build_prompt(request)]
 
         # Add --output-format json if supported by CLI version
         if self.capabilities.supports_json:
@@ -207,12 +176,15 @@ class GeminiRunner(AbstractRunner):
             return
 
         code = error.get("code", "unknown")
+        if isinstance(code, str):
+            with contextlib.suppress(ValueError):
+                code = int(code)
         message = error.get("message", "unknown error")
         status = error.get("status", "")
         if code == 1 and message == "[object Object]":
             return
         error_msg = f"Gemini API error {code}: {message} ({status})"
-        if isinstance(code, int) and code in _RETRYABLE_CODES:
+        if isinstance(code, int) and code in self._RETRYABLE_CODES:
             raise RetryableError(
                 error_msg,
                 stderr=stderr,
@@ -227,32 +199,3 @@ class GeminiRunner(AbstractRunner):
             returncode=returncode,
             command=command,
         )
-
-    def _recover_from_error(
-        self, stdout: str, stderr: str, returncode: int, command: list[str] | None = None
-    ) -> AgentResponse | None:
-        """Attempt to parse stdout even on non-zero exit code.
-
-        Gemini CLI sometimes produces valid JSON in stdout even when
-        encountering errors (e.g., rate limits, warnings). If stdout contains
-        a structured API error object, raises a descriptive SubprocessError.
-
-        Args:
-            stdout: Subprocess stdout
-            stderr: Subprocess stderr
-            returncode: Exit code
-            command: The CLI command that was run (forwarded to SubprocessError if raised).
-
-        Returns:
-            Recovered AgentResponse if stdout is valid JSON, None otherwise
-
-        Raises:
-            SubprocessError: If stdout or stderr contains a Gemini API error object.
-        """
-        try:
-            response = self.parse_output(stdout, stderr)
-            return self._make_recovered_response(response, returncode, stderr)
-        except ParseError:
-            # Try to extract structured API error; raises SubprocessError if found
-            self._try_extract_error(stdout, stderr, returncode, command)
-            return None  # Falls through to base.py's generic SubprocessError

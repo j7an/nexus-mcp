@@ -12,6 +12,7 @@ Usage:
 
 from nexus_mcp.exceptions import UnsupportedAgentError
 from nexus_mcp.runners.base import AbstractRunner
+from nexus_mcp.runners.codex import CodexRunner
 from nexus_mcp.runners.gemini import GeminiRunner
 
 
@@ -28,6 +29,7 @@ class RunnerFactory:
     """
 
     _REGISTRY: dict[str, type[AbstractRunner]] = {
+        CodexRunner.AGENT_NAME: CodexRunner,
         GeminiRunner.AGENT_NAME: GeminiRunner,
     }
 

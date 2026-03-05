@@ -9,40 +9,20 @@ boundary, letting all layers above run for real:
         → GeminiRunner → build_command → [MOCK subprocess]
 """
 
-from unittest.mock import patch
-
 import pytest
 from fastmcp import Client
 
 from nexus_mcp.server import mcp
-from tests.fixtures import cli_detection_mocks
 
 
 @pytest.fixture(autouse=True)
-def mock_cli_detection():
-    """Auto-mock CLI detection for all E2E tests.
+def _auto_mock_cli_detection(mock_cli_detection):
+    """Auto-activate CLI detection mocking for all E2E tests.
 
-    GeminiRunner.__init__ calls detect_cli() and get_cli_version().
-    Mock both so tests don't require the real Gemini CLI installed.
-    Clears RunnerFactory cache on teardown to prevent runner instances
-    built under mocked CLI detection from leaking into subsequent tests.
+    Prevents tests from requiring real CLI binaries. RunnerFactory cache
+    is cleared on teardown (via cli_detection_mocks in the root fixture).
     """
-    with cli_detection_mocks() as mock:
-        yield mock
-
-
-@pytest.fixture
-def mock_subprocess():
-    """Patch asyncio.create_subprocess_exec at the process module boundary.
-
-    All layers above the subprocess call run for real through the MCP protocol:
-        Client (JSON-RPC) → FastMCP server → tool functions → RunnerFactory
-            → GeminiRunner → build_command → run_subprocess → [MOCK]
-
-    Clears RunnerFactory cache on teardown to prevent runner instances from leaking.
-    """
-    with patch("nexus_mcp.process.asyncio.create_subprocess_exec") as mock_exec:
-        yield mock_exec
+    yield mock_cli_detection
 
 
 @pytest.fixture

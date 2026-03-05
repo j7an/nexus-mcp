@@ -77,11 +77,11 @@ class TestToolDiscovery:
 class TestListAgentsProtocol:
     """Verify list_agents tool via the MCP protocol."""
 
-    async def test_list_agents_returns_gemini(self, mcp_client):
-        """call_tool('list_agents') returns ['gemini'] through JSON-RPC."""
+    async def test_list_agents_returns_all_agents(self, mcp_client):
+        """call_tool('list_agents') returns all supported agents through JSON-RPC."""
         result = await mcp_client.call_tool("list_agents", {})
         assert result.is_error is False
-        assert result.data == ["gemini"]
+        assert result.data == ["codex", "gemini"]
 
 
 # ---------------------------------------------------------------------------

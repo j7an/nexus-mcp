@@ -9,6 +9,7 @@ import shutil
 
 import pytest
 
+from nexus_mcp.runners.codex import CodexRunner
 from nexus_mcp.runners.gemini import GeminiRunner
 
 
@@ -33,3 +34,26 @@ def gemini_runner(gemini_cli_available: str) -> GeminiRunner:  # noqa: ARG001
     Depends on gemini_cli_available to skip if CLI is absent.
     """
     return GeminiRunner()
+
+
+@pytest.fixture(scope="session")
+def codex_cli_available() -> str:
+    """Skip all dependent tests if Codex CLI is not installed.
+
+    Returns:
+        Full path to the codex binary.
+    """
+    path = shutil.which("codex")
+    if path is None:
+        pytest.skip("Codex CLI not found in PATH — install to run integration tests")
+    return path  # type: ignore[return-value]
+
+
+@pytest.fixture
+def codex_runner(codex_cli_available: str) -> CodexRunner:  # noqa: ARG001
+    """Create a real CodexRunner per test.
+
+    Fresh instance per test to avoid state leakage between tests.
+    Depends on codex_cli_available to skip if CLI is absent.
+    """
+    return CodexRunner()
