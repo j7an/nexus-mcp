@@ -34,12 +34,12 @@ parallel rather than sequentially:
 | Agent | Status |
 |-------|--------|
 | Gemini CLI | Supported |
-| Codex | Planned |
+| Codex | Supported |
 | Claude Code | Planned |
 
 ## Usage
 
-> **Note:** Currently only `gemini` is supported. `codex` and `claude` runner support are planned.
+> **Note:** Currently `gemini` and `codex` are supported. `claude` runner support is planned.
 
 Once nexus-mcp is configured in your MCP client, your AI assistant automatically sees its tools.
 The reliable trigger is **explicitly asking for output from an external AI agent** (e.g. Gemini, Codex).
@@ -268,6 +268,8 @@ Pattern: `NEXUS_{AGENT}_{KEY}` (agent name uppercased)
 |----------|-------------|
 | `NEXUS_GEMINI_PATH` | Override Gemini CLI binary path |
 | `NEXUS_GEMINI_MODEL` | Default Gemini model (e.g. `gemini-2.5-flash`) |
+| `NEXUS_CODEX_PATH` | Override Codex CLI binary path |
+| `NEXUS_CODEX_MODEL` | Default Codex model |
 
 ## Development Workflow
 
