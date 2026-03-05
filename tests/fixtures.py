@@ -40,8 +40,15 @@ GEMINI_NOISY_STDOUT = (
     '{"response": "test output"}'
 )
 
-# Phase 6/7: Add CODEX_NDJSON_RESPONSE and CLAUDE_JSON_RESPONSE constants
-# when implementing CodexRunner and ClaudeCodeRunner respectively.
+CODEX_NDJSON_RESPONSE = "\n".join(
+    [
+        '{"type": "thread.started", "thread_id": "t1"}',
+        '{"type": "item.completed", "item": {"id": "i1", "type": "agent_message", "text": "pong"}}',
+        '{"type": "turn.completed", "turn_id": "r1"}',
+    ]
+)
+
+# Phase 7: Add CLAUDE_JSON_RESPONSE when implementing ClaudeCodeRunner.
 
 # ---------------------------------------------------------------------------
 # Integration test constants
@@ -71,8 +78,8 @@ def cli_detection_mocks():
                 yield mock
     """
     with (
-        patch("nexus_mcp.runners.gemini.detect_cli") as mock_detect,
-        patch("nexus_mcp.runners.gemini.get_cli_version", return_value="0.12.0"),
+        patch("nexus_mcp.runners.base.detect_cli") as mock_detect,
+        patch("nexus_mcp.runners.base.get_cli_version", return_value="0.12.0"),
     ):
         mock_detect.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
         yield mock_detect

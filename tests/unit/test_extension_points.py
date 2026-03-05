@@ -70,6 +70,8 @@ class TestChunkExtensionPoint:
         from nexus_mcp.runners.base import AbstractRunner
 
         class ChunkableRunner(AbstractRunner):
+            AGENT_NAME = "test"
+
             def build_command(self, request: PromptRequest) -> list[str]:
                 return ["echo"]
 

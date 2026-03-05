@@ -51,7 +51,7 @@ def get_cli_version(cli_name: str) -> str | None:
         return parse_version(result.stdout, cli=cli_name) or parse_version(
             result.stderr, cli=cli_name
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired):
         pass
     return None
 
@@ -60,7 +60,7 @@ def parse_version(version_output: str, cli: str) -> str | None:
     """Parse version string from CLI --version output."""
     patterns: dict[str, str] = {
         "gemini": r"v?(\d+\.\d+\.\d+(?:-[\w.]+)?)",
-        "codex": r"version\s+(\d+\.\d+\.\d+)",
+        "codex": r"(?:codex[-\w]*|version)\s+(\d+\.\d+\.\d+)",
         "claude": r"v?(\d+\.\d+\.\d+)",
     }
     pattern = patterns.get(cli)

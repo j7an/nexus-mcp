@@ -6,7 +6,7 @@ Tests verify:
 - extract_last_json_array(): bracket-depth array extraction, returns first dict element
 """
 
-from nexus_mcp.parser import extract_last_json_array, extract_last_json_object
+from nexus_mcp.parser import extract_last_json_array, extract_last_json_object, parse_ndjson_events
 
 
 class TestExtractLastJsonObject:
@@ -118,3 +118,94 @@ class TestExtractLastJsonArray:
         text = '[{"first": 1}]\nsome text\n[{"second": 2}]'
         result = extract_last_json_array(text)
         assert result == {"second": 2}
+
+
+class TestParseNdjsonEvents:
+    """Test parse_ndjson_events() extracts text from Codex NDJSON output."""
+
+    def test_empty_input_returns_none(self):
+        """Empty string yields no events → None."""
+        assert parse_ndjson_events("") is None
+
+    def test_single_item_text_field(self):
+        """Single agent_message event with direct text field."""
+        line = '{"type": "item.completed", "item": {"type": "agent_message", "text": "pong"}}'
+        assert parse_ndjson_events(line) == "pong"
+
+    def test_multiple_items_joined_with_double_newline(self):
+        """Multiple agent_message events are joined with \\n\\n."""
+        ndjson = "\n".join(
+            [
+                '{"type": "item.completed", "item": {"type": "agent_message", "text": "first"}}',
+                '{"type": "item.completed", "item": {"type": "agent_message", "text": "second"}}',
+            ]
+        )
+        assert parse_ndjson_events(ndjson) == "first\n\nsecond"
+
+    def test_content_list_fallback(self):
+        """Uses content[*].text when direct text field is absent."""
+        line = (
+            '{"type": "item.completed", "item": {'
+            '"type": "agent_message", "content": [{"text": "from content"}]}}'
+        )
+        assert parse_ndjson_events(line) == "from content"
+
+    def test_non_agent_message_events_skipped(self):
+        """Events with item.type != agent_message are silently ignored."""
+        ndjson = "\n".join(
+            [
+                '{"type": "thread.started", "thread_id": "t1"}',
+                '{"type": "item.completed", "item": {"type": "tool_call", "text": "skip me"}}',
+                '{"type": "item.completed", "item": {"type": "agent_message", "text": "keep"}}',
+            ]
+        )
+        assert parse_ndjson_events(ndjson) == "keep"
+
+    def test_non_json_lines_skipped(self):
+        """Non-JSON lines are skipped without error."""
+        ndjson = "\n".join(
+            [
+                "not json at all",
+                '{"type": "item.completed", "item": {"type": "agent_message", "text": "ok"}}',
+            ]
+        )
+        assert parse_ndjson_events(ndjson) == "ok"
+
+    def test_blank_lines_skipped(self):
+        """Blank / whitespace-only lines are ignored."""
+        ndjson = "\n".join(
+            [
+                "",
+                '{"type": "item.completed", "item": {"type": "agent_message", "text": "hi"}}',
+                "   ",
+            ]
+        )
+        assert parse_ndjson_events(ndjson) == "hi"
+
+    def test_trailing_newline_handled(self):
+        """Trailing newline in stdout doesn't produce an empty part."""
+        ndjson = '{"type": "item.completed", "item": {"type": "agent_message", "text": "hi"}}\n'
+        assert parse_ndjson_events(ndjson) == "hi"
+
+    def test_lifecycle_events_with_no_agent_message_return_none(self):
+        """Status/lifecycle-only event stream with no agent_message → None."""
+        ndjson = "\n".join(
+            [
+                '{"type": "thread.started"}',
+                '{"type": "turn.completed"}',
+            ]
+        )
+        assert parse_ndjson_events(ndjson) is None
+
+    def test_partial_success_error_and_message(self):
+        """Stream with an error event followed by a valid agent_message → message text.
+
+        Error events (type='error') are not item.completed events, so they are
+        silently dropped by the filter guard. The agent_message is still returned.
+        """
+        error_event = '{"type": "error", "message": "something went wrong"}'
+        message_event = (
+            '{"type": "item.completed", "item": {"type": "agent_message", "text": "ok"}}'
+        )
+        ndjson = "\n".join([error_event, message_event])
+        assert parse_ndjson_events(ndjson) == "ok"

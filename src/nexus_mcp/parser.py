@@ -43,6 +43,10 @@ def extract_last_json_object(text: str) -> dict[str, Any] | None:
     block. Handles CLI patterns of appending a JSON error block at the end of
     stderr that may contain log lines and stack traces.
 
+    Scans rightward-to-left through '}' positions. If the first candidate
+    fails to parse (e.g. '}' appears inside a JSON string value), retries
+    with the next candidate — the same retry strategy used by extract_last_json_array.
+
     Args:
         text: String that may contain JSON, possibly mixed with other content.
 
@@ -52,16 +56,73 @@ def extract_last_json_object(text: str) -> dict[str, Any] | None:
     if not text:
         return None
 
-    span = _find_balanced_span(text, "{", "}", len(text))
-    if span is None:
-        return None
+    search_end = len(text)
+    while True:
+        span = _find_balanced_span(text, "{", "}", search_end)
+        if span is None:
+            return None
 
-    start, end = span
-    try:
-        parsed = json.loads(text[start : end + 1])
-        return parsed if isinstance(parsed, dict) else None
-    except (json.JSONDecodeError, ValueError, RecursionError):
-        return None
+        start, last_close = span
+        with contextlib.suppress(json.JSONDecodeError, ValueError, RecursionError):
+            parsed = json.loads(text[start : last_close + 1])
+            if isinstance(parsed, dict):
+                return parsed
+
+        search_end = last_close
+
+
+def parse_ndjson_events(stdout: str) -> str | None:
+    """Extract agent message text from Codex CLI NDJSON output.
+
+    Codex emits one JSON event object per line. This function collects text
+    from ``item.completed`` events where ``item.type == "agent_message"``,
+    joining them with ``"\\n\\n"``.
+
+    Text extraction precedence (per event):
+        1. ``item["text"]``  — direct text field
+        2. ``item["content"][*]["text"]``  — content block list
+
+    Skips blank lines, non-JSON lines, and non-agent-message events silently
+    (parser contract: return None on failure, never raise).
+
+    Args:
+        stdout: Raw NDJSON output from Codex CLI.
+
+    Returns:
+        Joined text from all agent_message events, or None if nothing found.
+
+    Example NDJSON input::
+
+        {"type": "thread.started", "thread_id": "t1"}
+        {"type": "item.completed", "item": {"id": "i1", "type": "agent_message", "text": "hi"}}
+        {"type": "turn.completed"}
+    """
+    parts: list[str] = []
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("type") != "item.completed":
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "agent_message":
+            continue
+        text = item.get("text")
+        if isinstance(text, str):
+            parts.append(text)
+            continue
+        # Fall back to content block list
+        content = item.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    block_text = block.get("text")
+                    if isinstance(block_text, str):
+                        parts.append(block_text)
+    return "\n\n".join(parts) if parts else None
 
 
 def extract_last_json_array(text: str) -> dict[str, Any] | None:

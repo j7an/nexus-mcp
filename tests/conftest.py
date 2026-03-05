@@ -5,11 +5,14 @@ Fixtures here are available in tests/unit/ and tests/integration/ without
 any additional imports.
 """
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastmcp import Context
 from fastmcp.server.dependencies import InMemoryProgress
+
+from nexus_mcp.runners.factory import RunnerFactory
+from tests.fixtures import cli_detection_mocks
 
 
 @pytest.fixture
@@ -35,3 +38,45 @@ def ctx() -> AsyncMock:
     verify ctx.info() logging behavior.
     """
     return AsyncMock(spec=Context)
+
+
+@pytest.fixture
+def mock_cli_detection():
+    """Mock CLI detection so tests don't require real CLI binaries installed.
+
+    NOT autouse — subdirectory conftest files wrap this as autouse for their
+    respective test directories. Tests that need it explicitly can also request
+    it by name.
+    """
+    with cli_detection_mocks() as mock:
+        yield mock
+
+
+@pytest.fixture
+def fast_retry_sleep(monkeypatch):
+    """Patch asyncio.sleep to be instant for retry backoff tests.
+
+    NOT autouse — the runners/ conftest wraps this as autouse for unit tests.
+    E2E tests have their own variant that patches _compute_backoff instead
+    (to avoid busy-spinning the Docket worker's 250ms polling loop).
+    """
+
+    async def instant_sleep(_: float) -> None:
+        pass
+
+    monkeypatch.setattr("asyncio.sleep", instant_sleep)
+
+
+@pytest.fixture
+def mock_subprocess():
+    """Patch asyncio.create_subprocess_exec at the process module boundary.
+
+    All layers above the subprocess call run for real:
+        tool/runner → build_command → run_subprocess → [MOCK]
+
+    Clears RunnerFactory cache on teardown to prevent runner instances from
+    leaking between tests.
+    """
+    with patch("nexus_mcp.process.asyncio.create_subprocess_exec") as mock_exec:
+        yield mock_exec
+    RunnerFactory.clear_cache()

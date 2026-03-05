@@ -99,6 +99,9 @@ class TestParseVersion:
         assert parse_version("Gemini CLI v0.12.0", cli="gemini") == "0.12.0"
 
     def test_parse_version_codex(self):
+        assert parse_version("codex-cli 0.107.0", cli="codex") == "0.107.0"
+
+    def test_parse_version_codex_version_format(self):
         assert parse_version("codex version 1.2.3", cli="codex") == "1.2.3"
 
     def test_parse_version_claude(self):

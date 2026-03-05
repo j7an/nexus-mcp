@@ -4,7 +4,7 @@
 Tests verify:
 - create("gemini") → GeminiRunner instance
 - create("unknown") → UnsupportedAgentError
-- list_agents() → ["gemini"]
+- list_agents() → ["codex", "gemini"]
 - create() returns cached instance for same agent
 - clear_cache() forces fresh instance on next create()
 """
@@ -12,6 +12,7 @@ Tests verify:
 import pytest
 
 from nexus_mcp.exceptions import UnsupportedAgentError
+from nexus_mcp.runners.codex import CodexRunner
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.runners.gemini import GeminiRunner
 
@@ -24,6 +25,12 @@ class TestRunnerFactory:
         runner = RunnerFactory.create("gemini")
 
         assert isinstance(runner, GeminiRunner)
+
+    def test_create_codex_runner(self):
+        """create("codex") should return CodexRunner instance."""
+        runner = RunnerFactory.create("codex")
+
+        assert isinstance(runner, CodexRunner)
 
     def test_create_unknown_agent_raises_error(self):
         """create("unknown") should raise UnsupportedAgentError."""
@@ -42,7 +49,7 @@ class TestRunnerFactory:
         """list_agents() should return list of supported agent names."""
         agents = RunnerFactory.list_agents()
 
-        assert agents == ["gemini"]
+        assert agents == ["codex", "gemini"]
 
     def test_create_returns_cached_instance(self):
         """create() should return the same cached instance for the same agent."""
@@ -59,14 +66,6 @@ class TestRunnerFactory:
 
         assert runner1 is not runner2  # Different instances after cache clear
         assert isinstance(runner2, GeminiRunner)
-
-    def test_create_caches_by_agent_name(self):
-        """Cache key is the agent name; same name returns same object."""
-        runner_a = RunnerFactory.create("gemini")
-        runner_b = RunnerFactory.create("gemini")
-
-        assert runner_a is runner_b
-        assert isinstance(runner_a, GeminiRunner)
 
     def test_list_agents_returns_sorted_order(self):
         """list_agents() should return agents in sorted (alphabetical) order."""

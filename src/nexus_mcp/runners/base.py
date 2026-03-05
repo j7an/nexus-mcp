@@ -23,16 +23,23 @@ import logging
 import random
 import tempfile
 from abc import ABC, abstractmethod
-from typing import Protocol
+from typing import ClassVar, Protocol
 
+from nexus_mcp.cli_detector import (
+    CLICapabilities,
+    detect_cli,
+    get_cli_capabilities,
+    get_cli_version,
+)
 from nexus_mcp.config import (
+    get_agent_env,
     get_global_output_limit,
     get_global_timeout,
     get_retry_base_delay,
     get_retry_max_attempts,
     get_retry_max_delay,
 )
-from nexus_mcp.exceptions import RetryableError, SubprocessError
+from nexus_mcp.exceptions import CLINotFoundError, ParseError, RetryableError, SubprocessError
 from nexus_mcp.process import run_subprocess
 from nexus_mcp.types import AgentResponse, PromptRequest
 
@@ -65,6 +72,9 @@ class CLIRunner(Protocol):
 class AbstractRunner(ABC):
     """Abstract base class implementing Template Method pattern for CLI runners.
 
+    Subclasses must define:
+    - AGENT_NAME: ClassVar[str]  (e.g., "gemini", "codex")
+
     Subclasses must implement:
     - build_command(): Construct CLI command from PromptRequest
     - parse_output(): Parse CLI stdout/stderr into AgentResponse
@@ -77,12 +87,28 @@ class AbstractRunner(ABC):
     5. Apply output limiting
     """
 
+    AGENT_NAME: ClassVar[str]
+    _RETRYABLE_CODES: ClassVar[frozenset[int]] = frozenset({429, 503})
+
     def __init__(self) -> None:
-        """Initialize runner with global configuration."""
+        """Initialize runner with CLI detection and global configuration.
+
+        Raises:
+            CLINotFoundError: If the CLI binary is not found in PATH.
+        """
+        info = detect_cli(self.AGENT_NAME)
+        if not info.found:
+            raise CLINotFoundError(self.AGENT_NAME)
+        version = get_cli_version(self.AGENT_NAME)
+        self.capabilities: CLICapabilities = get_cli_capabilities(self.AGENT_NAME, version)
         self.timeout = get_global_timeout()
         self.base_delay = get_retry_base_delay()
         self.max_delay = get_retry_max_delay()
         self.default_max_attempts = get_retry_max_attempts()
+        self.cli_path: str = (
+            get_agent_env(self.AGENT_NAME, "PATH", default=self.AGENT_NAME) or self.AGENT_NAME
+        )
+        self.default_model: str | None = get_agent_env(self.AGENT_NAME, "MODEL")
 
     async def run(self, request: PromptRequest) -> AgentResponse:
         """Execute CLI agent with retry on transient errors.
@@ -236,6 +262,20 @@ class AbstractRunner(ABC):
             truncated_size_bytes=len(truncated_output.encode("utf-8")),
         )
 
+    def _build_prompt(self, request: PromptRequest) -> str:
+        """Build prompt string with optional file references appended.
+
+        Args:
+            request: Prompt request potentially containing file_refs.
+
+        Returns:
+            Prompt string with file references appended if present.
+        """
+        if not request.file_refs:
+            return request.prompt
+        file_list = "\n".join(f"- {path}" for path in request.file_refs)
+        return f"{request.prompt}\n\nFile references:\n{file_list}"
+
     def _make_recovered_response(
         self, response: AgentResponse, returncode: int, stderr: str
     ) -> AgentResponse:
@@ -260,7 +300,7 @@ class AbstractRunner(ABC):
     ) -> None:
         """Hook for subclasses to raise structured errors from CLI output.
 
-        Called by _recover_from_error implementations when parse_output fails.
+        Called by _recover_from_error when parse_output fails.
         Default: no-op. Override to inspect stdout/stderr for agent-specific
         error formats and raise SubprocessError with structured details.
 
@@ -277,8 +317,9 @@ class AbstractRunner(ABC):
     ) -> AgentResponse | None:
         """Attempt to recover from subprocess error.
 
-        Default implementation returns None (no recovery). Subclasses can override
-        to implement CLI-specific recovery strategies.
+        Tries to parse stdout as valid output even on non-zero exit code.
+        If parsing fails, calls _try_extract_error() to surface structured
+        errors from stdout/stderr before falling through to the generic error.
 
         Args:
             stdout: Subprocess stdout
@@ -290,10 +331,16 @@ class AbstractRunner(ABC):
             Recovered AgentResponse or None if recovery not possible.
 
         Raises:
-            SubprocessError: Subclass implementations may raise if a structured error is
-                detected in stdout/stderr (e.g. GeminiRunner raises on API error JSON).
+            SubprocessError: If _try_extract_error detects a structured error in
+                stdout/stderr (e.g., API error JSON with code and message).
         """
-        return None
+        try:
+            response = self.parse_output(stdout, stderr)
+            return self._make_recovered_response(response, returncode, stderr)
+        except ParseError:
+            # Try to extract structured API error; raises SubprocessError if found
+            self._try_extract_error(stdout, stderr, returncode, command)
+            return None  # Falls through to base.py's generic SubprocessError
 
     @abstractmethod
     def build_command(self, request: PromptRequest) -> list[str]:

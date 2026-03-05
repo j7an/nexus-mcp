@@ -252,8 +252,8 @@ class TestGeminiRunnerCLIDetection:
     def test_omits_json_if_not_supported(self):
         """With old version, JSON flag should be absent."""
         with (
-            patch("nexus_mcp.runners.gemini.detect_cli") as mock_detect,
-            patch("nexus_mcp.runners.gemini.get_cli_version", return_value="0.5.0"),
+            patch("nexus_mcp.runners.base.detect_cli") as mock_detect,
+            patch("nexus_mcp.runners.base.get_cli_version", return_value="0.5.0"),
         ):
             mock_detect.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
             runner = GeminiRunner()

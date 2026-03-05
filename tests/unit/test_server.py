@@ -211,7 +211,7 @@ class TestListAgents:
     def test_list_agents_returns_supported_agents(self):
         """list_agents returns exactly the supported agent names."""
         agents = list_agents()
-        assert agents == ["gemini"]
+        assert agents == ["codex", "gemini"]
 
 
 class TestAssignLabels:

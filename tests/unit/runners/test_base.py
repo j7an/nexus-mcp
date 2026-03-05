@@ -24,16 +24,16 @@ from tests.fixtures import create_mock_process, make_agent_response, make_prompt
 class ConcreteRunner(AbstractRunner):
     """Test implementation of AbstractRunner for testing Template Method pattern."""
 
-    def __init__(self) -> None:
-        """Initialize test runner."""
-        super().__init__()
+    AGENT_NAME = "test"
 
     def build_command(self, request: PromptRequest) -> list[str]:
         """Build test command."""
         return ["test-cli", "-p", request.prompt]
 
     def parse_output(self, stdout: str, stderr: str) -> AgentResponse:
-        """Parse test output."""
+        """Parse test output. Raises ParseError for empty stdout (like real runners)."""
+        if not stdout.strip():
+            raise ParseError("No output from test-cli", raw_output=stdout)
         return AgentResponse(
             agent="test",
             output=stdout.strip(),
@@ -161,7 +161,11 @@ class TestAbstractRunner:
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_run_includes_stdout_in_subprocess_error(self, mock_exec, runner):
-        """SubprocessError raised on non-zero exit should carry stdout."""
+        """SubprocessError raised on non-zero exit (after failed recovery) should carry stdout.
+
+        Patches parse_output to raise ParseError so recovery fails and the generic
+        SubprocessError (raised by _execute) carries the original stdout value.
+        """
         error_json = '{"error": {"code": 429, "message": "Rate limit exceeded"}}'
         mock_exec.return_value = create_mock_process(
             stdout=error_json,
@@ -170,7 +174,10 @@ class TestAbstractRunner:
         )
         request = make_prompt_request()
 
-        with pytest.raises(SubprocessError) as exc_info:
+        with (
+            patch.object(runner, "parse_output", side_effect=ParseError("forced failure")),
+            pytest.raises(SubprocessError) as exc_info,
+        ):
             await runner.run(request)
 
         assert exc_info.value.stdout == error_json
