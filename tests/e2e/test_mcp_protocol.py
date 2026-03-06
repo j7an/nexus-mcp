@@ -15,6 +15,7 @@ All layers above run for real, including JSON-RPC dispatch.
 import pytest
 from fastmcp.exceptions import ToolError
 
+from nexus_mcp.server import mcp
 from tests.fixtures import GEMINI_NOISY_STDOUT, create_mock_process, gemini_error_json, gemini_json
 
 
@@ -334,7 +335,37 @@ class TestBatchPromptProtocol:
 
 
 # ---------------------------------------------------------------------------
-# Class 5: Error handling protocol
+# Class 5: Tool timeout
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestToolTimeout:
+    """Verify FastMCP tool-level timeout via anyio.fail_after().
+
+    Tools registered with task=True support both synchronous and background
+    dispatch. The timeout applies on the synchronous path (client calls
+    without task=True). Background calls go through Docket and are protected
+    by the subprocess-level timeout instead.
+    """
+
+    async def test_hung_tool_times_out(self, mock_subprocess, mcp_client, monkeypatch):
+        """A hung subprocess is cancelled by the tool-level anyio.fail_after().
+
+        Patching tool.timeout to 0.5s and simulating a 5s subprocess delay
+        triggers a TimeoutError on the server side. FastMCP converts this to
+        an isError=True result, which the client re-raises as ToolError with
+        a "timed out after" message.
+        """
+        tool = await mcp.get_tool("prompt")
+        monkeypatch.setattr(tool, "timeout", 0.5)
+        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"), delay=5.0)
+        with pytest.raises(ToolError, match="timed out after 0\\.5s"):
+            await mcp_client.call_tool("prompt", {"agent": "gemini", "prompt": "test"})
+
+
+# ---------------------------------------------------------------------------
+# Class 6: Error handling protocol
 # ---------------------------------------------------------------------------
 
 

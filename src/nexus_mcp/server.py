@@ -22,6 +22,7 @@ from typing import Any
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 
+from nexus_mcp.config import get_tool_timeout
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import (
     DEFAULT_MAX_CONCURRENCY,
@@ -193,6 +194,10 @@ def list_agents() -> list[str]:
 
 # Register functions as MCP tools after definition so tests can import
 # and call the raw functions directly (not the FunctionTool wrappers).
-mcp.tool(task=True)(batch_prompt)
-mcp.tool(task=True)(prompt)
+# timeout wraps synchronous calls with anyio.fail_after(); when a client
+# passes task=True, the call goes through Docket instead (subprocess-level
+# timeout applies). Both prompt and batch_prompt support either path.
+_tool_timeout = get_tool_timeout()
+mcp.tool(task=True, timeout=_tool_timeout)(batch_prompt)
+mcp.tool(task=True, timeout=_tool_timeout)(prompt)
 mcp.tool()(list_agents)

@@ -12,6 +12,7 @@ from nexus_mcp.config import (
     get_retry_base_delay,
     get_retry_max_attempts,
     get_retry_max_delay,
+    get_tool_timeout,
 )
 from nexus_mcp.exceptions import ConfigurationError
 
@@ -130,6 +131,64 @@ class TestGetRetryMaxDelay:
             get_retry_max_delay()
         assert exc_info.value.config_key == "NEXUS_RETRY_MAX_DELAY"
         assert "Invalid retry max delay value" in str(exc_info.value)
+
+
+class TestGetToolTimeout:
+    """Test get_tool_timeout() function."""
+
+    def test_default_is_900(self, monkeypatch):
+        """Tool timeout defaults to 900.0s (15 min) if env var not set."""
+        monkeypatch.delenv("NEXUS_TOOL_TIMEOUT_SECONDS", raising=False)
+        assert get_tool_timeout() == 900.0
+
+    @patch.dict(os.environ, {"NEXUS_TOOL_TIMEOUT_SECONDS": "1800"})
+    def test_custom_value_from_env(self):
+        """Tool timeout can be overridden via NEXUS_TOOL_TIMEOUT_SECONDS."""
+        assert get_tool_timeout() == 1800.0
+
+    @patch.dict(os.environ, {"NEXUS_TOOL_TIMEOUT_SECONDS": "0"})
+    def test_zero_returns_none(self):
+        """NEXUS_TOOL_TIMEOUT_SECONDS=0 disables the timeout (returns None)."""
+        assert get_tool_timeout() is None
+
+    @patch.dict(os.environ, {"NEXUS_TOOL_TIMEOUT_SECONDS": "-5"})
+    def test_negative_raises(self):
+        """Negative timeout value should raise ConfigurationError."""
+        with pytest.raises(ConfigurationError) as exc_info:
+            get_tool_timeout()
+        assert exc_info.value.config_key == "NEXUS_TOOL_TIMEOUT_SECONDS"
+        assert "must be non-negative" in str(exc_info.value)
+
+    @patch.dict(os.environ, {"NEXUS_TOOL_TIMEOUT_SECONDS": "abc"})
+    def test_invalid_raises(self):
+        """Non-numeric value should raise ConfigurationError."""
+        with pytest.raises(ConfigurationError) as exc_info:
+            get_tool_timeout()
+        assert exc_info.value.config_key == "NEXUS_TOOL_TIMEOUT_SECONDS"
+
+    @patch.dict(os.environ, {"NEXUS_TOOL_TIMEOUT_SECONDS": "nan"})
+    def test_nan_raises(self):
+        """NaN value should raise ConfigurationError."""
+        with pytest.raises(ConfigurationError) as exc_info:
+            get_tool_timeout()
+        assert exc_info.value.config_key == "NEXUS_TOOL_TIMEOUT_SECONDS"
+        assert "must be a finite number" in str(exc_info.value)
+
+    @patch.dict(os.environ, {"NEXUS_TOOL_TIMEOUT_SECONDS": "inf"})
+    def test_inf_raises(self):
+        """Infinite value should raise ConfigurationError."""
+        with pytest.raises(ConfigurationError) as exc_info:
+            get_tool_timeout()
+        assert exc_info.value.config_key == "NEXUS_TOOL_TIMEOUT_SECONDS"
+        assert "must be a finite number" in str(exc_info.value)
+
+    @patch.dict(os.environ, {"NEXUS_TOOL_TIMEOUT_SECONDS": "-inf"})
+    def test_negative_inf_raises(self):
+        """Negative infinity is rejected by the finiteness check."""
+        with pytest.raises(ConfigurationError) as exc_info:
+            get_tool_timeout()
+        assert exc_info.value.config_key == "NEXUS_TOOL_TIMEOUT_SECONDS"
+        assert "must be a finite number" in str(exc_info.value)
 
 
 class TestGetAgentEnv:

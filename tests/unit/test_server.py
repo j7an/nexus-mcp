@@ -11,8 +11,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastmcp.exceptions import ToolError
 
+from nexus_mcp.config import get_tool_timeout
 from nexus_mcp.exceptions import ParseError, SubprocessError, UnsupportedAgentError
-from nexus_mcp.server import _assign_labels, batch_prompt, list_agents, prompt
+from nexus_mcp.server import _assign_labels, batch_prompt, list_agents, mcp, prompt
 from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY, MultiPromptResponse
 from tests.fixtures import make_agent_response, make_agent_task
 
@@ -179,6 +180,30 @@ class TestPrompt:
                 agent="gemini",
                 prompt="Test prompt",
             )
+
+
+class TestToolTimeoutRegistration:
+    """Verify that tool-level timeouts are set on registered FunctionTools.
+
+    Timeout is baked in at module import time via get_tool_timeout().
+    These tests verify the default (900.0s) is applied to prompt/batch_prompt
+    and that list_agents has no timeout.
+    """
+
+    async def test_prompt_has_timeout(self):
+        """prompt tool is registered with the default tool timeout."""
+        tool = await mcp.get_tool("prompt")
+        assert tool.timeout == get_tool_timeout()
+
+    async def test_batch_prompt_has_timeout(self):
+        """batch_prompt tool is registered with the default tool timeout."""
+        tool = await mcp.get_tool("batch_prompt")
+        assert tool.timeout == get_tool_timeout()
+
+    async def test_list_agents_no_timeout(self):
+        """list_agents tool has no timeout (instant operation)."""
+        tool = await mcp.get_tool("list_agents")
+        assert tool.timeout is None
 
 
 class TestListAgents:
