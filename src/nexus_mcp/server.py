@@ -87,7 +87,7 @@ def _assign_labels(tasks: list[AgentTask]) -> list[AgentTask]:
 
 async def batch_prompt(
     tasks: list[AgentTask],
-    progress: ProgressLike = Progress(),  # type: ignore[assignment]  # noqa: B008
+    progress: ProgressLike = Progress(),  # noqa: B008
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     ctx: Context | None = None,
 ) -> MultiPromptResponse:
@@ -140,7 +140,7 @@ async def batch_prompt(
 async def prompt(
     agent: str,
     prompt: str,
-    progress: ProgressLike = Progress(),  # type: ignore[assignment]  # noqa: B008
+    progress: ProgressLike = Progress(),  # noqa: B008
     context: dict[str, Any] | None = None,
     execution_mode: ExecutionMode = "default",
     model: str | None = None,
