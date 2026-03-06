@@ -4,7 +4,7 @@
 Tests the full MCP stack that unit/pipeline tests miss:
 - Tool discovery via list_tools() → JSON-RPC
 - JSON-RPC argument serialization round-trips
-- FastMCP DI injection of Progress and Context
+- FastMCP DI injection of Context
 - task=True background task lifecycle (Docket memory://)
 - Schema validation at the protocol boundary
 
@@ -324,10 +324,13 @@ class TestBatchPromptProtocol:
         assert result.data.succeeded == 2
         assert result.data.failed == 0
 
-    async def test_empty_tasks_raises_tool_error(self, mcp_client):
-        """batch_prompt with tasks=[] raises ToolError (progress.set_total requires total >= 1)."""
-        with pytest.raises(ToolError):
-            await mcp_client.call_tool("batch_prompt", {"tasks": []})
+    async def test_empty_task_list_returns_empty_response(self, mcp_client):
+        """batch_prompt with tasks=[] returns empty MultiPromptResponse (total=0, results=[])."""
+        result = await mcp_client.call_tool("batch_prompt", {"tasks": []})
+
+        assert result.is_error is False
+        assert result.data.total == 0
+        assert result.data.results == []
 
 
 # ---------------------------------------------------------------------------

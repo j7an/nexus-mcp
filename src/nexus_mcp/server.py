@@ -20,7 +20,6 @@ import logging
 from typing import Any
 
 from fastmcp import Context, FastMCP
-from fastmcp.dependencies import Progress, ProgressLike
 from fastmcp.exceptions import ToolError
 
 from nexus_mcp.runners.factory import RunnerFactory
@@ -87,7 +86,6 @@ def _assign_labels(tasks: list[AgentTask]) -> list[AgentTask]:
 
 async def batch_prompt(
     tasks: list[AgentTask],
-    progress: ProgressLike = Progress(),  # noqa: B008
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     ctx: Context | None = None,
 ) -> MultiPromptResponse:
@@ -99,7 +97,6 @@ async def batch_prompt(
 
     Args:
         tasks: List of AgentTask objects, each with agent, prompt, and optional fields.
-        progress: Progress tracker (auto-injected by FastMCP).
         max_concurrency: Max parallel agent invocations (default: 3).
         ctx: MCP context (auto-injected by FastMCP). None when called directly in tests.
 
@@ -112,12 +109,13 @@ async def batch_prompt(
 
     labelled = _assign_labels(tasks)
     semaphore = asyncio.Semaphore(max_concurrency)
+    completed = 0
 
-    await progress.set_total(len(labelled))
     if ctx:
         await ctx.info(f"Starting batch of {len(labelled)} tasks (concurrency={max_concurrency})")
 
     async def _run_single(task: AgentTask) -> AgentTaskResult:
+        nonlocal completed
         async with semaphore:
             try:
                 request = task.to_request()
@@ -128,7 +126,13 @@ async def batch_prompt(
                 logger.exception("Task %r failed: %s", task.label, e)
                 return AgentTaskResult(label=task.label, error=str(e), error_type=type(e).__name__)  # type: ignore[arg-type]
             finally:
-                await progress.increment(1)
+                completed += 1
+                if ctx:
+                    await ctx.report_progress(
+                        progress=completed,
+                        total=len(labelled),
+                        message=f"Completed task {completed}/{len(labelled)}: {task.label}",
+                    )
 
     results = await asyncio.gather(*[_run_single(t) for t in labelled])
     response = MultiPromptResponse(results=list(results))
@@ -140,7 +144,6 @@ async def batch_prompt(
 async def prompt(
     agent: str,
     prompt: str,
-    progress: ProgressLike = Progress(),  # noqa: B008
     context: dict[str, Any] | None = None,
     execution_mode: ExecutionMode = "default",
     model: str | None = None,
@@ -155,7 +158,6 @@ async def prompt(
     Args:
         agent: Agent name (e.g., "gemini")
         prompt: Prompt text to send to the agent
-        progress: Progress tracker (auto-injected by FastMCP)
         context: Optional context metadata
         execution_mode: 'default' (safe), 'sandbox', or 'yolo'
         model: Optional model name (uses CLI default if not specified)
@@ -173,7 +175,7 @@ async def prompt(
         model=model,
         max_retries=max_retries,
     )
-    result = await batch_prompt(tasks=[task], progress=progress, ctx=ctx)
+    result = await batch_prompt(tasks=[task], ctx=ctx)
     task_result = result.results[0]
     if task_result.error:
         raise ToolError(task_result.formatted_error)

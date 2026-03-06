@@ -9,24 +9,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastmcp import Context
-from fastmcp.server.dependencies import InMemoryProgress
 
 from nexus_mcp.runners.factory import RunnerFactory
 from tests.fixtures import cli_detection_mocks
-
-
-@pytest.fixture
-def progress() -> AsyncMock:
-    """Minimal mock for FastMCP Progress DI sentinel.
-
-    Progress is the only mock in the integration suite — it cannot be
-    provided by FastMCP outside an active MCP server context.
-
-    Uses spec=InMemoryProgress (the concrete ProgressLike implementation that
-    FastMCP v3 DI injects in non-Docket contexts) so that calls to non-existent
-    methods raise AttributeError instead of silently succeeding.
-    """
-    return AsyncMock(spec=InMemoryProgress)
 
 
 @pytest.fixture
