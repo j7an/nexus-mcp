@@ -14,7 +14,7 @@ classifiers = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    "fastmcp[tasks]>=3.0.2,<4.0",
+    "fastmcp[tasks]>=3.1.0,<4.0",
     "packaging>=26.0",
     "pydantic>=2.12.5,<3.0",
 ]
