@@ -6,6 +6,7 @@ environment variables:
 - Agent-specific: CLI paths, default models
 """
 
+import math
 import os
 
 from nexus_mcp.exceptions import ConfigurationError
@@ -100,6 +101,35 @@ def get_retry_max_delay() -> float:
         NEXUS_RETRY_MAX_DELAY: Maximum seconds to wait between retries
     """
     return _get_float_env("NEXUS_RETRY_MAX_DELAY", "60.0", "retry max delay")
+
+
+def get_tool_timeout() -> float | None:
+    """Get MCP tool-level timeout in seconds from env var.
+
+    Returns:
+        Timeout in seconds applied via anyio.fail_after() (default: 900s = 15 min),
+        or None to disable (0 → None). Set above the subprocess timeout (600s) to
+        catch runaway retry loops.
+
+    Raises:
+        ConfigurationError: If env var value is not a finite non-negative number
+
+    Environment Variable:
+        NEXUS_TOOL_TIMEOUT_SECONDS: Seconds before FastMCP cancels a hung tool call.
+            Set to 0 to disable. Must be finite and non-negative.
+    """
+    value = _get_float_env("NEXUS_TOOL_TIMEOUT_SECONDS", "900.0", "tool timeout")
+    if not math.isfinite(value):
+        raise ConfigurationError(
+            f"Tool timeout must be a finite number, got {value}",
+            config_key="NEXUS_TOOL_TIMEOUT_SECONDS",
+        )
+    if value < 0:
+        raise ConfigurationError(
+            f"Tool timeout must be non-negative, got {value}",
+            config_key="NEXUS_TOOL_TIMEOUT_SECONDS",
+        )
+    return value if value > 0 else None
 
 
 def get_cli_detection_timeout() -> int:

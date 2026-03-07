@@ -9,24 +9,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastmcp import Context
-from fastmcp.server.dependencies import InMemoryProgress
 
 from nexus_mcp.runners.factory import RunnerFactory
 from tests.fixtures import cli_detection_mocks
-
-
-@pytest.fixture
-def progress() -> AsyncMock:
-    """Minimal mock for FastMCP Progress DI sentinel.
-
-    Progress is the only mock in the integration suite — it cannot be
-    provided by FastMCP outside an active MCP server context.
-
-    Uses spec=InMemoryProgress (the concrete ProgressLike implementation that
-    FastMCP v3 DI injects in non-Docket contexts) so that calls to non-existent
-    methods raise AttributeError instead of silently succeeding.
-    """
-    return AsyncMock(spec=InMemoryProgress)
 
 
 @pytest.fixture
@@ -36,8 +21,13 @@ def ctx() -> AsyncMock:
     Context is None-defaulted in server functions, so tests that don't need
     it can omit it. This fixture provides a spec'd mock for tests that
     verify ctx.info() logging behavior.
+
+    ctx.get_state returns None by default (no session state set).
+    Tests that need specific session state can override: ctx.get_state.return_value = {...}
     """
-    return AsyncMock(spec=Context)
+    mock = AsyncMock(spec=Context)
+    mock.get_state.return_value = None  # simulate empty session state
+    return mock
 
 
 @pytest.fixture

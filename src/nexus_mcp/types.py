@@ -4,6 +4,16 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 
 type ExecutionMode = Literal["default", "sandbox", "yolo"]
 
+
+class SessionPreferences(BaseModel):
+    """Session-scoped preferences set by set_preferences and applied by prompt/batch_prompt."""
+
+    model_config = ConfigDict(frozen=True)
+
+    execution_mode: ExecutionMode | None = None
+    model: str | None = Field(default=None, min_length=1)
+
+
 DEFAULT_MAX_CONCURRENCY = 3
 
 
@@ -60,7 +70,7 @@ class AgentTask(BaseModel):
     prompt: str
     label: str | None = None
     context: dict[str, Any] = Field(default_factory=dict)
-    execution_mode: ExecutionMode = "default"
+    execution_mode: ExecutionMode | None = None  # None = use session preference or "default"
     model: str | None = None
     max_retries: int | None = None
 
@@ -77,7 +87,7 @@ class AgentTask(BaseModel):
             agent=self.agent,
             prompt=self.prompt,
             context=self.context,
-            execution_mode=self.execution_mode,
+            execution_mode=self.execution_mode or "default",  # safety net: None → "default"
             model=self.model,
             max_retries=self.max_retries,
         )

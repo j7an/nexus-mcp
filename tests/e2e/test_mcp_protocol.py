@@ -4,7 +4,7 @@
 Tests the full MCP stack that unit/pipeline tests miss:
 - Tool discovery via list_tools() → JSON-RPC
 - JSON-RPC argument serialization round-trips
-- FastMCP DI injection of Progress and Context
+- FastMCP DI injection of Context
 - task=True background task lifecycle (Docket memory://)
 - Schema validation at the protocol boundary
 
@@ -15,6 +15,7 @@ All layers above run for real, including JSON-RPC dispatch.
 import pytest
 from fastmcp.exceptions import ToolError
 
+from nexus_mcp.server import mcp
 from tests.fixtures import GEMINI_NOISY_STDOUT, create_mock_process, gemini_error_json, gemini_json
 
 
@@ -36,11 +37,18 @@ def _extract_prompt_from_args(args: tuple) -> str:
 class TestToolDiscovery:
     """Verify MCP tool registration via list_tools() JSON-RPC call."""
 
-    async def test_list_tools_returns_all_three(self, mcp_client):
-        """list_tools() returns exactly 3 registered tools."""
+    async def test_list_tools_returns_all_six(self, mcp_client):
+        """list_tools() returns exactly 6 registered tools."""
         tools = await mcp_client.list_tools()
         names = {t.name for t in tools}
-        assert names == {"prompt", "batch_prompt", "list_agents"}
+        assert names == {
+            "prompt",
+            "batch_prompt",
+            "list_agents",
+            "set_preferences",
+            "get_preferences",
+            "clear_preferences",
+        }
 
     async def test_prompt_schema_has_required_params(self, mcp_client):
         """prompt tool schema requires 'agent' and 'prompt' parameters."""
@@ -324,14 +332,47 @@ class TestBatchPromptProtocol:
         assert result.data.succeeded == 2
         assert result.data.failed == 0
 
-    async def test_empty_tasks_raises_tool_error(self, mcp_client):
-        """batch_prompt with tasks=[] raises ToolError (progress.set_total requires total >= 1)."""
-        with pytest.raises(ToolError):
-            await mcp_client.call_tool("batch_prompt", {"tasks": []})
+    async def test_empty_task_list_returns_empty_response(self, mcp_client):
+        """batch_prompt with tasks=[] returns empty MultiPromptResponse (total=0, results=[])."""
+        result = await mcp_client.call_tool("batch_prompt", {"tasks": []})
+
+        assert result.is_error is False
+        assert result.data.total == 0
+        assert result.data.results == []
 
 
 # ---------------------------------------------------------------------------
-# Class 5: Error handling protocol
+# Class 5: Tool timeout
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestToolTimeout:
+    """Verify FastMCP tool-level timeout via anyio.fail_after().
+
+    Tools registered with task=True support both synchronous and background
+    dispatch. The timeout applies on the synchronous path (client calls
+    without task=True). Background calls go through Docket and are protected
+    by the subprocess-level timeout instead.
+    """
+
+    async def test_hung_tool_times_out(self, mock_subprocess, mcp_client, monkeypatch):
+        """A hung subprocess is cancelled by the tool-level anyio.fail_after().
+
+        Patching tool.timeout to 0.5s and simulating a 5s subprocess delay
+        triggers a TimeoutError on the server side. FastMCP converts this to
+        an isError=True result, which the client re-raises as ToolError with
+        a "timed out after" message.
+        """
+        tool = await mcp.get_tool("prompt")
+        monkeypatch.setattr(tool, "timeout", 0.5)
+        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"), delay=5.0)
+        with pytest.raises(ToolError, match="timed out after 0\\.5s"):
+            await mcp_client.call_tool("prompt", {"agent": "gemini", "prompt": "test"})
+
+
+# ---------------------------------------------------------------------------
+# Class 6: Error handling protocol
 # ---------------------------------------------------------------------------
 
 

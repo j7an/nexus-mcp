@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from nexus_mcp.cli_detector import CLIInfo
 from nexus_mcp.runners.factory import RunnerFactory
-from nexus_mcp.types import AgentResponse, AgentTask, PromptRequest
+from nexus_mcp.types import AgentResponse, AgentTask, PromptRequest, SessionPreferences
 
 # ---------------------------------------------------------------------------
 # Reusable test constants
@@ -206,5 +206,21 @@ def make_agent_task(**overrides: Any) -> AgentTask:
         task = make_agent_task(agent="codex")                 # override agent
         task = make_agent_task(prompt="Do X", label="my-task")
     """
-    defaults: dict[str, Any] = {"agent": "gemini", "prompt": "Hello"}
+    defaults: dict[str, Any] = {"agent": "gemini", "prompt": "Hello", "execution_mode": "default"}
     return AgentTask(**(defaults | overrides))
+
+
+def make_session_preferences(**overrides: Any) -> SessionPreferences:
+    """Create a SessionPreferences with sensible defaults.
+
+    Defaults mirror the post-construction state of a fresh session: no mode or
+    model pinned, so all callers fall through to per-call or runner defaults.
+
+    Usage::
+
+        prefs = make_session_preferences()                         # execution_mode=None, model=None
+        prefs = make_session_preferences(execution_mode="yolo")    # override one field
+        prefs = make_session_preferences(execution_mode="sandbox", model="gemini-2.5-flash")
+    """
+    defaults: dict[str, Any] = {"execution_mode": None, "model": None}
+    return SessionPreferences(**(defaults | overrides))
