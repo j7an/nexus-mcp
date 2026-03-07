@@ -29,6 +29,8 @@ parallel rather than sequentially:
   spillover for outputs exceeding 50 KB
 - **Execution modes** — `default` (safe), `sandbox` (restricted), `yolo` (full auto-approve)
 - **CLI detection** — auto-detects binary path, version, and JSON output capability at startup
+- **Session preferences** — set defaults for execution mode and model once per session; subsequent calls inherit them without repeating parameters
+- **Tool timeouts** — configurable safety timeout (default 15 min) cancels long-running tool calls to prevent the server from blocking indefinitely
 - **Extensible** — implement `build_command` + `parse_output`, register in `RunnerFactory`
 
 | Agent | Status |
@@ -63,8 +65,9 @@ what's available, then fans out your request accordingly.
 | `agent` | Yes | — | Agent name (e.g. `"gemini"`) |
 | `prompt` | Yes | — | Prompt text |
 | `label` | No | auto | Display label for results (auto-assigned from agent name if omitted) |
-| `execution_mode` | No | `"default"` | `"default"`, `"sandbox"`, or `"yolo"` |
-| `model` | No | CLI default | Model name override |
+| `context` | No | `{}` | Optional context metadata dict |
+| `execution_mode` | No | session pref or `"default"` | `"default"`, `"sandbox"`, or `"yolo"` |
+| `model` | No | session pref or CLI default | Model name override |
 | `max_retries` | No | env default | Max retry attempts for transient errors |
 
 #### `prompt`
@@ -73,13 +76,31 @@ what's available, then fans out your request accordingly.
 |-----------|----------|---------|-------------|
 | `agent` | Yes | — | Agent name |
 | `prompt` | Yes | — | Prompt text |
-| `execution_mode` | No | `"default"` | `"default"`, `"sandbox"`, or `"yolo"` |
-| `model` | No | CLI default | Model name override |
+| `context` | No | `{}` | Optional context metadata dict |
+| `execution_mode` | No | session pref or `"default"` | `"default"`, `"sandbox"`, or `"yolo"` |
+| `model` | No | session pref or CLI default | Model name override |
 | `max_retries` | No | env default | Max retry attempts for transient errors |
 
 #### `list_agents`
 
 No parameters.
+
+#### `set_preferences`
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `execution_mode` | No | — | `"default"`, `"sandbox"`, or `"yolo"` |
+| `model` | No | — | Model name (e.g. `"gemini-2.5-flash"`) |
+| `clear_execution_mode` | No | `false` | Clear execution mode (takes precedence if `execution_mode` is also provided) |
+| `clear_model` | No | `false` | Clear model (takes precedence if `model` is also provided) |
+
+#### `get_preferences`
+
+No parameters. Returns a dict with `execution_mode` and `model` keys (`null` when unset).
+
+#### `clear_preferences`
+
+No parameters. Resets all session preferences.
 
 ### Fan out a research question (batch_prompt)
 
@@ -140,6 +161,47 @@ Agent discovery happens once per session; subsequent examples skip the `list_age
 }
 ```
 
+### Session preferences (set_preferences)
+
+**You say to your AI assistant:**
+> "For the rest of this session, use YOLO mode with Gemini Flash — I don't want to repeat those settings on every call."
+
+**Your AI assistant calls `set_preferences` once:**
+
+```json
+{
+  "execution_mode": "yolo",
+  "model": "gemini-2.5-flash"
+}
+```
+
+**Response:**
+```
+Preferences set: {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
+```
+
+**Subsequent `prompt` and `batch_prompt` calls omit those fields — they inherit from the session:**
+
+```json
+{
+  "agent": "gemini",
+  "prompt": "Summarize the latest developments in Rust's async ecosystem"
+}
+```
+
+The fallback chain is: **explicit parameter → session preference → system default**.
+To override for one call, pass the parameter directly — it takes precedence without changing the session.
+To clear a single preference, use `set_preferences` with the corresponding `clear_*` flag (e.g. `clear_model: true`).
+
+### Managing Session Preferences
+
+| Operation | Tool | Notes |
+|-----------|------|-------|
+| Set one or both fields | `set_preferences` | Pass only the fields you want to change |
+| Read current values | `get_preferences` | Returns `{execution_mode, model}` with `null` for unset fields |
+| Clear all fields | `clear_preferences` | Reverts to per-call defaults |
+| Clear one preference | `set_preferences` with `clear_model: true` or `clear_execution_mode: true` | Other preference is preserved |
+
 ## MCP Tools
 
 All prompt tools run as background tasks — they return a task ID immediately so the client can
@@ -150,6 +212,9 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 | `batch_prompt` | Yes | Fan out prompts to multiple agents in parallel; returns `MultiPromptResponse` |
 | `prompt` | Yes | Single-agent convenience wrapper; routes to `batch_prompt` |
 | `list_agents` | No | Returns list of supported agent names |
+| `set_preferences` | No | Set or selectively clear session defaults for execution mode and model |
+| `get_preferences` | No | Retrieve current session preferences |
+| `clear_preferences` | No | Reset all session preferences |
 
 ## Installation
 
@@ -256,6 +321,7 @@ uv run python -m nexus_mcp
 |----------|---------|-------------|
 | `NEXUS_OUTPUT_LIMIT_BYTES` | `50000` | Max output size in bytes before temp-file spillover |
 | `NEXUS_TIMEOUT_SECONDS` | `600` | Subprocess timeout in seconds (10 minutes) |
+| `NEXUS_TOOL_TIMEOUT_SECONDS` | `900` | Tool-level timeout in seconds (15 minutes); set to `0` to disable |
 | `NEXUS_RETRY_MAX_ATTEMPTS` | `3` | Max attempts including the first (set to 1 to disable retries) |
 | `NEXUS_RETRY_BASE_DELAY` | `2.0` | Base seconds for exponential backoff |
 | `NEXUS_RETRY_MAX_DELAY` | `60.0` | Maximum seconds to wait between retries |
