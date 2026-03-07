@@ -37,11 +37,18 @@ def _extract_prompt_from_args(args: tuple) -> str:
 class TestToolDiscovery:
     """Verify MCP tool registration via list_tools() JSON-RPC call."""
 
-    async def test_list_tools_returns_all_three(self, mcp_client):
-        """list_tools() returns exactly 3 registered tools."""
+    async def test_list_tools_returns_all_six(self, mcp_client):
+        """list_tools() returns exactly 6 registered tools."""
         tools = await mcp_client.list_tools()
         names = {t.name for t in tools}
-        assert names == {"prompt", "batch_prompt", "list_agents"}
+        assert names == {
+            "prompt",
+            "batch_prompt",
+            "list_agents",
+            "set_preferences",
+            "get_preferences",
+            "clear_preferences",
+        }
 
     async def test_prompt_schema_has_required_params(self, mcp_client):
         """prompt tool schema requires 'agent' and 'prompt' parameters."""

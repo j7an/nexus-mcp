@@ -21,8 +21,13 @@ def ctx() -> AsyncMock:
     Context is None-defaulted in server functions, so tests that don't need
     it can omit it. This fixture provides a spec'd mock for tests that
     verify ctx.info() logging behavior.
+
+    ctx.get_state returns None by default (no session state set).
+    Tests that need specific session state can override: ctx.get_state.return_value = {...}
     """
-    return AsyncMock(spec=Context)
+    mock = AsyncMock(spec=Context)
+    mock.get_state.return_value = None  # simulate empty session state
+    return mock
 
 
 @pytest.fixture

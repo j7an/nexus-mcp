@@ -16,11 +16,13 @@ going through the FunctionTool wrapper.
 """
 
 import asyncio
+import json
 import logging
 from typing import Any
 
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from pydantic import ValidationError
 
 from nexus_mcp.config import get_tool_timeout
 from nexus_mcp.runners.factory import RunnerFactory
@@ -30,10 +32,42 @@ from nexus_mcp.types import (
     AgentTaskResult,
     ExecutionMode,
     MultiPromptResponse,
+    SessionPreferences,
 )
 
 mcp = FastMCP("nexus-mcp")
 logger = logging.getLogger(__name__)
+
+_PREFERENCES_KEY = "nexus:preferences"
+
+
+async def _get_session_preferences(ctx: Context | None) -> SessionPreferences:
+    """Read session preferences from ctx state, returning defaults when unset or ctx is None."""
+    if ctx is None:
+        return SessionPreferences()
+    raw = await ctx.get_state(_PREFERENCES_KEY)
+    if raw is None:
+        return SessionPreferences()
+    try:
+        return SessionPreferences(**raw)  # reconstruct from dict after JSON round-trip
+    except (ValidationError, TypeError) as e:
+        raise ToolError(f"Session preferences are corrupted and cannot be loaded: {e}") from e
+
+
+def _apply_preferences(task: AgentTask, prefs: SessionPreferences) -> AgentTask:
+    """Fill in None fields on a task from session preferences.
+
+    Returns the same task object if no updates are needed, otherwise a model_copy.
+    Primary resolution happens in prompt(); this is the safety net for batch_prompt tasks.
+    """
+    updates: dict[str, Any] = {}
+    if task.execution_mode is None:
+        updates["execution_mode"] = prefs.execution_mode or "default"
+    if task.model is None and prefs.model is not None:
+        updates["model"] = prefs.model
+    if updates:
+        return task.model_copy(update=updates)
+    return task
 
 
 def _next_available_label(base: str, reserved: set[str]) -> str:
@@ -108,6 +142,11 @@ async def batch_prompt(
     # converting AgentTask objects to plain dicts. Reconstruct them here.
     tasks = [AgentTask(**t) if isinstance(t, dict) else t for t in tasks]
 
+    # Resolve session preferences before dispatching — workers in a separate process
+    # (Redis-backed Docket) cannot access the foreground session's MemoryStore.
+    prefs = await _get_session_preferences(ctx)
+    tasks = [_apply_preferences(t, prefs) for t in tasks]
+
     labelled = _assign_labels(tasks)
     semaphore = asyncio.Semaphore(max_concurrency)
     completed = 0
@@ -146,7 +185,7 @@ async def prompt(
     agent: str,
     prompt: str,
     context: dict[str, Any] | None = None,
-    execution_mode: ExecutionMode = "default",
+    execution_mode: ExecutionMode | None = None,
     model: str | None = None,
     max_retries: int | None = None,
     ctx: Context | None = None,
@@ -160,20 +199,26 @@ async def prompt(
         agent: Agent name (e.g., "gemini")
         prompt: Prompt text to send to the agent
         context: Optional context metadata
-        execution_mode: 'default' (safe), 'sandbox', or 'yolo'
-        model: Optional model name (uses CLI default if not specified)
+        execution_mode: 'default' (safe), 'sandbox', or 'yolo'. None inherits session preference.
+        model: Optional model name. None inherits session preference or uses CLI default.
         max_retries: Max retry attempts for transient errors (None uses env default)
         ctx: MCP context (auto-injected by FastMCP). None when called directly in tests.
 
     Returns:
         Agent's response text
     """
+    # Resolve session preferences here (foreground) so concrete values reach the Docket worker.
+    prefs = await _get_session_preferences(ctx)
+    session_mode = prefs.execution_mode or "default"
+    resolved_mode = execution_mode if execution_mode is not None else session_mode
+    resolved_model = model if model is not None else prefs.model
+
     task = AgentTask(
         agent=agent,
         prompt=prompt,
         context=context or {},
-        execution_mode=execution_mode,
-        model=model,
+        execution_mode=resolved_mode,
+        model=resolved_model,
         max_retries=max_retries,
     )
     result = await batch_prompt(tasks=[task], ctx=ctx)
@@ -192,6 +237,83 @@ def list_agents() -> list[str]:
     return RunnerFactory.list_agents()
 
 
+async def set_preferences(
+    execution_mode: ExecutionMode | None = None,
+    model: str | None = None,
+    clear_execution_mode: bool = False,
+    clear_model: bool = False,
+    ctx: Context | None = None,
+) -> str:
+    """Set session-scoped preferences that apply to subsequent prompt/batch_prompt calls.
+
+    Preferences persist for the duration of the MCP session. Call again to update,
+    or use clear_preferences to reset all fields at once.
+
+    To clear a single field while keeping others, pass the corresponding clear_* flag:
+        set_preferences(clear_model=True)  # clears model, keeps execution_mode
+
+    Args:
+        execution_mode: Default execution mode for this session ('default', 'sandbox', 'yolo').
+            None retains the current session value (use clear_execution_mode=True to reset).
+        model: Default model name for this session (e.g. 'gemini-2.5-flash').
+            None retains the current session value (use clear_model=True to reset).
+        clear_execution_mode: If True, resets execution_mode to None regardless of the
+            execution_mode argument.
+        clear_model: If True, resets model to None regardless of the model argument.
+        ctx: MCP context (auto-injected by FastMCP).
+
+    Returns:
+        Confirmation string with the active preferences as JSON.
+    """
+    if ctx is None:
+        raise ToolError("set_preferences requires an active session context")
+    existing = await _get_session_preferences(ctx)
+
+    new_execution_mode: ExecutionMode | None
+    if clear_execution_mode:
+        new_execution_mode = None
+    elif execution_mode is not None:
+        new_execution_mode = execution_mode
+    else:
+        new_execution_mode = existing.execution_mode
+
+    new_model: str | None
+    if clear_model:
+        new_model = None
+    elif model is not None:
+        new_model = model
+    else:
+        new_model = existing.model
+
+    merged = SessionPreferences(execution_mode=new_execution_mode, model=new_model)
+    await ctx.set_state(_PREFERENCES_KEY, merged.model_dump())
+    return f"Preferences set: {json.dumps(merged.model_dump())}"
+
+
+async def get_preferences(ctx: Context | None = None) -> dict[str, Any]:
+    """Return the current session preferences.
+
+    Returns:
+        Dict with 'execution_mode' and 'model' keys (None when unset).
+    """
+    if ctx is None:
+        raise ToolError("get_preferences requires an active session context")
+    prefs = await _get_session_preferences(ctx)
+    return prefs.model_dump()
+
+
+async def clear_preferences(ctx: Context | None = None) -> str:
+    """Clear all session preferences, reverting to per-call defaults.
+
+    Returns:
+        Confirmation string.
+    """
+    if ctx is None:
+        raise ToolError("clear_preferences requires an active session context")
+    await ctx.delete_state(_PREFERENCES_KEY)
+    return "Preferences cleared"
+
+
 # Register functions as MCP tools after definition so tests can import
 # and call the raw functions directly (not the FunctionTool wrappers).
 # timeout wraps synchronous calls with anyio.fail_after(); when a client
@@ -201,3 +323,6 @@ _tool_timeout = get_tool_timeout()
 mcp.tool(task=True, timeout=_tool_timeout)(batch_prompt)
 mcp.tool(task=True, timeout=_tool_timeout)(prompt)
 mcp.tool()(list_agents)
+mcp.tool()(set_preferences)
+mcp.tool()(get_preferences)
+mcp.tool()(clear_preferences)

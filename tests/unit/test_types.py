@@ -7,6 +7,7 @@ from nexus_mcp.types import (
     AgentTaskResult,
     MultiPromptResponse,
     PromptRequest,
+    SessionPreferences,
     SubprocessResult,
 )
 
@@ -139,7 +140,7 @@ def test_agent_task_requires_agent_and_prompt():
     assert task.agent == "gemini"
     assert task.prompt == "Hello"
     assert task.label is None
-    assert task.execution_mode == "default"
+    assert task.execution_mode is None  # None = use session preference or fall back to "default"
 
 
 def test_agent_task_rejects_empty_agent():
@@ -291,3 +292,56 @@ def test_agent_task_result_formatted_error_without_type():
     """formatted_error returns the bare message when error_type is None."""
     result = AgentTaskResult(label="t", error="something went wrong")
     assert result.formatted_error == "something went wrong"
+
+
+# ---------------------------------------------------------------------------
+# SessionPreferences tests
+# ---------------------------------------------------------------------------
+
+
+class TestSessionPreferences:
+    def test_default_values_are_none(self):
+        """SessionPreferences defaults: both execution_mode and model are None."""
+        prefs = SessionPreferences()
+        assert prefs.execution_mode is None
+        assert prefs.model is None
+
+    def test_accepts_valid_execution_modes(self):
+        """All ExecutionMode values are accepted."""
+        for mode in ("default", "sandbox", "yolo"):
+            prefs = SessionPreferences(execution_mode=mode)
+            assert prefs.execution_mode == mode
+
+    def test_rejects_invalid_execution_mode(self):
+        """Invalid execution mode raises ValidationError."""
+        with pytest.raises(ValidationError):
+            SessionPreferences(execution_mode="invalid")  # type: ignore[arg-type]
+
+    def test_none_execution_mode_is_valid(self):
+        """None is explicitly valid for execution_mode."""
+        prefs = SessionPreferences(execution_mode=None)
+        assert prefs.execution_mode is None
+
+    def test_rejects_empty_string_model(self):
+        """Empty string model is rejected by min_length=1."""
+        with pytest.raises(ValidationError):
+            SessionPreferences(model="")
+
+    def test_none_model_is_valid(self):
+        """None is explicitly valid for model."""
+        prefs = SessionPreferences(model=None)
+        assert prefs.model is None
+
+    def test_model_dump_round_trip(self):
+        """model_dump() → SessionPreferences(**d) round-trip preserves values."""
+        prefs = SessionPreferences(execution_mode="yolo", model="gemini-2.5-flash")
+        d = prefs.model_dump()
+        reconstructed = SessionPreferences(**d)
+        assert reconstructed.execution_mode == "yolo"
+        assert reconstructed.model == "gemini-2.5-flash"
+
+    def test_frozen(self):
+        """SessionPreferences is immutable (frozen=True)."""
+        prefs = SessionPreferences(execution_mode="default")
+        with pytest.raises(ValidationError):
+            prefs.execution_mode = "yolo"  # type: ignore[misc]
