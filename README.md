@@ -1,5 +1,13 @@
 # Nexus MCP
 
+[![PyPI](https://img.shields.io/pypi/v/nexus-mcp)](https://pypi.org/project/nexus-mcp/)
+[![Python 3.13+](https://img.shields.io/pypi/pyversions/nexus-mcp)](https://pypi.org/project/nexus-mcp/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![type-checked: mypy](https://img.shields.io/badge/type--checked-mypy-blue.svg)](https://mypy-lang.org/)
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://pre-commit.com/)
+[![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io/)
+
 An MCP server that enables AI models to invoke AI CLI agents (Gemini CLI, Codex, Claude Code) as
 tools. Provides parallel execution, automatic retries with exponential backoff, JSON-first response
 parsing, and structured output through three MCP tools.
