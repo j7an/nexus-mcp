@@ -57,59 +57,6 @@ Generic "do this in parallel" prompts may be handled by the host AI's own capabi
 Because `agent` is a required parameter, the assistant typically calls `list_agents` first to discover
 what's available, then fans out your request accordingly.
 
-### Parameter Reference
-
-#### `batch_prompt`
-
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `tasks` | Yes | — | List of task objects (see below) |
-| `max_concurrency` | No | `3` | Max parallel agent invocations |
-
-**Task object fields:**
-
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `agent` | Yes | — | Agent name (e.g. `"gemini"`) |
-| `prompt` | Yes | — | Prompt text |
-| `label` | No | auto | Display label for results (auto-assigned from agent name if omitted) |
-| `context` | No | `{}` | Optional context metadata dict |
-| `execution_mode` | No | session pref or `"default"` | `"default"`, `"sandbox"`, or `"yolo"` |
-| `model` | No | session pref or CLI default | Model name override |
-| `max_retries` | No | env default | Max retry attempts for transient errors |
-
-#### `prompt`
-
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `agent` | Yes | — | Agent name |
-| `prompt` | Yes | — | Prompt text |
-| `context` | No | `{}` | Optional context metadata dict |
-| `execution_mode` | No | session pref or `"default"` | `"default"`, `"sandbox"`, or `"yolo"` |
-| `model` | No | session pref or CLI default | Model name override |
-| `max_retries` | No | env default | Max retry attempts for transient errors |
-
-#### `list_agents`
-
-No parameters.
-
-#### `set_preferences`
-
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `execution_mode` | No | — | `"default"`, `"sandbox"`, or `"yolo"` |
-| `model` | No | — | Model name (e.g. `"gemini-2.5-flash"`) |
-| `clear_execution_mode` | No | `false` | Clear execution mode (takes precedence if `execution_mode` is also provided) |
-| `clear_model` | No | `false` | Clear model (takes precedence if `model` is also provided) |
-
-#### `get_preferences`
-
-No parameters. Returns a dict with `execution_mode` and `model` keys (`null` when unset).
-
-#### `clear_preferences`
-
-No parameters. Resets all session preferences.
-
 ### Fan out a research question (batch_prompt)
 
 **You say to your AI assistant:**
@@ -209,6 +156,59 @@ To clear a single preference, use `set_preferences` with the corresponding `clea
 | Read current values | `get_preferences` | Returns `{execution_mode, model}` with `null` for unset fields |
 | Clear all fields | `clear_preferences` | Reverts to per-call defaults |
 | Clear one preference | `set_preferences` with `clear_model: true` or `clear_execution_mode: true` | Other preference is preserved |
+
+### Parameter Reference
+
+#### `batch_prompt`
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `tasks` | Yes | — | List of task objects (see below) |
+| `max_concurrency` | No | `3` | Max parallel agent invocations |
+
+**Task object fields:**
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `agent` | Yes | — | Agent name (e.g. `"gemini"`) |
+| `prompt` | Yes | — | Prompt text |
+| `label` | No | auto | Display label for results (auto-assigned from agent name if omitted) |
+| `context` | No | `{}` | Optional context metadata dict |
+| `execution_mode` | No | session pref or `"default"` | `"default"`, `"sandbox"`, or `"yolo"` |
+| `model` | No | session pref or CLI default | Model name override |
+| `max_retries` | No | env default | Max retry attempts for transient errors |
+
+#### `prompt`
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `agent` | Yes | — | Agent name |
+| `prompt` | Yes | — | Prompt text |
+| `context` | No | `{}` | Optional context metadata dict |
+| `execution_mode` | No | session pref or `"default"` | `"default"`, `"sandbox"`, or `"yolo"` |
+| `model` | No | session pref or CLI default | Model name override |
+| `max_retries` | No | env default | Max retry attempts for transient errors |
+
+#### `list_agents`
+
+No parameters.
+
+#### `set_preferences`
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `execution_mode` | No | — | `"default"`, `"sandbox"`, or `"yolo"` |
+| `model` | No | — | Model name (e.g. `"gemini-2.5-flash"`) |
+| `clear_execution_mode` | No | `false` | Clear execution mode (takes precedence if `execution_mode` is also provided) |
+| `clear_model` | No | `false` | Clear model (takes precedence if `model` is also provided) |
+
+#### `get_preferences`
+
+No parameters. Returns a dict with `execution_mode` and `model` keys (`null` when unset).
+
+#### `clear_preferences`
+
+No parameters. Resets all session preferences.
 
 ## MCP Tools
 
