@@ -89,7 +89,7 @@ class TestListAgentsProtocol:
         """call_tool('list_agents') returns all supported agents through JSON-RPC."""
         result = await mcp_client.call_tool("list_agents", {})
         assert result.is_error is False
-        assert result.data == ["codex", "gemini"]
+        assert result.data == ["claude", "codex", "gemini"]
 
 
 # ---------------------------------------------------------------------------

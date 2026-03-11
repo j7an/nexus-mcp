@@ -3,8 +3,10 @@
 
 Tests verify:
 - create("gemini") → GeminiRunner instance
+- create("codex") → CodexRunner instance
+- create("claude") → ClaudeRunner instance
 - create("unknown") → UnsupportedAgentError
-- list_agents() → ["codex", "gemini"]
+- list_agents() → ["claude", "codex", "gemini"]
 - create() returns cached instance for same agent
 - clear_cache() forces fresh instance on next create()
 """
@@ -12,6 +14,7 @@ Tests verify:
 import pytest
 
 from nexus_mcp.exceptions import UnsupportedAgentError
+from nexus_mcp.runners.claude import ClaudeRunner
 from nexus_mcp.runners.codex import CodexRunner
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.runners.gemini import GeminiRunner
@@ -45,11 +48,17 @@ class TestRunnerFactory:
         with pytest.raises(UnsupportedAgentError):
             RunnerFactory.create("Gemini")  # Capital G
 
+    def test_create_claude_runner(self):
+        """create("claude") should return ClaudeRunner instance."""
+        runner = RunnerFactory.create("claude")
+
+        assert isinstance(runner, ClaudeRunner)
+
     def test_list_agents_returns_supported_agents(self):
         """list_agents() should return list of supported agent names."""
         agents = RunnerFactory.list_agents()
 
-        assert agents == ["codex", "gemini"]
+        assert agents == ["claude", "codex", "gemini"]
 
     def test_create_returns_cached_instance(self):
         """create() should return the same cached instance for the same agent."""

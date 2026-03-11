@@ -36,6 +36,7 @@ class PromptRequest(BaseModel):
     )
     max_retries: int | None = Field(
         default=None,
+        ge=1,
         description="Max retry attempts for transient errors (None uses NEXUS_RETRY_MAX_ATTEMPTS)",
     )
 
@@ -72,7 +73,7 @@ class AgentTask(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
     execution_mode: ExecutionMode | None = None  # None = use session preference or "default"
     model: str | None = None
-    max_retries: int | None = None
+    max_retries: int | None = Field(default=None, ge=1)
 
     @field_validator("agent", "prompt")
     @classmethod

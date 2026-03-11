@@ -48,7 +48,37 @@ CODEX_NDJSON_RESPONSE = "\n".join(
     ]
 )
 
-# Phase 7: Add CLAUDE_JSON_RESPONSE when implementing ClaudeCodeRunner.
+
+def claude_json(
+    result_text: str,
+    cost_usd: float = 0.005,
+    duration_ms: int = 5000,
+    num_turns: int = 1,
+) -> str:
+    """Build a Claude Code CLI JSON response string."""
+    data = [
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": result_text}],
+            },
+            "cost_usd": round(cost_usd * 0.2, 4),
+            "duration_ms": duration_ms // 2,
+        },
+        {
+            "type": "result",
+            "result": result_text,
+            "session_id": "test-session-id",
+            "cost_usd": cost_usd,
+            "duration_ms": duration_ms,
+            "num_turns": num_turns,
+        },
+    ]
+    return json.dumps(data)
+
+
+CLAUDE_JSON_RESPONSE = claude_json("test output")
 
 # ---------------------------------------------------------------------------
 # Integration test constants

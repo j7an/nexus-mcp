@@ -38,12 +38,14 @@ async def mcp_client():
     exits via CancelledError (a FastMCP limitation), causing subsequent
     Client(mcp) connections to skip Docket initialization.
     """
-    async with Client(mcp) as client:
-        yield client
-    # WORKAROUND: FastMCP _lifespan_result_set stays True after CancelledError,
-    # causing subsequent Client(mcp) connections to skip Docket initialization.
-    # Remove when upstream fixes lifespan state cleanup on CancelledError.
-    mcp._lifespan_result_set = False
+    try:
+        async with Client(mcp) as client:
+            yield client
+    finally:
+        # WORKAROUND: FastMCP _lifespan_result_set stays True after CancelledError,
+        # causing subsequent Client(mcp) connections to skip Docket initialization.
+        # Remove when upstream fixes lifespan state cleanup on CancelledError.
+        mcp._lifespan_result_set = False
 
 
 @pytest.fixture
