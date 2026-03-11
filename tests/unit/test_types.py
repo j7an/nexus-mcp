@@ -224,6 +224,24 @@ def test_agent_task_max_retries_accepts_custom_value():
     assert task.max_retries == 2
 
 
+def test_prompt_request_max_retries_zero_fails():
+    """max_retries=0 is rejected (ge=1); would cause range(0) → unreachable assertion."""
+    with pytest.raises(ValidationError):
+        PromptRequest(agent="gemini", prompt="Hello", max_retries=0)
+
+
+def test_prompt_request_max_retries_negative_fails():
+    """Negative max_retries is rejected by ge=1 validator."""
+    with pytest.raises(ValidationError):
+        PromptRequest(agent="gemini", prompt="Hello", max_retries=-1)
+
+
+def test_agent_task_max_retries_zero_fails():
+    """AgentTask.max_retries=0 is rejected (ge=1)."""
+    with pytest.raises(ValidationError):
+        AgentTask(agent="gemini", prompt="Hello", max_retries=0)
+
+
 # ---------------------------------------------------------------------------
 # error_type field tests
 # ---------------------------------------------------------------------------

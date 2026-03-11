@@ -12,6 +12,7 @@ Usage:
 
 from nexus_mcp.exceptions import UnsupportedAgentError
 from nexus_mcp.runners.base import AbstractRunner
+from nexus_mcp.runners.claude import ClaudeRunner
 from nexus_mcp.runners.codex import CodexRunner
 from nexus_mcp.runners.gemini import GeminiRunner
 
@@ -29,6 +30,7 @@ class RunnerFactory:
     """
 
     _REGISTRY: dict[str, type[AbstractRunner]] = {
+        ClaudeRunner.AGENT_NAME: ClaudeRunner,
         CodexRunner.AGENT_NAME: CodexRunner,
         GeminiRunner.AGENT_NAME: GeminiRunner,
     }
@@ -86,6 +88,6 @@ class RunnerFactory:
             Sorted list of agent names that can be passed to create().
 
         Example:
-            RunnerFactory.list_agents()  # → ["gemini"]
+            RunnerFactory.list_agents()  # → ["claude", "codex", "gemini"]
         """
         return sorted(cls._REGISTRY)

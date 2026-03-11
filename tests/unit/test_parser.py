@@ -4,9 +4,15 @@
 Tests verify:
 - extract_last_json_object(): brace-depth JSON extraction from mixed text
 - extract_last_json_array(): bracket-depth array extraction, returns first dict element
+- extract_last_json_list(): bracket-depth array extraction, returns full list
 """
 
-from nexus_mcp.parser import extract_last_json_array, extract_last_json_object, parse_ndjson_events
+from nexus_mcp.parser import (
+    extract_last_json_array,
+    extract_last_json_list,
+    extract_last_json_object,
+    parse_ndjson_events,
+)
 
 
 class TestExtractLastJsonObject:
@@ -118,6 +124,64 @@ class TestExtractLastJsonArray:
         text = '[{"first": 1}]\nsome text\n[{"second": 2}]'
         result = extract_last_json_array(text)
         assert result == {"second": 2}
+
+
+class TestExtractLastJsonList:
+    """Test extract_last_json_list() returns the full list from the last JSON array."""
+
+    def test_clean_input_returns_full_list(self):
+        """Clean JSON array → full list returned."""
+        text = '[{"type": "result", "result": "hello"}, {"type": "assistant"}]'
+        result = extract_last_json_list(text)
+        assert result == [{"type": "result", "result": "hello"}, {"type": "assistant"}]
+
+    def test_noisy_stdout_extracts_array(self):
+        """Log lines before JSON array are ignored; array extracted correctly."""
+        text = (
+            "(node:1234) Warning: some deprecation\n"
+            "Loaded credentials.\n"
+            '[{"type": "result", "result": "pong"}]'
+        )
+        result = extract_last_json_list(text)
+        assert result == [{"type": "result", "result": "pong"}]
+
+    def test_empty_string_returns_none(self):
+        """Empty string → None."""
+        result = extract_last_json_list("")
+        assert result is None
+
+    def test_no_brackets_returns_none(self):
+        """Text without brackets → None."""
+        result = extract_last_json_list('{"key": "value"}')
+        assert result is None
+
+    def test_invalid_json_returns_none(self):
+        """Brackets found but invalid JSON → None."""
+        result = extract_last_json_list("[not valid json}")
+        assert result is None
+
+    def test_non_dict_elements_returned_as_list(self):
+        """List of scalars returned as-is (no element-type filtering)."""
+        result = extract_last_json_list("[1, 2, 3]")
+        assert result == [1, 2, 3]
+
+    def test_empty_array_returns_none(self):
+        """Empty JSON array '[]' → None (same contract as extract_last_json_array)."""
+        result = extract_last_json_list("[]")
+        assert result is None
+
+    def test_returns_all_elements_not_just_first(self):
+        """Full list returned — not just the first dict like extract_last_json_array."""
+        text = '[{"a": 1}, {"b": 2}, {"c": 3}]'
+        result = extract_last_json_list(text)
+        assert result == [{"a": 1}, {"b": 2}, {"c": 3}]
+        assert len(result) == 3  # type: ignore[arg-type]
+
+    def test_picks_last_array_when_multiple_present(self):
+        """Returns the full last array when multiple arrays exist in text."""
+        text = '[{"first": 1}]\nsome text\n[{"second": 2}, {"third": 3}]'
+        result = extract_last_json_list(text)
+        assert result == [{"second": 2}, {"third": 3}]
 
 
 class TestParseNdjsonEvents:

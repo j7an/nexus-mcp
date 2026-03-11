@@ -125,6 +125,37 @@ def parse_ndjson_events(stdout: str) -> str | None:
     return "\n\n".join(parts) if parts else None
 
 
+def extract_last_json_list(text: str) -> list[Any] | None:
+    """Find and parse the last JSON array in text, returning the full list.
+
+    Unlike extract_last_json_array() which returns only the first dict element,
+    this returns the entire parsed list — needed by ClaudeRunner to iterate
+    all conversation elements and find the result.
+
+    Returns None for empty arrays (same contract as extract_last_json_array).
+
+    Args:
+        text: String that may contain a JSON array, possibly mixed with other content.
+
+    Returns:
+        Parsed list if a non-empty JSON array is found, None otherwise.
+    """
+    if not text:
+        return None
+
+    search_end = len(text)
+    while True:
+        span = _find_balanced_span(text, "[", "]", search_end)
+        if span is None:
+            return None
+        start, last_close = span
+        with contextlib.suppress(json.JSONDecodeError, ValueError, RecursionError):
+            parsed = json.loads(text[start : last_close + 1])
+            if isinstance(parsed, list) and parsed:
+                return parsed
+        search_end = last_close
+
+
 def extract_last_json_array(text: str) -> dict[str, Any] | None:
     """Find and parse the last JSON array in a multi-line string, returning its first element.
 
