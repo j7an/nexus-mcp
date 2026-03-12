@@ -734,6 +734,53 @@ class TestGaxiosErrorExtraction:
         assert "CLI command failed" in primary_message
 
 
+class TestGeminiRunnerParseOutputEdgeCases:
+    """Test GeminiRunner.parse_output() edge cases with unusual stats values."""
+
+    @pytest.fixture
+    def runner(self) -> GeminiRunner:
+        return GeminiRunner()
+
+    def test_parse_output_null_stats_raises_validation_error(self, runner):
+        """'{"response":"text","stats":null}' → Pydantic ValidationError.
+
+        data.get("stats", {}) returns None (the actual value), so
+        AgentResponse(metadata=None) raises a Pydantic ValidationError.
+        """
+        import json
+
+        from pydantic import ValidationError
+
+        stdout = json.dumps({"response": "text", "stats": None})
+        with pytest.raises(ValidationError):
+            runner.parse_output(stdout, "")
+
+    def test_parse_output_non_dict_stats_raises_validation_error(self, runner):
+        """'{"response":"text","stats":42}' → Pydantic ValidationError (stats must be dict)."""
+        import json
+
+        from pydantic import ValidationError
+
+        stdout = json.dumps({"response": "text", "stats": 42})
+        with pytest.raises(ValidationError):
+            runner.parse_output(stdout, "")
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_retry_exhausted_all_429(self, mock_exec):
+        """3x 429 errors, max_retries=3 → RetryableError raised, called 3 times."""
+        from tests.fixtures import gemini_error_json
+
+        error_stdout = gemini_error_json(429, "Quota exhausted", "RESOURCE_EXHAUSTED")
+        mock_exec.return_value = create_mock_process(stdout=error_stdout, returncode=1)
+        runner = GeminiRunner()
+        request = make_prompt_request(max_retries=3)
+
+        with pytest.raises(RetryableError):
+            await runner.run(request)
+
+        assert mock_exec.await_count == 3
+
+
 class TestGeminiRunnerRetryableErrors:
     """Test GeminiRunner raises RetryableError for transient error codes (429, 503).
 

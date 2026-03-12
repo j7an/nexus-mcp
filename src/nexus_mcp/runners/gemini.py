@@ -15,7 +15,7 @@ import contextlib
 import json
 from typing import Any
 
-from nexus_mcp.exceptions import ParseError, RetryableError, SubprocessError
+from nexus_mcp.exceptions import ParseError
 from nexus_mcp.parser import extract_last_json_array, extract_last_json_object
 from nexus_mcp.runners.base import AbstractRunner
 from nexus_mcp.types import AgentResponse, PromptRequest
@@ -175,27 +175,10 @@ class GeminiRunner(AbstractRunner):
         if not isinstance(error, dict):
             return
 
-        code = error.get("code", "unknown")
-        if isinstance(code, str):
-            with contextlib.suppress(ValueError):
-                code = int(code)
+        code = self._coerce_error_code(error.get("code", "unknown"))
         message = error.get("message", "unknown error")
         status = error.get("status", "")
         if code == 1 and message == "[object Object]":
             return
         error_msg = f"Gemini API error {code}: {message} ({status})"
-        if isinstance(code, int) and code in self._RETRYABLE_CODES:
-            raise RetryableError(
-                error_msg,
-                stderr=stderr,
-                stdout=stdout,
-                returncode=returncode,
-                command=command,
-            )
-        raise SubprocessError(
-            error_msg,
-            stderr=stderr,
-            stdout=stdout,
-            returncode=returncode,
-            command=command,
-        )
+        self._raise_structured_error(error_msg, code, stdout, stderr, returncode, command)

@@ -99,3 +99,27 @@ async def test_run_subprocess_error_includes_command(mock_exec):
     with pytest.raises(SubprocessError) as exc_info:
         await run_subprocess(["gemini", "-p", "test"])
     assert exc_info.value.command == ["gemini", "-p", "test"]
+
+
+@patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+async def test_timeout_kills_and_waits_for_process(mock_exec):
+    """After SubprocessTimeoutError → process.kill() and process.wait() both called."""
+    mock_process = create_mock_process(stdout="", delay=10)
+    mock_exec.return_value = mock_process
+
+    with pytest.raises(SubprocessTimeoutError):
+        await run_subprocess(["slow-command"], timeout=0.01)
+
+    mock_process.kill.assert_called_once()
+    mock_process.wait.assert_awaited_once()
+
+
+@patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+async def test_success_with_nonempty_stderr(mock_exec):
+    """returncode=0 with stderr content → result.stderr populated, returncode=0."""
+    mock_exec.return_value = create_mock_process(stdout="output", stderr="warning", returncode=0)
+
+    result = await run_subprocess(["some-command"])
+
+    assert result.stderr == "warning"
+    assert result.returncode == 0

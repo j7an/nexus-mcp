@@ -1,5 +1,6 @@
 # tests/unit/test_exceptions.py
 from nexus_mcp.exceptions import (
+    CLINotFoundError,
     ConfigurationError,
     NexusMCPError,
     ParseError,
@@ -240,3 +241,25 @@ def test_retryable_error_caught_by_subprocess_error_handler():
 
     with pytest.raises(SubprocessError):
         raise RetryableError("Rate limited")
+
+
+# ---------------------------------------------------------------------------
+# CLINotFoundError tests
+# ---------------------------------------------------------------------------
+
+
+def test_cli_not_found_error_stores_cli_name():
+    """CLINotFoundError.cli_name stores the CLI name passed to constructor."""
+    err = CLINotFoundError("gemini")
+    assert err.cli_name == "gemini"
+
+
+def test_cli_not_found_error_message():
+    """str(CLINotFoundError) == 'CLI not found in PATH: gemini'."""
+    err = CLINotFoundError("gemini")
+    assert str(err) == "CLI not found in PATH: gemini"
+
+
+def test_cli_not_found_error_hierarchy():
+    """CLINotFoundError is a subclass of NexusMCPError."""
+    assert issubclass(CLINotFoundError, NexusMCPError)

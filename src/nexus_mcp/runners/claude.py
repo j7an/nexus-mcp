@@ -29,12 +29,11 @@ Note: Claude Code has no sandbox concept. execution_mode="sandbox" maps to defau
 (no extra flags), maintaining the safe-by-default principle.
 """
 
-import contextlib
 import json
 import logging
 from typing import Any
 
-from nexus_mcp.exceptions import ParseError, RetryableError, SubprocessError
+from nexus_mcp.exceptions import ParseError
 from nexus_mcp.parser import extract_last_json_list, extract_last_json_object
 from nexus_mcp.runners.base import AbstractRunner
 from nexus_mcp.types import AgentResponse, PromptRequest
@@ -141,6 +140,19 @@ class ClaudeRunner(AbstractRunner):
             metadata=metadata,
         )
 
+    @staticmethod
+    def _extract_metadata(element: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+        """Extract specified metadata keys from element dict.
+
+        Args:
+            element: Source dict to extract from.
+            keys: Tuple of key names to extract if present.
+
+        Returns:
+            Dict containing only the keys that exist in element.
+        """
+        return {key: element[key] for key in keys if key in element}
+
     def _extract_result(
         self, data: list[Any], raw_output: str = ""
     ) -> tuple[str | None, dict[str, Any]]:
@@ -175,10 +187,9 @@ class ClaudeRunner(AbstractRunner):
                     f"Expected string 'result', got {type(result).__name__}",
                     raw_output=str(element),
                 )
-            metadata: dict[str, Any] = {}
-            for key in ("cost_usd", "duration_ms", "num_turns", "session_id"):
-                if key in element:
-                    metadata[key] = element[key]
+            metadata = self._extract_metadata(
+                element, ("cost_usd", "duration_ms", "num_turns", "session_id")
+            )
             return result, metadata
         return None, {}
 
@@ -204,10 +215,7 @@ class ClaudeRunner(AbstractRunner):
                         if isinstance(text, str):
                             parts.append(text)
             if parts:
-                metadata: dict[str, Any] = {}
-                for key in ("cost_usd", "duration_ms"):
-                    if key in element:
-                        metadata[key] = element[key]
+                metadata = self._extract_metadata(element, ("cost_usd", "duration_ms"))
                 return "\n\n".join(parts), metadata
         return None, {}
 
@@ -241,24 +249,7 @@ class ClaudeRunner(AbstractRunner):
 
         error = data["error"]
 
-        code = error.get("code", "unknown")
-        if isinstance(code, str):
-            with contextlib.suppress(ValueError):
-                code = int(code)
+        code = self._coerce_error_code(error.get("code", "unknown"))
         message = error.get("message", "unknown error")
         error_msg = f"Claude API error {code}: {message}"
-        if isinstance(code, int) and code in self._RETRYABLE_CODES:
-            raise RetryableError(
-                error_msg,
-                stderr=stderr,
-                stdout=stdout,
-                returncode=returncode,
-                command=command,
-            )
-        raise SubprocessError(
-            error_msg,
-            stderr=stderr,
-            stdout=stdout,
-            returncode=returncode,
-            command=command,
-        )
+        self._raise_structured_error(error_msg, code, stdout, stderr, returncode, command)
