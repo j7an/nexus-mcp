@@ -239,6 +239,7 @@ class AbstractRunner(ABC):
         # Save full output to temp file
         with tempfile.NamedTemporaryFile(
             mode="w",
+            encoding="utf-8",
             delete=False,
             prefix="nexus_mcp_output_",
             suffix=".txt",
