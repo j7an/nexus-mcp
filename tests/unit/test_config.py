@@ -7,6 +7,7 @@ import pytest
 
 from nexus_mcp.config import (
     get_agent_env,
+    get_cli_detection_timeout,
     get_global_output_limit,
     get_global_timeout,
     get_retry_base_delay,
@@ -189,6 +190,41 @@ class TestGetToolTimeout:
             get_tool_timeout()
         assert exc_info.value.config_key == "NEXUS_TOOL_TIMEOUT_SECONDS"
         assert "must be a finite number" in str(exc_info.value)
+
+
+class TestNegativeValueDocumentation:
+    """Bug-documenting tests: negative values accepted where validators are absent."""
+
+    @patch.dict(os.environ, {"NEXUS_OUTPUT_LIMIT_BYTES": "-1"})
+    def test_negative_output_limit_accepted(self):
+        """NEXUS_OUTPUT_LIMIT_BYTES=-1 returns -1 (no lower-bound validation)."""
+        assert get_global_output_limit() == -1
+
+    @patch.dict(os.environ, {"NEXUS_RETRY_MAX_ATTEMPTS": "-1"})
+    def test_negative_retry_max_attempts_accepted(self):
+        """NEXUS_RETRY_MAX_ATTEMPTS=-1 returns -1 (no lower-bound validation)."""
+        assert get_retry_max_attempts() == -1
+
+
+class TestGetCLIDetectionTimeout:
+    """Test get_cli_detection_timeout() function."""
+
+    def test_cli_detection_timeout_default(self, monkeypatch):
+        """No env var → returns 30 (default)."""
+        monkeypatch.delenv("NEXUS_CLI_DETECTION_TIMEOUT", raising=False)
+        assert get_cli_detection_timeout() == 30
+
+    @patch.dict(os.environ, {"NEXUS_CLI_DETECTION_TIMEOUT": "10"})
+    def test_cli_detection_timeout_custom(self):
+        """NEXUS_CLI_DETECTION_TIMEOUT=10 → returns 10."""
+        assert get_cli_detection_timeout() == 10
+
+    @patch.dict(os.environ, {"NEXUS_CLI_DETECTION_TIMEOUT": "abc"})
+    def test_cli_detection_timeout_invalid(self):
+        """NEXUS_CLI_DETECTION_TIMEOUT=abc → ConfigurationError."""
+        with pytest.raises(ConfigurationError) as exc_info:
+            get_cli_detection_timeout()
+        assert exc_info.value.config_key == "NEXUS_CLI_DETECTION_TIMEOUT"
 
 
 class TestGetAgentEnv:

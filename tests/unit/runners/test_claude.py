@@ -64,7 +64,7 @@ class TestClaudeRunnerInit:
         """cli_path is taken from NEXUS_CLAUDE_PATH env var."""
         with patch(
             "nexus_mcp.runners.base.get_agent_env",
-            side_effect=lambda agent, key, **kw: "/custom/claude" if key == "PATH" else None,
+            side_effect=lambda _agent, key, **_kw: "/custom/claude" if key == "PATH" else None,
         ):
             runner = make_claude_runner()
         assert runner.cli_path == "/custom/claude"
@@ -421,3 +421,147 @@ class TestRetryableErrors:
         with pytest.raises(RetryableError):
             await runner.run(request)
         assert mock_exec.await_count == 3
+
+
+class TestParseOutputAdvanced:
+    """Test advanced parse_output() behaviors for ClaudeRunner."""
+
+    @pytest.fixture
+    def runner(self) -> ClaudeRunner:
+        return make_claude_runner()
+
+    def test_multiple_result_elements_last_wins(self, runner):
+        """Two type='result' elements → last one used (reversed() iteration)."""
+        data = [
+            {"type": "result", "result": "first result"},
+            {"type": "result", "result": "last result"},
+        ]
+        result = runner.parse_output(json.dumps(data), "")
+        assert result.output == "last result"
+
+    def test_multi_block_assistant_text_joined(self, runner):
+        """Two {'type':'text'} blocks in assistant content → joined with '\\n\\n'."""
+        data = [
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "block one"},
+                        {"type": "text", "text": "block two"},
+                    ],
+                },
+                "cost_usd": 0.001,
+                "duration_ms": 1000,
+            }
+        ]
+        result = runner.parse_output(json.dumps(data), "")
+        assert result.output == "block one\n\nblock two"
+
+    def test_non_text_blocks_skipped(self, runner):
+        """tool_use block + text block → only text block included in output."""
+        data = [
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "toolu_1", "name": "bash", "input": {}},
+                        {"type": "text", "text": "only this text"},
+                    ],
+                },
+                "cost_usd": 0.001,
+                "duration_ms": 1000,
+            }
+        ]
+        result = runner.parse_output(json.dumps(data), "")
+        assert result.output == "only this text"
+
+    def test_noisy_stdout_object_fallback(self, runner):
+        """Log lines + single JSON object → extract_last_json_object path used."""
+        single_obj = json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "object fallback result",
+                "duration_ms": 1000,
+                "session_id": "sess-fallback",
+                "cost_usd": 0.001,
+                "num_turns": 1,
+            }
+        )
+        noisy = "Loading configuration...\nConnecting to API...\n" + single_obj
+        result = runner.parse_output(noisy, "")
+        assert result.output == "object fallback result"
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_recovered_response_metadata_fields(self, mock_exec):
+        """On nonzero exit with parseable stdout, original_exit_code and stderr present."""
+        mock_exec.return_value = create_mock_process(
+            stdout=CLAUDE_JSON_RESPONSE,
+            stderr="some stderr text",
+            returncode=1,
+        )
+        runner = make_claude_runner()
+        result = await runner.run(make_prompt_request(agent="claude", prompt="test"))
+        assert result.metadata.get("original_exit_code") == 1
+        assert result.metadata.get("stderr") == "some stderr text"
+
+    def test_is_error_without_result_key(self, runner):
+        """is_error=True, no 'result' key → ParseError with 'unknown error'."""
+        data = [{"type": "result", "is_error": True}]
+        with pytest.raises(ParseError, match="unknown error"):
+            runner.parse_output(json.dumps(data), "")
+
+
+class TestExtractMetadata:
+    """Test ClaudeRunner._extract_metadata static method."""
+
+    @pytest.fixture
+    def runner(self) -> ClaudeRunner:
+        return make_claude_runner()
+
+    def test_all_keys_present_extracted(self, runner):
+        """All specified keys present in element are returned."""
+        element = {
+            "cost_usd": 0.005,
+            "duration_ms": 1234,
+            "num_turns": 2,
+            "session_id": "sess-abc",
+        }
+        result = runner._extract_metadata(
+            element, ("cost_usd", "duration_ms", "num_turns", "session_id")
+        )
+        assert result == {
+            "cost_usd": 0.005,
+            "duration_ms": 1234,
+            "num_turns": 2,
+            "session_id": "sess-abc",
+        }
+
+    def test_partial_keys_only_present_returned(self, runner):
+        """Only keys present in element are returned; missing keys are omitted."""
+        element = {"cost_usd": 0.001, "num_turns": 1}
+        result = runner._extract_metadata(
+            element, ("cost_usd", "duration_ms", "num_turns", "session_id")
+        )
+        assert result == {"cost_usd": 0.001, "num_turns": 1}
+
+    def test_no_keys_present_returns_empty_dict(self, runner):
+        """When none of the specified keys exist, empty dict is returned."""
+        element = {"type": "result", "result": "text"}
+        result = runner._extract_metadata(element, ("cost_usd", "duration_ms"))
+        assert result == {}
+
+    def test_empty_keys_tuple_returns_empty_dict(self, runner):
+        """Empty keys tuple always produces empty dict."""
+        element = {"cost_usd": 0.001, "duration_ms": 500}
+        result = runner._extract_metadata(element, ())
+        assert result == {}
+
+    def test_does_not_mutate_source_element(self, runner):
+        """Source element dict is not modified."""
+        element = {"cost_usd": 0.001, "extra": "keep"}
+        runner._extract_metadata(element, ("cost_usd",))
+        assert "extra" in element

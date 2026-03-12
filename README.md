@@ -45,14 +45,12 @@ parallel rather than sequentially:
 |-------|--------|
 | Gemini CLI | Supported |
 | Codex | Supported |
-| Claude Code | Planned |
+| Claude Code | Supported |
 
 ## Usage
 
-> **Note:** Currently `gemini` and `codex` are supported. `claude` runner support is planned.
-
 Once nexus-mcp is configured in your MCP client, your AI assistant automatically sees its tools.
-The reliable trigger is **explicitly asking for output from an external AI agent** (e.g. Gemini, Codex).
+The reliable trigger is **explicitly asking for output from an external AI agent** (e.g. Gemini, Codex, Claude Code).
 Generic "do this in parallel" prompts may be handled by the host AI's own capabilities instead.
 Because `agent` is a required parameter, the assistant typically calls `list_agents` first to discover
 what's available, then fans out your request accordingly.
@@ -68,7 +66,7 @@ what's available, then fans out your request accordingly.
 {}
 ```
 
-**Response:** `["gemini"]`
+**Response:** `["claude", "codex", "gemini"]`
 
 **Then calls `batch_prompt` with the discovered agent:**
 
@@ -340,10 +338,12 @@ Pattern: `NEXUS_{AGENT}_{KEY}` (agent name uppercased)
 
 | Variable | Description |
 |----------|-------------|
-| `NEXUS_GEMINI_PATH` | Override Gemini CLI binary path |
-| `NEXUS_GEMINI_MODEL` | Default Gemini model (e.g. `gemini-2.5-flash`) |
+| `NEXUS_CLAUDE_PATH` | Override Claude CLI binary path |
+| `NEXUS_CLAUDE_MODEL` | Default Claude model (e.g. `claude-sonnet-4-6`) |
 | `NEXUS_CODEX_PATH` | Override Codex CLI binary path |
 | `NEXUS_CODEX_MODEL` | Default Codex model |
+| `NEXUS_GEMINI_PATH` | Override Gemini CLI binary path |
+| `NEXUS_GEMINI_MODEL` | Default Gemini model (e.g. `gemini-2.5-flash`) |
 
 ## Development Workflow
 
@@ -417,6 +417,8 @@ nexus-mcp/
 │   └── runners/
 │       ├── base.py         # Protocol + ABC
 │       ├── factory.py      # RunnerFactory
+│       ├── claude.py       # ClaudeRunner
+│       ├── codex.py        # CodexRunner
 │       └── gemini.py       # GeminiRunner
 ├── tests/
 │   ├── unit/               # Fast, mocked tests

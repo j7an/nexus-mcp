@@ -19,11 +19,12 @@ AbstractRunner.run() wraps _execute() in a retry loop:
 """
 
 import asyncio
+import contextlib
 import logging
 import random
 import tempfile
 from abc import ABC, abstractmethod
-from typing import ClassVar, Protocol
+from typing import Any, ClassVar, NoReturn, Protocol
 
 from nexus_mcp.cli_detector import (
     CLICapabilities,
@@ -293,6 +294,52 @@ class AbstractRunner(ABC):
             recovered_from_error=True,
             original_exit_code=returncode,
             stderr=stderr,
+        )
+
+    @staticmethod
+    def _coerce_error_code(code: str | int | Any) -> str | int:
+        """Coerce a string error code to int, falling back to original value.
+
+        Args:
+            code: Error code from CLI output, may be int or string representation of int.
+
+        Returns:
+            Integer if code is a string that parses as int, otherwise the original value.
+        """
+        if isinstance(code, str):
+            with contextlib.suppress(ValueError):
+                return int(code)
+        return code
+
+    def _raise_structured_error(
+        self,
+        error_msg: str,
+        code: str | int,
+        stdout: str,
+        stderr: str,
+        returncode: int,
+        command: list[str] | None,
+    ) -> NoReturn:
+        """Raise RetryableError or SubprocessError based on error code.
+
+        Args:
+            error_msg: Human-readable error message.
+            code: Error code (int checked against _RETRYABLE_CODES, str always non-retryable).
+            stdout: Subprocess stdout (forwarded to exception).
+            stderr: Subprocess stderr (forwarded to exception).
+            returncode: Exit code (forwarded to exception).
+            command: The CLI command that was run (forwarded to exception).
+
+        Raises:
+            RetryableError: If code is an int in _RETRYABLE_CODES.
+            SubprocessError: Otherwise.
+        """
+        if isinstance(code, int) and code in self._RETRYABLE_CODES:
+            raise RetryableError(
+                error_msg, stderr=stderr, stdout=stdout, returncode=returncode, command=command
+            )
+        raise SubprocessError(
+            error_msg, stderr=stderr, stdout=stdout, returncode=returncode, command=command
         )
 
     def _try_extract_error(

@@ -59,7 +59,7 @@ class TestCodexRunnerInit:
         """cli_path is taken from NEXUS_CODEX_PATH env var."""
         with patch(
             "nexus_mcp.runners.base.get_agent_env",
-            side_effect=lambda agent, key, **kw: "/custom/codex" if key == "PATH" else None,
+            side_effect=lambda _agent, key, **_kw: "/custom/codex" if key == "PATH" else None,
         ):
             runner = make_codex_runner()
         assert runner.cli_path == "/custom/codex"
@@ -285,3 +285,75 @@ class TestErrorHandling:
         runner = make_codex_runner()
         with pytest.raises(SubprocessError):
             await runner.run(make_prompt_request(agent="codex", prompt="x"))
+
+    def test_try_extract_error_stdout_fallback(self):
+        """stderr="" + stdout has error JSON with code 503 → RetryableError raised."""
+        stdout = json.dumps({"error": {"code": 503, "message": "Service unavailable"}})
+        runner = make_codex_runner()
+        with pytest.raises(RetryableError):
+            runner._try_extract_error(stdout, "", 1)
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_retry_on_503_full_loop(self, mock_exec):
+        """503 on first attempt, success on second → called twice."""
+        from tests.fixtures import create_mock_process
+
+        error_stderr = json.dumps({"error": {"code": 503, "message": "Service unavailable"}})
+        mock_exec.side_effect = [
+            create_mock_process(stdout="", stderr=error_stderr, returncode=1),
+            create_mock_process(stdout=CODEX_NDJSON_RESPONSE, returncode=0),
+        ]
+        runner = make_codex_runner()
+        result = await runner.run(make_prompt_request(agent="codex", prompt="test", max_retries=2))
+        assert result.output == "pong"
+        assert mock_exec.await_count == 2
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_retry_exhausted_all_503(self, mock_exec):
+        """3x 503 → RetryableError raised, called 3 times."""
+        from tests.fixtures import create_mock_process
+
+        error_stderr = json.dumps({"error": {"code": 503, "message": "Service unavailable"}})
+        mock_exec.return_value = create_mock_process(stdout="", stderr=error_stderr, returncode=1)
+        runner = make_codex_runner()
+        request = make_prompt_request(agent="codex", prompt="test", max_retries=3)
+        with pytest.raises(RetryableError):
+            await runner.run(request)
+        assert mock_exec.await_count == 3
+
+    def test_malformed_ndjson_lines_skipped(self):
+        """Mixed valid/malformed lines → valid parts extracted, malformed skipped."""
+        ndjson = "\n".join(
+            [
+                "not valid json {",
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "agent_message", "text": "hello"},
+                    }
+                ),
+                '{"type": "turn.completed"}',
+            ]
+        )
+        runner = make_codex_runner()
+        result = runner.parse_output(ndjson, "")
+        assert result.output == "hello"
+
+    def test_blank_lines_tolerated(self):
+        """Blank lines between events → parsed correctly, blank lines skipped."""
+        ndjson = "\n".join(
+            [
+                "",
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "agent_message", "text": "world"},
+                    }
+                ),
+                "",
+                '{"type": "turn.completed"}',
+            ]
+        )
+        runner = make_codex_runner()
+        result = runner.parse_output(ndjson, "")
+        assert result.output == "world"

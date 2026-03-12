@@ -80,6 +80,16 @@ def claude_json(
 
 CLAUDE_JSON_RESPONSE = claude_json("test output")
 
+
+def claude_error_json(code: int | str, message: str) -> str:
+    """Build a Claude API error JSON string."""
+    return json.dumps({"error": {"code": code, "message": message}})
+
+
+CLAUDE_NOISY_STDOUT = "Loading configuration...\nConnecting to API...\n" + claude_json(
+    "test output"
+)
+
 # ---------------------------------------------------------------------------
 # Integration test constants
 # ---------------------------------------------------------------------------

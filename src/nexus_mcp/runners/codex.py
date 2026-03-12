@@ -12,9 +12,7 @@ Expected NDJSON response (one JSON object per line):
     {"type": "turn.completed", "turn_id": "..."}
 """
 
-import contextlib
-
-from nexus_mcp.exceptions import ParseError, RetryableError, SubprocessError
+from nexus_mcp.exceptions import ParseError
 from nexus_mcp.parser import extract_last_json_object, parse_ndjson_events
 from nexus_mcp.runners.base import AbstractRunner
 from nexus_mcp.types import AgentResponse, PromptRequest
@@ -117,24 +115,7 @@ class CodexRunner(AbstractRunner):
         if not isinstance(error, dict):
             return
 
-        code = error.get("code", "unknown")
-        if isinstance(code, str):
-            with contextlib.suppress(ValueError):
-                code = int(code)
+        code = self._coerce_error_code(error.get("code", "unknown"))
         message = error.get("message", "unknown error")
         error_msg = f"Codex API error {code}: {message}"
-        if isinstance(code, int) and code in self._RETRYABLE_CODES:
-            raise RetryableError(
-                error_msg,
-                stderr=stderr,
-                stdout=stdout,
-                returncode=returncode,
-                command=command,
-            )
-        raise SubprocessError(
-            error_msg,
-            stderr=stderr,
-            stdout=stdout,
-            returncode=returncode,
-            command=command,
-        )
+        self._raise_structured_error(error_msg, code, stdout, stderr, returncode, command)
