@@ -110,6 +110,12 @@ class TestParseVersion:
     def test_parse_version_invalid_output(self):
         assert parse_version("unknown format", cli="gemini") is None
 
+    def test_parse_version_opencode(self):
+        assert parse_version("opencode v0.1.0", cli="opencode") == "0.1.0"
+
+    def test_parse_version_opencode_without_v(self):
+        assert parse_version("opencode 1.2.3", cli="opencode") == "1.2.3"
+
     def test_parse_version_unknown_cli(self):
         assert parse_version("some output", cli="unknown") is None
 
@@ -138,6 +144,9 @@ class TestSupportsJsonOutput:
     def test_claude_always_supports_json(self):
         assert supports_json_output("claude", "1.0.0") is True
 
+    def test_opencode_always_supports_json(self):
+        assert supports_json_output("opencode", "0.1.0") is True
+
     def test_unknown_cli_no_json(self):
         assert supports_json_output("unknown", "1.0.0") is False
 
@@ -152,6 +161,11 @@ class TestSupportsJsonOutput:
 
 class TestGetCLICapabilities:
     """Test get_cli_capabilities() aggregates feature support."""
+
+    def test_opencode_capabilities(self):
+        caps = get_cli_capabilities("opencode", "0.1.0")
+        assert caps.found is True
+        assert caps.supports_json is True
 
     def test_gemini_modern(self):
         caps = get_cli_capabilities("gemini", "0.12.0")

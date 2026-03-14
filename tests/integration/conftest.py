@@ -12,6 +12,7 @@ import pytest
 from nexus_mcp.runners.claude import ClaudeRunner
 from nexus_mcp.runners.codex import CodexRunner
 from nexus_mcp.runners.gemini import GeminiRunner
+from nexus_mcp.runners.opencode import OpenCodeRunner
 
 
 @pytest.fixture(scope="session")
@@ -64,6 +65,29 @@ def codex_runner(codex_cli_available: str) -> CodexRunner:  # noqa: ARG001
     runner = CodexRunner()
     runner.default_model = "gpt-5.2"
     return runner
+
+
+@pytest.fixture(scope="session")
+def opencode_cli_available() -> str:
+    """Skip all dependent tests if OpenCode CLI is not installed.
+
+    Returns:
+        Full path to the opencode binary.
+    """
+    path = shutil.which("opencode")
+    if path is None:
+        pytest.skip("OpenCode CLI not found in PATH — install to run integration tests")
+    return path  # type: ignore[return-value]
+
+
+@pytest.fixture
+def opencode_runner(opencode_cli_available: str) -> OpenCodeRunner:  # noqa: ARG001
+    """Create a real OpenCodeRunner per test.
+
+    Fresh instance per test to avoid state leakage between tests.
+    Depends on opencode_cli_available to skip if CLI is absent.
+    """
+    return OpenCodeRunner()
 
 
 @pytest.fixture(scope="session")

@@ -62,6 +62,7 @@ def parse_version(version_output: str, cli: str) -> str | None:
         "gemini": r"v?(\d+\.\d+\.\d+(?:-[\w.]+)?)",
         "codex": r"(?:codex[-\w]*|version)\s+(\d+\.\d+\.\d+)",
         "claude": r"v?(\d+\.\d+\.\d+)",
+        "opencode": r"v?(\d+\.\d+\.\d+)",
     }
     pattern = patterns.get(cli)
     if not pattern:
@@ -82,7 +83,7 @@ def supports_json_output(cli: str, version: str) -> bool:
                 return v >= required
             except pkg_version.InvalidVersion:
                 return False
-        case "codex" | "claude":
+        case "codex" | "claude" | "opencode":
             return True
         case _:
             return False

@@ -81,13 +81,68 @@ def claude_json(
 CLAUDE_JSON_RESPONSE = claude_json("test output")
 
 
+def opencode_ndjson(output: str) -> str:
+    """Build an OpenCode NDJSON response string using the real OpenCode schema.
+
+    OpenCode run --format json emits:
+        {"type": "step_start", ...}
+        {"type": "text", "part": {"type": "text", "text": "<output>"}}
+        {"type": "step_finish", ...}
+    """
+    import json as _json
+
+    return "\n".join(
+        [
+            '{"type": "step_start", "sessionID": "ses_test"}',
+            _json.dumps(
+                {
+                    "type": "text",
+                    "sessionID": "ses_test",
+                    "part": {"type": "text", "text": output},
+                }
+            ),
+            '{"type": "step_finish", "sessionID": "ses_test"}',
+        ]
+    )
+
+
+def opencode_json(output: str) -> str:
+    """Build an OpenCode single JSON object response string."""
+    return json.dumps({"message": output})
+
+
+OPENCODE_NDJSON_RESPONSE = opencode_ndjson("test output")
+OPENCODE_JSON_RESPONSE = opencode_json("test output")
+
+
 def claude_error_json(code: int | str, message: str) -> str:
     """Build a Claude API error JSON string."""
     return json.dumps({"error": {"code": code, "message": message}})
 
 
+def codex_error_json(code: int | str, message: str) -> str:
+    """Build a Codex API error JSON string."""
+    return json.dumps({"error": {"code": code, "message": message}})
+
+
+def opencode_error_json(name: str, message: str, *, status_code: int | None = None) -> str:
+    """Build an OpenCode NDJSON error event string.
+
+    Real format: {"type":"error","error":{"name":"...","data":{"message":"...","statusCode":N}}}
+    """
+    data: dict[str, object] = {"message": message}
+    if status_code is not None:
+        data["statusCode"] = status_code
+    return json.dumps({"type": "error", "error": {"name": name, "data": data}})
+
+
 CLAUDE_NOISY_STDOUT = "Loading configuration...\nConnecting to API...\n" + claude_json(
     "test output"
+)
+
+OPENCODE_NOISY_STDOUT = (
+    "(node:12345) DeprecationWarning: some warning\n"
+    "Loading state...\n" + opencode_ndjson("test output")
 )
 
 # ---------------------------------------------------------------------------

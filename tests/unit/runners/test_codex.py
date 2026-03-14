@@ -12,6 +12,7 @@ Tests verify:
 - error handling: _recover_from_error, _try_extract_error
 """
 
+import asyncio
 import json
 from unittest.mock import patch
 
@@ -20,7 +21,12 @@ import pytest
 from nexus_mcp.cli_detector import CLIInfo
 from nexus_mcp.exceptions import CLINotFoundError, ParseError, RetryableError, SubprocessError
 from nexus_mcp.runners.codex import CodexRunner
-from tests.fixtures import CODEX_NDJSON_RESPONSE, make_prompt_request
+from tests.fixtures import (
+    CODEX_NDJSON_RESPONSE,
+    codex_error_json,
+    create_mock_process,
+    make_prompt_request,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -70,8 +76,8 @@ class TestCodexRunnerInit:
 # ---------------------------------------------------------------------------
 
 
-class TestBuildCommand:
-    """Test CodexRunner.build_command() argument construction."""
+class TestCodexRunnerBuildCommand:
+    """Test CodexRunner.build_command() core argument construction."""
 
     def test_default_command_shape(self):
         """Default command: [cli_path, 'exec', prompt, '--json']."""
@@ -103,14 +109,14 @@ class TestBuildCommand:
         assert cmd[idx + 1] == "o3"
         assert "o1-mini" not in cmd
 
-    def test_file_refs_appended_to_prompt(self):
-        """File references are appended to the prompt string."""
-        runner = make_codex_runner()
-        cmd = runner.build_command(
-            make_prompt_request(agent="codex", prompt="analyse", file_refs=["src/main.py"])
-        )
-        assert cmd[2].startswith("analyse")
-        assert "src/main.py" in cmd[2]
+
+# ---------------------------------------------------------------------------
+# build_command — execution modes
+# ---------------------------------------------------------------------------
+
+
+class TestCodexRunnerBuildCommandModes:
+    """Test CodexRunner execution mode flags in build_command()."""
 
     def test_sandbox_mode_adds_flags(self):
         """execution_mode='sandbox' adds --sandbox workspace-write."""
@@ -163,11 +169,35 @@ class TestBuildCommand:
 
 
 # ---------------------------------------------------------------------------
+# File references
+# ---------------------------------------------------------------------------
+
+
+class TestCodexRunnerFileReferences:
+    """Test CodexRunner file references handling in build_command()."""
+
+    def test_file_refs_appended_to_prompt(self):
+        """File references are appended to the prompt string."""
+        runner = make_codex_runner()
+        cmd = runner.build_command(
+            make_prompt_request(agent="codex", prompt="analyse", file_refs=["src/main.py"])
+        )
+        assert cmd[2].startswith("analyse")
+        assert "src/main.py" in cmd[2]
+
+    def test_prompt_unchanged_when_no_file_refs(self):
+        """Prompt is unchanged when file_refs is empty."""
+        runner = make_codex_runner()
+        cmd = runner.build_command(make_prompt_request(agent="codex", prompt="hello"))
+        assert cmd[2] == "hello"
+
+
+# ---------------------------------------------------------------------------
 # parse_output
 # ---------------------------------------------------------------------------
 
 
-class TestParseOutput:
+class TestCodexRunnerParseOutput:
     """Test CodexRunner.parse_output()."""
 
     def test_success_single_message(self):
@@ -221,105 +251,33 @@ class TestParseOutput:
 
 
 # ---------------------------------------------------------------------------
-# Error handling
+# Scalar JSON (null, number)
 # ---------------------------------------------------------------------------
 
 
-class TestErrorHandling:
-    """Test CodexRunner._recover_from_error and _try_extract_error."""
+class TestCodexRunnerScalarJson:
+    """Test parse_output handles scalar JSON values (null, number) without TypeError."""
 
-    def test_no_json_in_stderr_or_stdout_returns_none(self):
-        """No structured error JSON → _recover_from_error returns None."""
+    def test_parse_output_null_raises_parse_error(self):
+        """'null' as NDJSON → no dict events found → ParseError."""
         runner = make_codex_runner()
-        result = runner._recover_from_error("not json", "also not json", 1)
-        assert result is None
+        with pytest.raises(ParseError):
+            runner.parse_output("null", "")
 
-    def test_valid_ndjson_on_error_returns_recovered_response(self):
-        """Valid NDJSON in stdout on non-zero exit → recovered AgentResponse."""
+    def test_parse_output_number_raises_parse_error(self):
+        """'42' as NDJSON → no dict events found → ParseError."""
         runner = make_codex_runner()
-        result = runner._recover_from_error(CODEX_NDJSON_RESPONSE, "", 1)
-        assert result is not None
-        assert result.output == "pong"
-        assert result.metadata.get("recovered_from_error") is True
+        with pytest.raises(ParseError):
+            runner.parse_output("42", "")
 
-    @pytest.mark.parametrize("code", [429, 503])
-    def test_retryable_error_codes_raise_retryable_error(self, code: int):
-        """Error codes 429 and 503 in stderr JSON → RetryableError."""
-        stderr = json.dumps({"error": {"code": code, "message": "transient error"}})
-        runner = make_codex_runner()
-        with pytest.raises(RetryableError):
-            runner._try_extract_error("", stderr, 1)
 
-    @pytest.mark.parametrize("code", ["429", "503"])
-    def test_retryable_string_error_codes_raise_retryable_error(self, code: str):
-        """String error codes '429' and '503' in stderr JSON → RetryableError (coerced)."""
-        stderr = json.dumps({"error": {"code": code, "message": "transient error"}})
-        runner = make_codex_runner()
-        with pytest.raises(RetryableError):
-            runner._try_extract_error("", stderr, 1)
+# ---------------------------------------------------------------------------
+# Noisy stdout
+# ---------------------------------------------------------------------------
 
-    def test_non_retryable_error_code_raises_subprocess_error(self):
-        """Non-retryable error code in stderr JSON → SubprocessError (not RetryableError)."""
-        stderr = json.dumps({"error": {"code": 401, "message": "unauthorized"}})
-        runner = make_codex_runner()
-        with pytest.raises(SubprocessError) as exc_info:
-            runner._try_extract_error("", stderr, 1)
-        assert not isinstance(exc_info.value, RetryableError)
 
-    def test_malformed_json_in_stderr_returns_none(self):
-        """Truncated/malformed JSON in stderr → _try_extract_error returns without raising."""
-        stderr = '{"error": {"code": 429, "message": "truncated...'
-        runner = make_codex_runner()
-        # Should not raise — malformed JSON falls through silently
-        result = runner._recover_from_error("", stderr, 1)
-        assert result is None
-
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_nonzero_returncode_raises_subprocess_error(self, mock_exec):
-        """Non-zero exit with no recoverable content → SubprocessError raised by run()."""
-        from tests.fixtures import create_mock_process
-
-        mock_exec.return_value = create_mock_process(
-            stdout="", stderr="something went wrong", returncode=1
-        )
-        runner = make_codex_runner()
-        with pytest.raises(SubprocessError):
-            await runner.run(make_prompt_request(agent="codex", prompt="x"))
-
-    def test_try_extract_error_stdout_fallback(self):
-        """stderr="" + stdout has error JSON with code 503 → RetryableError raised."""
-        stdout = json.dumps({"error": {"code": 503, "message": "Service unavailable"}})
-        runner = make_codex_runner()
-        with pytest.raises(RetryableError):
-            runner._try_extract_error(stdout, "", 1)
-
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_retry_on_503_full_loop(self, mock_exec):
-        """503 on first attempt, success on second → called twice."""
-        from tests.fixtures import create_mock_process
-
-        error_stderr = json.dumps({"error": {"code": 503, "message": "Service unavailable"}})
-        mock_exec.side_effect = [
-            create_mock_process(stdout="", stderr=error_stderr, returncode=1),
-            create_mock_process(stdout=CODEX_NDJSON_RESPONSE, returncode=0),
-        ]
-        runner = make_codex_runner()
-        result = await runner.run(make_prompt_request(agent="codex", prompt="test", max_retries=2))
-        assert result.output == "pong"
-        assert mock_exec.await_count == 2
-
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_retry_exhausted_all_503(self, mock_exec):
-        """3x 503 → RetryableError raised, called 3 times."""
-        from tests.fixtures import create_mock_process
-
-        error_stderr = json.dumps({"error": {"code": 503, "message": "Service unavailable"}})
-        mock_exec.return_value = create_mock_process(stdout="", stderr=error_stderr, returncode=1)
-        runner = make_codex_runner()
-        request = make_prompt_request(agent="codex", prompt="test", max_retries=3)
-        with pytest.raises(RetryableError):
-            await runner.run(request)
-        assert mock_exec.await_count == 3
+class TestCodexRunnerNoisyStdout:
+    """Test CodexRunner.parse_output() handles non-JSON lines mixed with NDJSON."""
 
     def test_malformed_ndjson_lines_skipped(self):
         """Mixed valid/malformed lines → valid parts extracted, malformed skipped."""
@@ -357,3 +315,341 @@ class TestErrorHandling:
         runner = make_codex_runner()
         result = runner.parse_output(ndjson, "")
         assert result.output == "world"
+
+
+# ---------------------------------------------------------------------------
+# Error handling (_recover_from_error and _try_extract_error unit tests)
+# ---------------------------------------------------------------------------
+
+
+class TestCodexRunnerErrorHandling:
+    """Test CodexRunner._recover_from_error and _try_extract_error."""
+
+    def test_no_json_in_stderr_or_stdout_returns_none(self):
+        """No structured error JSON → _recover_from_error returns None."""
+        runner = make_codex_runner()
+        result = runner._recover_from_error("not json", "also not json", 1)
+        assert result is None
+
+    def test_valid_ndjson_on_error_returns_recovered_response(self):
+        """Valid NDJSON in stdout on non-zero exit → recovered AgentResponse."""
+        runner = make_codex_runner()
+        result = runner._recover_from_error(CODEX_NDJSON_RESPONSE, "", 1)
+        assert result is not None
+        assert result.output == "pong"
+        assert result.metadata.get("recovered_from_error") is True
+
+    def test_malformed_json_in_stderr_returns_none(self):
+        """Truncated/malformed JSON in stderr → _try_extract_error returns without raising."""
+        stderr = '{"error": {"code": 429, "message": "truncated...'
+        runner = make_codex_runner()
+        # Should not raise — malformed JSON falls through silently
+        result = runner._recover_from_error("", stderr, 1)
+        assert result is None
+
+    def test_try_extract_error_stdout_fallback(self):
+        """stderr="" + stdout has error JSON with code 503 → RetryableError raised."""
+        stdout = json.dumps({"error": {"code": 503, "message": "Service unavailable"}})
+        runner = make_codex_runner()
+        with pytest.raises(RetryableError):
+            runner._try_extract_error(stdout, "", 1)
+
+
+# ---------------------------------------------------------------------------
+# Retryable errors
+# ---------------------------------------------------------------------------
+
+
+class TestCodexRunnerRetryableErrors:
+    """Test CodexRunner retryable error classification and retry integration."""
+
+    @pytest.mark.parametrize("code", [429, 503])
+    def test_retryable_error_codes_raise_retryable_error(self, code: int):
+        """Error codes 429 and 503 in stderr JSON → RetryableError."""
+        stderr = json.dumps({"error": {"code": code, "message": "transient error"}})
+        runner = make_codex_runner()
+        with pytest.raises(RetryableError):
+            runner._try_extract_error("", stderr, 1)
+
+    @pytest.mark.parametrize("code", ["429", "503"])
+    def test_retryable_string_error_codes_raise_retryable_error(self, code: str):
+        """String error codes '429' and '503' in stderr JSON → RetryableError (coerced)."""
+        stderr = json.dumps({"error": {"code": code, "message": "transient error"}})
+        runner = make_codex_runner()
+        with pytest.raises(RetryableError):
+            runner._try_extract_error("", stderr, 1)
+
+    def test_non_retryable_error_code_raises_subprocess_error(self):
+        """Non-retryable error code in stderr JSON → SubprocessError (not RetryableError)."""
+        stderr = json.dumps({"error": {"code": 401, "message": "unauthorized"}})
+        runner = make_codex_runner()
+        with pytest.raises(SubprocessError) as exc_info:
+            runner._try_extract_error("", stderr, 1)
+        assert not isinstance(exc_info.value, RetryableError)
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_retry_on_503_full_loop(self, mock_exec):
+        """503 on first attempt, success on second → called twice."""
+        error_stderr = json.dumps({"error": {"code": 503, "message": "Service unavailable"}})
+        mock_exec.side_effect = [
+            create_mock_process(stdout="", stderr=error_stderr, returncode=1),
+            create_mock_process(stdout=CODEX_NDJSON_RESPONSE, returncode=0),
+        ]
+        runner = make_codex_runner()
+        result = await runner.run(make_prompt_request(agent="codex", prompt="test", max_retries=2))
+        assert result.output == "pong"
+        assert mock_exec.await_count == 2
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_retry_exhausted_all_503(self, mock_exec):
+        """3x 503 → RetryableError raised, called 3 times."""
+        error_stderr = json.dumps({"error": {"code": 503, "message": "Service unavailable"}})
+        mock_exec.return_value = create_mock_process(stdout="", stderr=error_stderr, returncode=1)
+        runner = make_codex_runner()
+        request = make_prompt_request(agent="codex", prompt="test", max_retries=3)
+        with pytest.raises(RetryableError):
+            await runner.run(request)
+        assert mock_exec.await_count == 3
+
+
+# ---------------------------------------------------------------------------
+# Error recovery (full run() with mocked subprocess)
+# ---------------------------------------------------------------------------
+
+
+class TestCodexRunnerErrorRecovery:
+    """Test CodexRunner error recovery from non-zero exit codes."""
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_run_recovers_from_valid_ndjson_on_error_exit(self, mock_exec):
+        """Non-zero exit + valid NDJSON stdout → recovered response with metadata stamped."""
+        mock_exec.return_value = create_mock_process(
+            stdout=CODEX_NDJSON_RESPONSE,
+            stderr="Warning: something minor",
+            returncode=1,
+        )
+        runner = make_codex_runner()
+        response = await runner.run(make_prompt_request(agent="codex", prompt="test"))
+        assert response.output == "pong"
+        assert response.metadata.get("recovered_from_error") is True
+        assert response.metadata.get("original_exit_code") == 1
+        assert response.metadata.get("stderr") == "Warning: something minor"
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_run_raises_when_stdout_not_parseable(self, mock_exec):
+        """Non-zero exit with no recoverable content → SubprocessError raised by run()."""
+        mock_exec.return_value = create_mock_process(
+            stdout="", stderr="something went wrong", returncode=1
+        )
+        runner = make_codex_runner()
+        with pytest.raises(SubprocessError):
+            await runner.run(make_prompt_request(agent="codex", prompt="x"))
+
+
+# ---------------------------------------------------------------------------
+# API error extraction (structured JSON in stderr/stdout)
+# ---------------------------------------------------------------------------
+
+
+class TestCodexRunnerAPIErrorExtraction:
+    """Test CodexRunner extracts structured API error details from error JSON."""
+
+    @pytest.mark.parametrize(
+        ("code", "message"),
+        [
+            (429, "rate limited"),
+            (401, "unauthorized"),
+        ],
+        ids=["429-retryable", "401-auth"],
+    )
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_codex_error_json_surfaces_in_subprocess_error(self, mock_exec, code, message):
+        """stderr error JSON → SubprocessError with 'Codex API error' and error code."""
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr=codex_error_json(code, message),
+            returncode=1,
+        )
+        runner = make_codex_runner()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(make_prompt_request(agent="codex", prompt="x", max_retries=1))
+
+        primary_message = exc_info.value.args[0]
+        assert "Codex API error" in primary_message
+        assert str(code) in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_structured_error_includes_command(self, mock_exec):
+        """SubprocessError from structured error JSON includes the CLI command."""
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr=codex_error_json(401, "unauthorized"),
+            returncode=1,
+        )
+        runner = make_codex_runner()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(make_prompt_request(agent="codex", prompt="x", max_retries=1))
+
+        assert exc_info.value.command is not None
+        assert "codex" in exc_info.value.command[0]
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_no_json_anywhere_falls_through_to_generic(self, mock_exec):
+        """No JSON in stdout or stderr → generic SubprocessError without 'Codex API error'."""
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr="Connection refused: unable to reach API",
+            returncode=1,
+        )
+        runner = make_codex_runner()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(make_prompt_request(agent="codex", prompt="x"))
+
+        primary_message = exc_info.value.args[0]
+        assert "Codex API error" not in primary_message
+        assert "CLI command failed" in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_non_dict_json_stdout_does_not_crash(self, mock_exec):
+        """Array of scalars in stdout → generic SubprocessError (no AttributeError)."""
+        mock_exec.return_value = create_mock_process(
+            stdout="[1, 2, 3]",
+            stderr="something went wrong",
+            returncode=1,
+        )
+        runner = make_codex_runner()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(make_prompt_request(agent="codex", prompt="x"))
+
+        primary_message = exc_info.value.args[0]
+        assert "Codex API error" not in primary_message
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_malformed_stderr_json_falls_through(self, mock_exec):
+        """Truncated/malformed JSON in stderr → falls through to generic SubprocessError."""
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr='{"error": {"code": 429, "message": "truncated...',
+            returncode=1,
+        )
+        runner = make_codex_runner()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(make_prompt_request(agent="codex", prompt="x"))
+
+        primary_message = exc_info.value.args[0]
+        assert "Codex API error" not in primary_message
+
+
+# ---------------------------------------------------------------------------
+# Dual-field recovery (valid NDJSON stdout wins over error stderr)
+# ---------------------------------------------------------------------------
+
+
+class TestCodexRunnerDualFieldRecovery:
+    """Test _recover_from_error when stdout has valid NDJSON and stderr has error JSON."""
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_ndjson_stdout_wins_over_stderr_error_json_on_nonzero_exit(self, mock_exec):
+        """stdout=CODEX_NDJSON_RESPONSE, stderr=error JSON, returncode=1 → recovery wins.
+
+        parse_output(stdout) succeeds first → _try_extract_error never called.
+        Documents the cross-stream 'recovery wins' contract for Codex runner.
+        """
+        mock_exec.return_value = create_mock_process(
+            stdout=CODEX_NDJSON_RESPONSE,
+            stderr=codex_error_json(429, "rate limited"),
+            returncode=1,
+        )
+        runner = make_codex_runner()
+        request = make_prompt_request(agent="codex", prompt="x")
+
+        response = await runner.run(request)
+
+        assert response.output == "pong"
+        assert response.metadata.get("recovered_from_error") is True
+
+
+# ---------------------------------------------------------------------------
+# Environment variable configuration
+# ---------------------------------------------------------------------------
+
+
+class TestCodexRunnerEnvConfiguration:
+    """Test CodexRunner environment variable configuration."""
+
+    @patch.dict("os.environ", {"NEXUS_CODEX_PATH": "/opt/custom/codex"})
+    def test_codex_runner_uses_custom_path_from_env(self):
+        """CodexRunner uses NEXUS_CODEX_PATH if set."""
+        runner = make_codex_runner()
+        cmd = runner.build_command(make_prompt_request(agent="codex", prompt="test"))
+        assert cmd[0] == "/opt/custom/codex"
+
+    @patch.dict("os.environ", {"NEXUS_CODEX_MODEL": "o3"})
+    def test_codex_runner_uses_default_model_from_env(self):
+        """CodexRunner uses NEXUS_CODEX_MODEL as default if request.model is None."""
+        runner = make_codex_runner()
+        cmd = runner.build_command(make_prompt_request(agent="codex", prompt="test", model=None))
+        assert "--model" in cmd
+        assert "o3" in cmd
+
+    @patch.dict("os.environ", {"NEXUS_CODEX_MODEL": "o1-mini"})
+    def test_codex_runner_request_model_overrides_env(self):
+        """Request model overrides NEXUS_CODEX_MODEL env default."""
+        runner = make_codex_runner()
+        cmd = runner.build_command(make_prompt_request(agent="codex", prompt="test", model="o3"))
+        assert "o3" in cmd
+        assert "o1-mini" not in cmd
+
+
+# ---------------------------------------------------------------------------
+# Integration (full run() with mocked subprocess)
+# ---------------------------------------------------------------------------
+
+
+class TestCodexRunnerIntegration:
+    """Test CodexRunner.run() end-to-end with mocked subprocess."""
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_run_success_returns_parsed_response(self, mock_exec):
+        """Successful run executes CLI with correct args and returns parsed response."""
+        mock_exec.return_value = create_mock_process(
+            stdout=CODEX_NDJSON_RESPONSE,
+            returncode=0,
+        )
+        runner = make_codex_runner()
+        request = make_prompt_request(agent="codex", prompt="test prompt")
+
+        response = await runner.run(request)
+
+        mock_exec.assert_awaited_once_with(
+            "codex",
+            "exec",
+            "test prompt",
+            "--json",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        assert response.agent == "codex"
+        assert response.output == "pong"
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_run_subprocess_error_propagates(self, mock_exec):
+        """Non-zero exit with no recoverable JSON → SubprocessError with returncode and stderr."""
+        mock_exec.return_value = create_mock_process(
+            stdout="",
+            stderr="API key not found",
+            returncode=1,
+        )
+        runner = make_codex_runner()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(make_prompt_request(agent="codex", prompt="x"))
+
+        assert exc_info.value.returncode == 1
+        assert "API key" in exc_info.value.stderr
