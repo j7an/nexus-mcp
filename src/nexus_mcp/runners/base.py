@@ -22,7 +22,6 @@ import asyncio
 import contextlib
 import logging
 import random
-import tempfile
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, NoReturn, Protocol
 
@@ -221,13 +220,13 @@ class AbstractRunner(ABC):
         return computed
 
     def _apply_output_limit(self, response: AgentResponse) -> AgentResponse:
-        """Truncate output if exceeds limit, save full output to temp file.
+        """Truncate output if it exceeds the configured byte limit.
 
         Args:
             response: Original response from parse_output()
 
         Returns:
-            Response with truncated output if needed, metadata includes temp file path
+            Response with truncated output if needed; metadata includes original/truncated sizes.
         """
         limit = get_global_output_limit()
         output_bytes = response.output.encode("utf-8")
@@ -236,19 +235,8 @@ class AbstractRunner(ABC):
         if output_size <= limit:
             return response  # No truncation needed
 
-        # Save full output to temp file
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            delete=False,
-            prefix="nexus_mcp_output_",
-            suffix=".txt",
-        ) as temp_file:
-            temp_file.write(response.output)
-            temp_file_name = temp_file.name
-
-        # Reserve space for truncation message
-        suffix = "\n\n[Output truncated - see full output at temp file]"
+        # Reserve space for truncation message (computed with actual sizes)
+        suffix = f"\n\n[Output truncated: {output_size} bytes exceeds {limit} byte limit]"
         suffix_bytes = len(suffix.encode("utf-8"))
         content_limit = max(0, limit - suffix_bytes)
 
@@ -259,7 +247,6 @@ class AbstractRunner(ABC):
 
         return response.model_copy(update={"output": truncated_output}).with_metadata(
             truncated=True,
-            full_output_path=temp_file_name,
             original_size_bytes=output_size,
             truncated_size_bytes=len(truncated_output.encode("utf-8")),
         )
