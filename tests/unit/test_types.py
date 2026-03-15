@@ -24,10 +24,10 @@ def test_prompt_request_empty_prompt_fails():
         PromptRequest(agent="gemini", prompt="")
 
 
-def test_prompt_request_empty_agent_accepted():
-    """Bug-documenting: PromptRequest(agent='') succeeds (no min_length validator on agent)."""
-    req = PromptRequest(agent="", prompt="hi")
-    assert req.agent == ""
+def test_prompt_request_empty_agent_rejected():
+    """Empty agent string is rejected by min_length=1."""
+    with pytest.raises(ValidationError):
+        PromptRequest(agent="", prompt="hi")
 
 
 def test_prompt_request_default_execution_mode():

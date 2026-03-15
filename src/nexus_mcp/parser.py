@@ -1,9 +1,9 @@
 # src/nexus_mcp/parser.py
-"""Generic JSON extraction utilities for CLI runner output parsing.
+"""JSON extraction utilities for CLI runner output parsing.
 
-Functions here operate on raw strings and have no coupling to any specific CLI agent.
-They handle the common pattern of extracting valid JSON from noisy stdout/stderr that
-may contain log lines, Node.js warnings, stack traces, or other non-JSON content.
+Most functions here operate on raw strings with no coupling to a specific CLI
+agent. The exception is parse_ndjson_events, which handles the Codex CLI's
+NDJSON event stream format.
 """
 
 import contextlib

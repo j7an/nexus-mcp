@@ -112,6 +112,16 @@ class TestGetRetryBaseDelay:
         assert exc_info.value.config_key == "NEXUS_RETRY_BASE_DELAY"
         assert "Invalid retry base delay value" in str(exc_info.value)
 
+    @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "inf"})
+    def test_inf_raises_configuration_error(self):
+        with pytest.raises(ConfigurationError, match="must be a finite number"):
+            get_retry_base_delay()
+
+    @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "nan"})
+    def test_nan_raises_configuration_error(self):
+        with pytest.raises(ConfigurationError, match="must be a finite number"):
+            get_retry_base_delay()
+
 
 class TestGetRetryMaxDelay:
     """Test get_retry_max_delay() function."""
@@ -132,6 +142,16 @@ class TestGetRetryMaxDelay:
             get_retry_max_delay()
         assert exc_info.value.config_key == "NEXUS_RETRY_MAX_DELAY"
         assert "Invalid retry max delay value" in str(exc_info.value)
+
+    @patch.dict(os.environ, {"NEXUS_RETRY_MAX_DELAY": "inf"})
+    def test_inf_raises_configuration_error(self):
+        with pytest.raises(ConfigurationError, match="must be a finite number"):
+            get_retry_max_delay()
+
+    @patch.dict(os.environ, {"NEXUS_RETRY_MAX_DELAY": "nan"})
+    def test_nan_raises_configuration_error(self):
+        with pytest.raises(ConfigurationError, match="must be a finite number"):
+            get_retry_max_delay()
 
 
 class TestGetToolTimeout:
@@ -192,18 +212,38 @@ class TestGetToolTimeout:
         assert "must be a finite number" in str(exc_info.value)
 
 
-class TestNegativeValueDocumentation:
-    """Bug-documenting tests: negative values accepted where validators are absent."""
+class TestPositiveValueValidation:
+    """Config functions reject non-positive values where semantically required."""
 
     @patch.dict(os.environ, {"NEXUS_OUTPUT_LIMIT_BYTES": "-1"})
-    def test_negative_output_limit_accepted(self):
-        """NEXUS_OUTPUT_LIMIT_BYTES=-1 returns -1 (no lower-bound validation)."""
-        assert get_global_output_limit() == -1
+    def test_negative_output_limit_rejected(self):
+        with pytest.raises(ConfigurationError):
+            get_global_output_limit()
+
+    @patch.dict(os.environ, {"NEXUS_OUTPUT_LIMIT_BYTES": "0"})
+    def test_zero_output_limit_rejected(self):
+        with pytest.raises(ConfigurationError):
+            get_global_output_limit()
 
     @patch.dict(os.environ, {"NEXUS_RETRY_MAX_ATTEMPTS": "-1"})
-    def test_negative_retry_max_attempts_accepted(self):
-        """NEXUS_RETRY_MAX_ATTEMPTS=-1 returns -1 (no lower-bound validation)."""
-        assert get_retry_max_attempts() == -1
+    def test_negative_retry_max_attempts_rejected(self):
+        with pytest.raises(ConfigurationError):
+            get_retry_max_attempts()
+
+    @patch.dict(os.environ, {"NEXUS_RETRY_MAX_ATTEMPTS": "0"})
+    def test_zero_retry_max_attempts_rejected(self):
+        with pytest.raises(ConfigurationError):
+            get_retry_max_attempts()
+
+    @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "-1"})
+    def test_negative_timeout_rejected(self):
+        with pytest.raises(ConfigurationError):
+            get_global_timeout()
+
+    @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "0"})
+    def test_zero_timeout_rejected(self):
+        with pytest.raises(ConfigurationError):
+            get_global_timeout()
 
 
 class TestGetCLIDetectionTimeout:

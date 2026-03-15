@@ -52,6 +52,7 @@ async def run_subprocess(command: list[str], timeout: float | None = 600.0) -> S
             raise SubprocessError(
                 f"Failed to decode subprocess output: {e}",
                 stderr=stderr_bytes.decode("utf-8", errors="replace"),
+                stdout=stdout_bytes.decode("utf-8", errors="replace"),
                 command=command,
             ) from None
 

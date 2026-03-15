@@ -23,9 +23,15 @@ def _get_int_env(env_var: str, default: str, label: str) -> int:
 def _get_float_env(env_var: str, default: str, label: str) -> float:
     raw = os.getenv(env_var, default)
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
         raise ConfigurationError(f"Invalid {label} value: {raw!r}", config_key=env_var) from None
+    if not math.isfinite(value):
+        raise ConfigurationError(
+            f"{label.capitalize()} must be a finite number, got {value}",
+            config_key=env_var,
+        )
+    return value
 
 
 def get_global_output_limit() -> int:
@@ -35,12 +41,18 @@ def get_global_output_limit() -> int:
         Output limit in bytes (default: 50KB)
 
     Raises:
-        ConfigurationError: If env var value is not a valid integer
+        ConfigurationError: If env var value is not a valid integer or not positive
 
     Environment Variable:
         NEXUS_OUTPUT_LIMIT_BYTES: Max output size in bytes
     """
-    return _get_int_env("NEXUS_OUTPUT_LIMIT_BYTES", "50000", "output limit")
+    value = _get_int_env("NEXUS_OUTPUT_LIMIT_BYTES", "50000", "output limit")
+    if value <= 0:
+        raise ConfigurationError(
+            f"Output limit must be positive, got {value}",
+            config_key="NEXUS_OUTPUT_LIMIT_BYTES",
+        )
+    return value
 
 
 def get_global_timeout() -> int:
@@ -50,12 +62,18 @@ def get_global_timeout() -> int:
         Timeout in seconds (default: 600s = 10 minutes, matches process.py)
 
     Raises:
-        ConfigurationError: If env var value is not a valid integer
+        ConfigurationError: If env var value is not a valid integer or not positive
 
     Environment Variable:
         NEXUS_TIMEOUT_SECONDS: Subprocess timeout in seconds
     """
-    return _get_int_env("NEXUS_TIMEOUT_SECONDS", "600", "timeout")
+    value = _get_int_env("NEXUS_TIMEOUT_SECONDS", "600", "timeout")
+    if value <= 0:
+        raise ConfigurationError(
+            f"Timeout must be positive, got {value}",
+            config_key="NEXUS_TIMEOUT_SECONDS",
+        )
+    return value
 
 
 def get_retry_max_attempts() -> int:
@@ -65,12 +83,18 @@ def get_retry_max_attempts() -> int:
         Max retry attempts (default: 3)
 
     Raises:
-        ConfigurationError: If env var value is not a valid integer
+        ConfigurationError: If env var value is not a valid integer or not positive
 
     Environment Variable:
         NEXUS_RETRY_MAX_ATTEMPTS: Max number of attempts (including the first)
     """
-    return _get_int_env("NEXUS_RETRY_MAX_ATTEMPTS", "3", "retry max attempts")
+    value = _get_int_env("NEXUS_RETRY_MAX_ATTEMPTS", "3", "retry max attempts")
+    if value <= 0:
+        raise ConfigurationError(
+            f"Retry max attempts must be positive, got {value}",
+            config_key="NEXUS_RETRY_MAX_ATTEMPTS",
+        )
+    return value
 
 
 def get_retry_base_delay() -> float:
@@ -119,11 +143,6 @@ def get_tool_timeout() -> float | None:
             Set to 0 to disable. Must be finite and non-negative.
     """
     value = _get_float_env("NEXUS_TOOL_TIMEOUT_SECONDS", "900.0", "tool timeout")
-    if not math.isfinite(value):
-        raise ConfigurationError(
-            f"Tool timeout must be a finite number, got {value}",
-            config_key="NEXUS_TOOL_TIMEOUT_SECONDS",
-        )
     if value < 0:
         raise ConfigurationError(
             f"Tool timeout must be non-negative, got {value}",

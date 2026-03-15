@@ -40,6 +40,19 @@ async def test_run_subprocess_handles_unicode_errors(mock_exec):
 
 
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+async def test_unicode_error_preserves_decodable_stdout(mock_exec):
+    """When stderr has invalid UTF-8 but stdout is valid, stdout is preserved in the error."""
+    mock_exec.return_value = create_mock_process(
+        stdout_bytes=b"valid stdout",
+        stderr_bytes=b"\xff\xfe",  # Invalid UTF-8
+        returncode=0,
+    )
+    with pytest.raises(SubprocessError) as exc_info:
+        await run_subprocess(["cmd"])
+    assert exc_info.value.stdout == "valid stdout"
+
+
+@patch("nexus_mcp.process.asyncio.create_subprocess_exec")
 async def test_run_subprocess_handles_partial_output(mock_exec):
     """Handle subprocess killed mid-output (partial JSON)."""
     mock_exec.return_value = create_mock_process(
