@@ -16,7 +16,13 @@ import pytest
 from fastmcp.exceptions import ToolError
 
 from nexus_mcp.server import mcp
-from tests.fixtures import GEMINI_NOISY_STDOUT, create_mock_process, gemini_error_json, gemini_json
+from tests.fixtures import (
+    GEMINI_NOISY_STDOUT,
+    OPENCODE_NDJSON_RESPONSE,
+    create_mock_process,
+    gemini_error_json,
+    gemini_json,
+)
 
 
 def _extract_prompt_from_args(args: tuple) -> str:
@@ -89,7 +95,7 @@ class TestListAgentsProtocol:
         """call_tool('list_agents') returns all supported agents through JSON-RPC."""
         result = await mcp_client.call_tool("list_agents", {})
         assert result.is_error is False
-        assert result.data == ["claude", "codex", "gemini"]
+        assert set(result.data) == {"claude", "codex", "gemini", "opencode"}
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +198,13 @@ class TestPromptProtocol:
         assert result.is_error is False
         assert result.data == "ok after retry"
         assert mock_subprocess.call_count == 2
+
+    async def test_opencode_success_returns_parsed_ndjson(self, mock_subprocess, mcp_client):
+        """Full success path for OpenCode: subprocess returns NDJSON → parsed output text."""
+        mock_subprocess.return_value = create_mock_process(stdout=OPENCODE_NDJSON_RESPONSE)
+        result = await mcp_client.call_tool("prompt", {"agent": "opencode", "prompt": "say hello"})
+        assert result.is_error is False
+        assert result.data == "test output"
 
     async def test_context_parameter_survives_json_rpc(self, mock_subprocess, mcp_client):
         """context dict survives JSON-RPC round-trip; call succeeds (context is pass-through)."""

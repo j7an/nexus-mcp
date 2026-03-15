@@ -10,11 +10,14 @@ Usage:
     response = await runner.run(request)
 """
 
+from typing import ClassVar
+
 from nexus_mcp.exceptions import UnsupportedAgentError
 from nexus_mcp.runners.base import AbstractRunner
 from nexus_mcp.runners.claude import ClaudeRunner
 from nexus_mcp.runners.codex import CodexRunner
 from nexus_mcp.runners.gemini import GeminiRunner
+from nexus_mcp.runners.opencode import OpenCodeRunner
 
 
 class RunnerFactory:
@@ -29,13 +32,14 @@ class RunnerFactory:
     Call clear_cache() in tests to prevent instance leakage between cases.
     """
 
-    _REGISTRY: dict[str, type[AbstractRunner]] = {
+    _REGISTRY: ClassVar[dict[str, type[AbstractRunner]]] = {
         ClaudeRunner.AGENT_NAME: ClaudeRunner,
         CodexRunner.AGENT_NAME: CodexRunner,
         GeminiRunner.AGENT_NAME: GeminiRunner,
+        OpenCodeRunner.AGENT_NAME: OpenCodeRunner,
     }
 
-    _instances: dict[str, AbstractRunner] = {}
+    _instances: ClassVar[dict[str, AbstractRunner]] = {}
 
     @classmethod
     def create(cls, agent: str) -> AbstractRunner:
@@ -46,7 +50,7 @@ class RunnerFactory:
         blocking subprocess calls in runner __init__ methods.
 
         Args:
-            agent: Agent name (case-sensitive: "gemini", "codex", "claude").
+            agent: Agent name (case-sensitive: "claude", "codex", "gemini", "opencode").
 
         Returns:
             AbstractRunner instance for the agent.
@@ -88,6 +92,6 @@ class RunnerFactory:
             Sorted list of agent names that can be passed to create().
 
         Example:
-            RunnerFactory.list_agents()  # → ["claude", "codex", "gemini"]
+            RunnerFactory.list_agents()  # → ["claude", "codex", "gemini", "opencode"]
         """
         return sorted(cls._REGISTRY)

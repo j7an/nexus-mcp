@@ -7,7 +7,24 @@ authors = [
     { name = "j7an", email = "j7an@users.noreply.github.com" }
 ]
 license = "MIT"
-keywords = ["mcp", "model-context-protocol", "ai", "cli", "fastmcp"]
+keywords = [
+    "ai-agents",
+    "ai-orchestration",
+    "claude-code",
+    "claude-desktop",
+    "claudecode",
+    "cli-tools",
+    "codex",
+    "codex-cli",
+    "fastmcp",
+    "gemini",
+    "gemini-cli",
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "multi-agent",
+    "opencode",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

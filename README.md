@@ -8,7 +8,7 @@
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://pre-commit.com/)
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io/)
 
-An MCP server that enables AI models to invoke AI CLI agents (Gemini CLI, Codex, Claude Code) as
+A MCP server that enables AI models to invoke AI CLI agents (Gemini CLI, Codex, Claude Code, OpenCode) as
 tools. Provides parallel execution, automatic retries with exponential backoff, JSON-first response
 parsing, and structured output through three MCP tools.
 
@@ -46,11 +46,12 @@ parallel rather than sequentially:
 | Gemini CLI | Supported |
 | Codex | Supported |
 | Claude Code | Supported |
+| OpenCode | Supported |
 
 ## Usage
 
 Once nexus-mcp is configured in your MCP client, your AI assistant automatically sees its tools.
-The reliable trigger is **explicitly asking for output from an external AI agent** (e.g. Gemini, Codex, Claude Code).
+The reliable trigger is **explicitly asking for output from an external AI agent** (e.g. Gemini, Codex, Claude Code, OpenCode).
 Generic "do this in parallel" prompts may be handled by the host AI's own capabilities instead.
 Because `agent` is a required parameter, the assistant typically calls `list_agents` first to discover
 what's available, then fans out your request accordingly.
@@ -66,7 +67,7 @@ what's available, then fans out your request accordingly.
 {}
 ```
 
-**Response:** `["claude", "codex", "gemini"]`
+**Response:** `["claude", "codex", "gemini", "opencode"]`
 
 **Then calls `batch_prompt` with the discovered agent:**
 
@@ -294,6 +295,7 @@ claude mcp add nexus-mcp uvx nexus-mcp
 - **Gemini CLI** v0.6.0+ — `npm install -g @google/gemini-cli`
 - **Codex** — check with `codex --version`
 - **Claude Code** — check with `claude --version`
+- **OpenCode** — check with `opencode --version`
 
 > **Note:** Integration tests are optional. Unit tests run without CLI dependencies via subprocess mocking.
 
@@ -344,6 +346,8 @@ Pattern: `NEXUS_{AGENT}_{KEY}` (agent name uppercased)
 | `NEXUS_CODEX_MODEL` | Default Codex model |
 | `NEXUS_GEMINI_PATH` | Override Gemini CLI binary path |
 | `NEXUS_GEMINI_MODEL` | Default Gemini model (e.g. `gemini-2.5-flash`) |
+| `NEXUS_OPENCODE_PATH` | Override OpenCode CLI binary path |
+| `NEXUS_OPENCODE_MODEL` | Default OpenCode model |
 
 ## Development Workflow
 
@@ -419,7 +423,8 @@ nexus-mcp/
 │       ├── factory.py      # RunnerFactory
 │       ├── claude.py       # ClaudeRunner
 │       ├── codex.py        # CodexRunner
-│       └── gemini.py       # GeminiRunner
+│       ├── gemini.py       # GeminiRunner
+│       └── opencode.py     # OpenCodeRunner
 ├── tests/
 │   ├── unit/               # Fast, mocked tests
 │   ├── integration/        # Real CLI tests

@@ -7,7 +7,7 @@ Command format:
     claude -p "<prompt>" --output-format json [--model <model>]
     [--dangerously-skip-permissions]
 
-Expected JSON response (array of conversation elements):
+Expected JSON response (array or single object):
     [
       {
         "type": "assistant",
@@ -19,7 +19,8 @@ Expected JSON response (array of conversation elements):
         "type": "result",
         "result": "response text",
         "session_id": "sess-abc123",
-        "cost_usd": 0.005,
+        "cost_usd": 0.005,          # older CLI versions
+        "total_cost_usd": 0.005,    # newer CLI versions (normalized → cost_usd)
         "duration_ms": 5678,
         "num_turns": 1
       }
@@ -176,7 +177,7 @@ class ClaudeRunner(AbstractRunner):
             if not isinstance(element, dict) or element.get("type") != "result":
                 continue
             if element.get("is_error"):
-                error_msg = element.get("result", "unknown error")
+                error_msg = element.get("result") or "unknown error"
                 raise ParseError(
                     f"Claude CLI returned an error result: {error_msg}",
                     raw_output=raw_output,
@@ -190,6 +191,9 @@ class ClaudeRunner(AbstractRunner):
             metadata = self._extract_metadata(
                 element, ("cost_usd", "duration_ms", "num_turns", "session_id")
             )
+            # Normalize total_cost_usd → cost_usd for newer CLI versions
+            if "cost_usd" not in metadata and "total_cost_usd" in element:
+                metadata["cost_usd"] = element["total_cost_usd"]
             return result, metadata
         return None, {}
 
