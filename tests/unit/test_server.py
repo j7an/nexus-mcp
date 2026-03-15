@@ -402,6 +402,16 @@ class TestBatchPrompt:
         """DEFAULT_MAX_CONCURRENCY constant equals 3."""
         assert DEFAULT_MAX_CONCURRENCY == 3
 
+    async def test_max_concurrency_zero_raises_value_error(self):
+        """max_concurrency=0 raises ValueError before creating a deadlocking Semaphore(0)."""
+        with pytest.raises(ValueError, match="max_concurrency must be >= 1"):
+            await batch_prompt(tasks=[make_agent_task()], max_concurrency=0)
+
+    async def test_max_concurrency_negative_raises_value_error(self):
+        """max_concurrency=-1 raises ValueError."""
+        with pytest.raises(ValueError, match="max_concurrency must be >= 1"):
+            await batch_prompt(tasks=[make_agent_task()], max_concurrency=-1)
+
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_single_task_no_suffix(self, mock_factory):
         """A single task's label is the agent name without any suffix."""

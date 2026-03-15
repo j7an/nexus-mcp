@@ -122,6 +122,19 @@ class TestGetRetryBaseDelay:
         with pytest.raises(ConfigurationError, match="must be a finite number"):
             get_retry_base_delay()
 
+    @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "-1.0"})
+    def test_negative_raises_configuration_error(self):
+        """Negative base delay is semantically invalid and raises ConfigurationError."""
+        with pytest.raises(ConfigurationError) as exc_info:
+            get_retry_base_delay()
+        assert exc_info.value.config_key == "NEXUS_RETRY_BASE_DELAY"
+        assert "non-negative" in str(exc_info.value)
+
+    @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "0.0"})
+    def test_zero_base_delay_allowed(self):
+        """Zero is allowed (useful for testing — sleep(0) returns immediately)."""
+        assert get_retry_base_delay() == 0.0
+
 
 class TestGetRetryMaxDelay:
     """Test get_retry_max_delay() function."""
@@ -152,6 +165,19 @@ class TestGetRetryMaxDelay:
     def test_nan_raises_configuration_error(self):
         with pytest.raises(ConfigurationError, match="must be a finite number"):
             get_retry_max_delay()
+
+    @patch.dict(os.environ, {"NEXUS_RETRY_MAX_DELAY": "-5.0"})
+    def test_negative_raises_configuration_error(self):
+        """Negative max delay is semantically invalid and raises ConfigurationError."""
+        with pytest.raises(ConfigurationError) as exc_info:
+            get_retry_max_delay()
+        assert exc_info.value.config_key == "NEXUS_RETRY_MAX_DELAY"
+        assert "non-negative" in str(exc_info.value)
+
+    @patch.dict(os.environ, {"NEXUS_RETRY_MAX_DELAY": "0.0"})
+    def test_zero_max_delay_allowed(self):
+        """Zero is allowed — means no cap on wait time, which is unusual but valid."""
+        assert get_retry_max_delay() == 0.0
 
 
 class TestGetToolTimeout:
@@ -265,6 +291,22 @@ class TestGetCLIDetectionTimeout:
         with pytest.raises(ConfigurationError) as exc_info:
             get_cli_detection_timeout()
         assert exc_info.value.config_key == "NEXUS_CLI_DETECTION_TIMEOUT"
+
+    @patch.dict(os.environ, {"NEXUS_CLI_DETECTION_TIMEOUT": "0"})
+    def test_cli_detection_timeout_zero_rejected(self):
+        """NEXUS_CLI_DETECTION_TIMEOUT=0 → ConfigurationError (must be positive)."""
+        with pytest.raises(ConfigurationError) as exc_info:
+            get_cli_detection_timeout()
+        assert exc_info.value.config_key == "NEXUS_CLI_DETECTION_TIMEOUT"
+        assert "positive" in str(exc_info.value)
+
+    @patch.dict(os.environ, {"NEXUS_CLI_DETECTION_TIMEOUT": "-5"})
+    def test_cli_detection_timeout_negative_rejected(self):
+        """NEXUS_CLI_DETECTION_TIMEOUT=-5 → ConfigurationError (must be positive)."""
+        with pytest.raises(ConfigurationError) as exc_info:
+            get_cli_detection_timeout()
+        assert exc_info.value.config_key == "NEXUS_CLI_DETECTION_TIMEOUT"
+        assert "positive" in str(exc_info.value)
 
 
 class TestGetAgentEnv:

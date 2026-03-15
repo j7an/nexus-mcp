@@ -79,6 +79,18 @@ class TestExtractLastJsonObject:
         result = extract_last_json_object("{not: valid json}")
         assert result is None
 
+    def test_deeply_nested_braces_no_recursion_error(self):
+        """200 levels of nesting does not raise RecursionError.
+
+        The iterative _find_balanced_span retries inward span-by-span until it
+        reaches the innermost '{}', which json.loads parses as the empty dict {}.
+        RecursionError is also suppressed explicitly, but the algorithm never
+        reaches that depth for iterative code.
+        """
+        deeply_nested = "{" * 200 + "}" * 200
+        result = extract_last_json_object(deeply_nested)
+        assert result == {}
+
 
 class TestExtractLastJsonArray:
     """Test extract_last_json_array() finds the last JSON array and returns its first dict."""
@@ -124,6 +136,12 @@ class TestExtractLastJsonArray:
         text = '[{"first": 1}]\nsome text\n[{"second": 2}]'
         result = extract_last_json_array(text)
         assert result == {"second": 2}
+
+    def test_deeply_nested_brackets_returns_none_without_recursion_error(self):
+        """200 levels of nesting returns None cleanly (iterative algorithm, no stack overflow)."""
+        deeply_nested = "[" * 200 + "]" * 200
+        result = extract_last_json_array(deeply_nested)
+        assert result is None
 
 
 class TestExtractLastJsonList:
@@ -182,6 +200,17 @@ class TestExtractLastJsonList:
         text = '[{"first": 1}]\nsome text\n[{"second": 2}, {"third": 3}]'
         result = extract_last_json_list(text)
         assert result == [{"second": 2}, {"third": 3}]
+
+    def test_deeply_nested_brackets_no_recursion_error(self):
+        """200 levels of nesting does not raise RecursionError.
+
+        json.loads('[' * 200 + ']' * 200) returns a 200-deep nested list which Python
+        successfully parses. The outermost span yields a truthy (non-empty) list, so
+        the function returns a deeply nested list rather than None.
+        """
+        deeply_nested = "[" * 200 + "]" * 200
+        result = extract_last_json_list(deeply_nested)
+        assert isinstance(result, list) and len(result) == 1
 
 
 class TestParseNdjsonEvents:

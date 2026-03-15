@@ -88,6 +88,17 @@ class TestGetCLIVersion:
             version = get_cli_version("gemini")
         assert version is None
 
+    def test_get_cli_version_unknown_cli_returns_none(self):
+        """Unknown CLI name: subprocess succeeds but parse_version returns None.
+
+        parse_version() uses patterns.get(cli) which returns None for unrecognised names,
+        so the version string is never extracted regardless of subprocess output.
+        """
+        with patch("nexus_mcp.cli_detector.subprocess.run") as mock_run:
+            mock_run.return_value = Mock(stdout="some output 1.2.3", stderr="", returncode=0)
+            version = get_cli_version("unknown_cli")
+        assert version is None
+
 
 class TestParseVersion:
     """Test parse_version() extracts semver from CLI output strings."""
