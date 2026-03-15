@@ -242,7 +242,8 @@ class OpenCodeRunner(AbstractRunner):
             return
 
         error = legacy["error"]
-        assert isinstance(error, dict)
+        if not isinstance(error, dict):
+            return
         code = self._coerce_error_code(error.get("code", "unknown"))
         message = error.get("message", "unknown error")
         error_msg = f"OpenCode API error {code}: {message}"

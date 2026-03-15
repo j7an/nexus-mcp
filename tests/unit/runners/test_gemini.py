@@ -254,19 +254,18 @@ class TestGeminiRunnerParseOutputEdgeCases:
     def runner(self) -> GeminiRunner:
         return make_gemini_runner()
 
-    def test_parse_output_null_stats_raises_validation_error(self, runner):
-        """'{"response":"text","stats":null}' → Pydantic ValidationError.
+    def test_parse_output_null_stats_returns_empty_metadata(self, runner):
+        """'{"response":"text","stats":null}' → success with metadata={}.
 
-        data.get("stats", {}) returns None (the actual value), so
-        AgentResponse(metadata=None) raises a Pydantic ValidationError.
+        data.get("stats") returns None (the actual value); `or {}` coerces
+        falsy None to empty dict, so AgentResponse is created successfully.
         """
         import json
 
-        from pydantic import ValidationError
-
         stdout = json.dumps({"response": "text", "stats": None})
-        with pytest.raises(ValidationError):
-            runner.parse_output(stdout, "")
+        result = runner.parse_output(stdout, "")
+        assert result.output == "text"
+        assert result.metadata == {}
 
     def test_parse_output_non_dict_stats_raises_validation_error(self, runner):
         """'{"response":"text","stats":42}' → Pydantic ValidationError (stats must be dict)."""

@@ -138,6 +138,9 @@ async def batch_prompt(
     Returns:
         MultiPromptResponse with results for each task.
     """
+    if max_concurrency < 1:
+        raise ValueError(f"max_concurrency must be >= 1, got {max_concurrency}")
+
     # Docket serializes/deserializes task arguments as JSON when task=True,
     # converting AgentTask objects to plain dicts. Reconstruct them here.
     tasks = [AgentTask(**t) if isinstance(t, dict) else t for t in tasks]
@@ -225,7 +228,8 @@ async def prompt(
     task_result = result.results[0]
     if task_result.error:
         raise ToolError(task_result.formatted_error)
-    return task_result.output  # type: ignore[return-value]
+    assert task_result.output is not None  # guaranteed: error is None, so output was set
+    return task_result.output
 
 
 def list_agents() -> list[str]:

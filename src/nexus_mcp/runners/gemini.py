@@ -127,7 +127,9 @@ class GeminiRunner(AbstractRunner):
             )
 
         # Extract optional stats (flat metadata - stats dict IS the metadata)
-        metadata = data.get("stats", {})
+        # Use 'or {}' rather than .get("stats", {}) so that explicit null ("stats": null)
+        # is treated identically to an absent key — both yield an empty metadata dict.
+        metadata = data.get("stats") or {}
 
         return AgentResponse(
             agent=self.AGENT_NAME,

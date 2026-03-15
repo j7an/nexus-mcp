@@ -104,12 +104,18 @@ def get_retry_base_delay() -> float:
         Base delay in seconds for exponential backoff (default: 2.0s)
 
     Raises:
-        ConfigurationError: If env var value is not a valid float
+        ConfigurationError: If env var value is not a valid float or is negative
 
     Environment Variable:
         NEXUS_RETRY_BASE_DELAY: Base seconds for exponential backoff
     """
-    return _get_float_env("NEXUS_RETRY_BASE_DELAY", "2.0", "retry base delay")
+    value = _get_float_env("NEXUS_RETRY_BASE_DELAY", "2.0", "retry base delay")
+    if value < 0:
+        raise ConfigurationError(
+            f"Retry base delay must be non-negative, got {value}",
+            config_key="NEXUS_RETRY_BASE_DELAY",
+        )
+    return value
 
 
 def get_retry_max_delay() -> float:
@@ -119,12 +125,18 @@ def get_retry_max_delay() -> float:
         Maximum delay cap in seconds (default: 60.0s)
 
     Raises:
-        ConfigurationError: If env var value is not a valid float
+        ConfigurationError: If env var value is not a valid float or is negative
 
     Environment Variable:
         NEXUS_RETRY_MAX_DELAY: Maximum seconds to wait between retries
     """
-    return _get_float_env("NEXUS_RETRY_MAX_DELAY", "60.0", "retry max delay")
+    value = _get_float_env("NEXUS_RETRY_MAX_DELAY", "60.0", "retry max delay")
+    if value < 0:
+        raise ConfigurationError(
+            f"Retry max delay must be non-negative, got {value}",
+            config_key="NEXUS_RETRY_MAX_DELAY",
+        )
+    return value
 
 
 def get_tool_timeout() -> float | None:
@@ -158,12 +170,18 @@ def get_cli_detection_timeout() -> int:
         Timeout in seconds (default: 30s)
 
     Raises:
-        ConfigurationError: If env var value is not a valid integer
+        ConfigurationError: If env var value is not a valid integer or not positive
 
     Environment Variable:
         NEXUS_CLI_DETECTION_TIMEOUT: Seconds to wait for '<cli> --version'
     """
-    return _get_int_env("NEXUS_CLI_DETECTION_TIMEOUT", "30", "CLI detection timeout")
+    value = _get_int_env("NEXUS_CLI_DETECTION_TIMEOUT", "30", "CLI detection timeout")
+    if value <= 0:
+        raise ConfigurationError(
+            f"CLI detection timeout must be positive, got {value}",
+            config_key="NEXUS_CLI_DETECTION_TIMEOUT",
+        )
+    return value
 
 
 def get_agent_env(agent: str, key: str, default: str | None = None) -> str | None:
