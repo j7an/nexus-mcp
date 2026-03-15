@@ -15,11 +15,12 @@ class SessionPreferences(BaseModel):
 
 
 DEFAULT_MAX_CONCURRENCY = 3
+MAX_PROMPT_LENGTH = 131072  # 128KB character limit — conservative guard against ARG_MAX
 
 
 class PromptRequest(BaseModel):
     agent: str = Field(..., min_length=1)
-    prompt: str = Field(..., min_length=1)
+    prompt: str = Field(..., min_length=1, max_length=MAX_PROMPT_LENGTH)
     context: dict[str, Any] = Field(default_factory=dict)
     execution_mode: ExecutionMode = Field(
         default="default",
@@ -34,6 +35,17 @@ class PromptRequest(BaseModel):
         default_factory=list,
         description="Optional file paths for agent context (appended to prompt)",
     )
+
+    @field_validator("file_refs")
+    @classmethod
+    def no_control_chars_in_paths(cls, v: list[str]) -> list[str]:
+        for i, path in enumerate(v):
+            if any(c in path for c in "\x00\n\r"):
+                raise ValueError(
+                    f"file_refs[{i}] contains control characters (null/newline/carriage-return)"
+                )
+        return v
+
     max_retries: int | None = Field(
         default=None,
         ge=1,
@@ -67,20 +79,13 @@ class SubprocessResult(BaseModel):
 class AgentTask(BaseModel):
     """Per-task input for batch_prompt."""
 
-    agent: str
-    prompt: str
+    agent: str = Field(..., min_length=1)
+    prompt: str = Field(..., min_length=1, max_length=MAX_PROMPT_LENGTH)
     label: str | None = None
     context: dict[str, Any] = Field(default_factory=dict)
     execution_mode: ExecutionMode | None = None  # None = use session preference or "default"
     model: str | None = None
     max_retries: int | None = Field(default=None, ge=1)
-
-    @field_validator("agent", "prompt")
-    @classmethod
-    def must_be_non_empty(cls, v: str) -> str:
-        if not v:
-            raise ValueError("must not be empty")
-        return v
 
     def to_request(self) -> "PromptRequest":
         """Convert this task to a PromptRequest for runner execution."""

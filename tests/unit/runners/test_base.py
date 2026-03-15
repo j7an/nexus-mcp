@@ -125,7 +125,7 @@ class TestAbstractRunner:
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_runner_truncates_large_output(self, mock_exec, runner):
-        """Runner truncates output exceeding limit and saves to temp file."""
+        """Runner truncates output exceeding limit and records size metadata."""
         # Create 100KB output
         large_output = "x" * 100_000
         mock_exec.return_value = create_mock_process(stdout=large_output)
@@ -137,9 +137,7 @@ class TestAbstractRunner:
 
         # Output should be truncated
         assert len(response.output.encode("utf-8")) <= 50_000
-        # Metadata should include temp file path
         assert response.metadata.get("truncated") is True
-        assert "full_output_path" in response.metadata
         assert response.metadata.get("original_size_bytes") == 100_000
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
@@ -447,7 +445,8 @@ class TestTruncationBehavior:
         with patch("nexus_mcp.config.get_global_output_limit", return_value=50_000):
             response = await runner.run(request)
 
-        assert response.output.endswith("\n\n[Output truncated - see full output at temp file]")
+        expected_suffix = "\n\n[Output truncated: 100000 bytes exceeds 50000 byte limit]"
+        assert response.output.endswith(expected_suffix)
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_truncation_at_exact_boundary(self, mock_exec, runner):

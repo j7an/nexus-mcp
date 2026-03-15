@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from nexus_mcp.types import (
+    MAX_PROMPT_LENGTH,
     AgentResponse,
     AgentTask,
     AgentTaskResult,
@@ -108,6 +109,32 @@ def test_prompt_request_file_refs_must_be_strings():
             prompt="test",
             file_refs=["valid.py", 123, None],  # Invalid types
         )
+
+
+def test_file_refs_rejects_null_byte():
+    """file_refs rejects paths containing null bytes."""
+    with pytest.raises(ValidationError, match="control characters"):
+        PromptRequest(agent="gemini", prompt="test", file_refs=["/etc/\x00passwd"])
+
+
+def test_file_refs_rejects_newline():
+    """file_refs rejects paths containing newline characters."""
+    with pytest.raises(ValidationError, match="control characters"):
+        PromptRequest(agent="gemini", prompt="test", file_refs=["/etc\n/passwd"])
+
+
+def test_file_refs_rejects_carriage_return():
+    """file_refs rejects paths containing carriage return characters."""
+    with pytest.raises(ValidationError, match="control characters"):
+        PromptRequest(agent="gemini", prompt="test", file_refs=["foo\rbar"])
+
+
+def test_file_refs_accepts_normal_paths():
+    """file_refs accepts normal absolute and relative paths."""
+    req = PromptRequest(
+        agent="gemini", prompt="test", file_refs=["/home/user/file.py", "relative/path"]
+    )
+    assert req.file_refs == ["/home/user/file.py", "relative/path"]
 
 
 def test_agent_response_with_metadata_adds_keys():
@@ -246,6 +273,29 @@ def test_agent_task_max_retries_zero_fails():
     """AgentTask.max_retries=0 is rejected (ge=1)."""
     with pytest.raises(ValidationError):
         AgentTask(agent="gemini", prompt="Hello", max_retries=0)
+
+
+# ---------------------------------------------------------------------------
+# Prompt max_length tests (M4)
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_request_rejects_oversized_prompt():
+    """PromptRequest rejects prompts exceeding MAX_PROMPT_LENGTH (128KB)."""
+    with pytest.raises(ValidationError):
+        PromptRequest(agent="gemini", prompt="x" * (MAX_PROMPT_LENGTH + 1))
+
+
+def test_agent_task_rejects_oversized_prompt():
+    """AgentTask rejects prompts exceeding MAX_PROMPT_LENGTH (128KB)."""
+    with pytest.raises(ValidationError):
+        AgentTask(agent="gemini", prompt="x" * (MAX_PROMPT_LENGTH + 1))
+
+
+def test_prompt_at_max_length_accepted():
+    """PromptRequest accepts a prompt exactly at MAX_PROMPT_LENGTH."""
+    req = PromptRequest(agent="gemini", prompt="x" * MAX_PROMPT_LENGTH)
+    assert len(req.prompt) == MAX_PROMPT_LENGTH
 
 
 # ---------------------------------------------------------------------------
