@@ -18,7 +18,7 @@ DEFAULT_MAX_CONCURRENCY = 3
 
 
 class PromptRequest(BaseModel):
-    agent: str
+    agent: str = Field(..., min_length=1)
     prompt: str = Field(..., min_length=1)
     context: dict[str, Any] = Field(default_factory=dict)
     execution_mode: ExecutionMode = Field(
