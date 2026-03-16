@@ -96,13 +96,9 @@ class TestRunnerFactoryNewMethods:
         assert RunnerFactory.list_clis() == ["claude", "codex", "gemini", "opencode"]
 
     def test_get_runner_class_returns_class(self):
-        from nexus_mcp.runners.gemini import GeminiRunner
-
         cls = RunnerFactory.get_runner_class("gemini")
         assert cls is GeminiRunner
 
     def test_get_runner_class_unknown_raises(self):
-        from nexus_mcp.exceptions import UnsupportedAgentError
-
         with pytest.raises(UnsupportedAgentError):
             RunnerFactory.get_runner_class("unknown")

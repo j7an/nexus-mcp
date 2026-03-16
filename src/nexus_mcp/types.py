@@ -72,12 +72,12 @@ class RunnerInfo(BaseModel, frozen=True):
     """Metadata about a registered runner, returned by list_runners tool."""
 
     name: str
-    type: str
+    type: Literal["cli", "server"]
     provider: str | None
-    models: list[str]
+    models: tuple[str, ...]
     available: bool
     default_model: str | None
-    execution_modes: list[ExecutionMode]
+    execution_modes: tuple[ExecutionMode, ...]
 
 
 class SubprocessResult(BaseModel):
