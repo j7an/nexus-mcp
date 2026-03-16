@@ -187,7 +187,7 @@ class TestToolTimeoutRegistration:
 
     Timeout is baked in at module import time via get_tool_timeout().
     These tests verify the default (900.0s) is applied to prompt/batch_prompt
-    and that list_agents has no timeout.
+    and that list_runners has no timeout.
     """
 
     async def test_prompt_has_timeout(self):
