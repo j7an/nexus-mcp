@@ -7,7 +7,7 @@ Tests verify:
 - create("claude") → ClaudeRunner instance
 - create("opencode") → OpenCodeRunner instance
 - create("unknown") → UnsupportedAgentError
-- list_agents() → ["claude", "codex", "gemini", "opencode"]
+- list_clis() → ["claude", "codex", "gemini", "opencode"]
 - create() returns cached instance for same agent
 - clear_cache() forces fresh instance on next create()
 """
@@ -62,9 +62,9 @@ class TestRunnerFactory:
 
         assert isinstance(runner, OpenCodeRunner)
 
-    def test_list_agents_returns_supported_agents(self):
-        """list_agents() should return list of supported agent names."""
-        agents = RunnerFactory.list_agents()
+    def test_list_clis_returns_supported_agents(self):
+        """list_clis() should return list of supported agent names."""
+        agents = RunnerFactory.list_clis()
 
         assert agents == ["claude", "codex", "gemini", "opencode"]
 
@@ -84,9 +84,9 @@ class TestRunnerFactory:
         assert runner1 is not runner2  # Different instances after cache clear
         assert isinstance(runner2, GeminiRunner)
 
-    def test_list_agents_returns_sorted_order(self):
-        """list_agents() should return agents in sorted (alphabetical) order."""
-        agents = RunnerFactory.list_agents()
+    def test_list_clis_returns_sorted_order(self):
+        """list_clis() should return agents in sorted (alphabetical) order."""
+        agents = RunnerFactory.list_clis()
 
         assert agents == sorted(agents)
 

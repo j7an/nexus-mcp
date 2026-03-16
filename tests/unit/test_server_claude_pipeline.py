@@ -159,8 +159,8 @@ class TestBatchPromptClaudePipeline:
         """Two tasks both succeed; auto-assigned labels include 'claude' and 'claude-2'."""
         mock_subprocess.return_value = create_mock_process(stdout=_claude_json("ok"))
         tasks = [
-            make_agent_task(agent="claude", prompt="first"),
-            make_agent_task(agent="claude", prompt="second"),
+            make_agent_task(cli="claude", prompt="first"),
+            make_agent_task(cli="claude", prompt="second"),
         ]
 
         response = await batch_prompt(tasks=tasks)
@@ -182,8 +182,8 @@ class TestBatchPromptClaudePipeline:
 
         mock_subprocess.side_effect = side_effect
         tasks = [
-            make_agent_task(agent="claude", prompt="please succeed"),
-            make_agent_task(agent="claude", prompt="will fail"),
+            make_agent_task(cli="claude", prompt="please succeed"),
+            make_agent_task(cli="claude", prompt="will fail"),
         ]
 
         response = await batch_prompt(tasks=tasks)
@@ -198,8 +198,8 @@ class TestBatchPromptClaudePipeline:
         mock_subprocess.return_value = create_mock_process(stdout=_claude_json("ok"))
         # Pass dicts instead of AgentTask objects (simulates Docket serialization round-trip)
         tasks = [
-            {"agent": "claude", "prompt": "task one", "execution_mode": "default"},
-            {"agent": "claude", "prompt": "task two", "execution_mode": "default"},
+            {"cli": "claude", "prompt": "task one", "execution_mode": "default"},
+            {"cli": "claude", "prompt": "task two", "execution_mode": "default"},
         ]
 
         response = await batch_prompt(tasks=tasks)  # type: ignore[arg-type]

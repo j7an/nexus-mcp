@@ -47,7 +47,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Agent response")
 
         result = await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt="Test prompt",
         )
 
@@ -65,7 +65,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt="Complex task",
             execution_mode="yolo",
         )
@@ -79,7 +79,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt="Test prompt",
             model="gemini-2.5-flash",
         )
@@ -93,7 +93,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt="Test prompt",
             context={"key": "value"},
         )
@@ -108,7 +108,7 @@ class TestPrompt:
 
         with pytest.raises(ToolError, match="unknown_agent"):
             await prompt(
-                agent="unknown_agent",
+                cli="unknown_agent",
                 prompt="Test prompt",
             )
 
@@ -122,7 +122,7 @@ class TestPrompt:
 
         with pytest.raises(ToolError, match="CLI command failed"):
             await prompt(
-                agent="gemini",
+                cli="gemini",
                 prompt="Test prompt",
             )
 
@@ -132,7 +132,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt="Test prompt",
             max_retries=7,
         )
@@ -146,7 +146,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt="Test prompt",
         )
 
@@ -159,7 +159,7 @@ class TestPrompt:
         _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt="Test prompt",
             ctx=ctx,
         )
@@ -177,7 +177,7 @@ class TestPrompt:
 
         with pytest.raises(ToolError, match=r"\[ParseError\].*Invalid JSON from Gemini CLI"):
             await prompt(
-                agent="gemini",
+                cli="gemini",
                 prompt="Test prompt",
             )
 
@@ -220,20 +220,20 @@ class TestAssignLabels:
 
     def test_single_task_gets_agent_name(self):
         """A single unlabeled task gets its agent name as label."""
-        tasks = [make_agent_task(agent="gemini")]
+        tasks = [make_agent_task(cli="gemini")]
         result = _assign_labels(tasks)
         assert result[0].label == "gemini"
 
     def test_two_identical_agents_get_suffixes(self):
         """Two tasks with the same agent get 'agent' and 'agent-2'."""
-        tasks = [make_agent_task(agent="gemini"), make_agent_task(agent="gemini")]
+        tasks = [make_agent_task(cli="gemini"), make_agent_task(cli="gemini")]
         result = _assign_labels(tasks)
         assert result[0].label == "gemini"
         assert result[1].label == "gemini-2"
 
     def test_three_identical_agents_get_suffixes(self):
         """Three tasks with the same agent get 'agent', 'agent-2', 'agent-3'."""
-        tasks = [make_agent_task(agent="gemini") for _ in range(3)]
+        tasks = [make_agent_task(cli="gemini") for _ in range(3)]
         result = _assign_labels(tasks)
         assert result[0].label == "gemini"
         assert result[1].label == "gemini-2"
@@ -241,15 +241,15 @@ class TestAssignLabels:
 
     def test_explicit_label_preserved(self):
         """An explicit label is kept as-is, not overwritten."""
-        tasks = [make_agent_task(agent="gemini", label="my-task")]
+        tasks = [make_agent_task(cli="gemini", label="my-task")]
         result = _assign_labels(tasks)
         assert result[0].label == "my-task"
 
     def test_explicit_label_blocks_auto_name(self):
         """If 'gemini' is already an explicit label, auto-assigned gets 'gemini-2'."""
         tasks = [
-            make_agent_task(agent="gemini", label="gemini"),
-            make_agent_task(agent="gemini"),
+            make_agent_task(cli="gemini", label="gemini"),
+            make_agent_task(cli="gemini"),
         ]
         result = _assign_labels(tasks)
         assert result[0].label == "gemini"
@@ -257,14 +257,14 @@ class TestAssignLabels:
 
     def test_mixed_agents_no_suffix(self):
         """Different agents don't get suffixes when there are no collisions."""
-        tasks = [make_agent_task(agent="gemini"), make_agent_task(agent="codex")]
+        tasks = [make_agent_task(cli="gemini"), make_agent_task(cli="codex")]
         result = _assign_labels(tasks)
         assert result[0].label == "gemini"
         assert result[1].label == "codex"
 
     def test_returns_new_list_does_not_mutate(self):
         """_assign_labels() returns a new list; input tasks are unchanged."""
-        tasks = [make_agent_task(agent="gemini")]
+        tasks = [make_agent_task(cli="gemini")]
         assert tasks[0].label is None
         result = _assign_labels(tasks)
         assert tasks[0].label is None  # original unchanged
@@ -374,7 +374,7 @@ class TestBatchPrompt:
         """Unlabeled tasks receive unique auto-assigned labels."""
         _setup_mock_runner(mock_factory)
 
-        tasks = [make_agent_task(agent="gemini"), make_agent_task(agent="gemini")]
+        tasks = [make_agent_task(cli="gemini"), make_agent_task(cli="gemini")]
         result = await batch_prompt(tasks=tasks)
 
         labels = [r.label for r in result.results]
@@ -417,7 +417,7 @@ class TestBatchPrompt:
         """A single task's label is the agent name without any suffix."""
         _setup_mock_runner(mock_factory)
 
-        result = await batch_prompt(tasks=[make_agent_task(agent="gemini")])
+        result = await batch_prompt(tasks=[make_agent_task(cli="gemini")])
 
         assert result.results[0].label == "gemini"
 
@@ -515,7 +515,7 @@ class TestBatchPrompt:
         """Single-task call passes progress=1, total=1, and a formatted message."""
         _setup_mock_runner(mock_factory)
 
-        await batch_prompt(tasks=[make_agent_task(agent="gemini")], ctx=ctx)
+        await batch_prompt(tasks=[make_agent_task(cli="gemini")], ctx=ctx)
 
         ctx.report_progress.assert_awaited_once_with(
             progress=1,

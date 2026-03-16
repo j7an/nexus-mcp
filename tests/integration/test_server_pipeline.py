@@ -35,7 +35,7 @@ class TestServerPromptValidation:
         """prompt() should raise ToolError for unknown agent names."""
         with pytest.raises(ToolError, match="nonexistent_agent_12345"):
             await prompt(
-                agent="nonexistent_agent_12345",
+                cli="nonexistent_agent_12345",
                 prompt="test",
             )
 
@@ -48,7 +48,7 @@ class TestServerPromptPipeline:
     async def test_prompt_returns_string(self, gemini_cli_available: str) -> None:  # noqa: ARG002
         """prompt() should return a non-empty string from real CLI output."""
         result = await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt=PING_PROMPT,
         )
 
@@ -59,7 +59,7 @@ class TestServerPromptPipeline:
     async def test_prompt_reports_progress(self, gemini_cli_available: str, ctx: AsyncMock) -> None:  # noqa: ARG002
         """prompt() should call ctx.report_progress once with progress=1, total=1."""
         await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt=PING_PROMPT,
             ctx=ctx,
         )

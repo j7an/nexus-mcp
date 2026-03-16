@@ -92,7 +92,7 @@ class TestOpenCodeRunnerBuildCommand:
     def test_default_command_shape(self):
         """Default command: [cli_path, 'run', prompt, '--format', 'json', ...]."""
         runner = make_opencode_runner()
-        cmd = runner.build_command(make_prompt_request(agent="opencode", prompt="hello"))
+        cmd = runner.build_command(make_prompt_request(cli="opencode", prompt="hello"))
         assert cmd[0] == "opencode"
         assert cmd[1] == "run"
         assert cmd[2] == "hello"
@@ -102,9 +102,7 @@ class TestOpenCodeRunnerBuildCommand:
     def test_model_override(self):
         """request.model is forwarded as --model flag."""
         runner = make_opencode_runner()
-        cmd = runner.build_command(
-            make_prompt_request(agent="opencode", prompt="hi", model="gpt-4o")
-        )
+        cmd = runner.build_command(make_prompt_request(cli="opencode", prompt="hi", model="gpt-4o"))
         idx = cmd.index("--model")
         assert cmd[idx + 1] == "gpt-4o"
 
@@ -112,7 +110,7 @@ class TestOpenCodeRunnerBuildCommand:
         """default_model from env is used when request.model is None."""
         runner = make_opencode_runner()
         runner.default_model = "claude-3-5-sonnet"
-        cmd = runner.build_command(make_prompt_request(agent="opencode", prompt="hi"))
+        cmd = runner.build_command(make_prompt_request(cli="opencode", prompt="hi"))
         idx = cmd.index("--model")
         assert cmd[idx + 1] == "claude-3-5-sonnet"
 
@@ -120,9 +118,7 @@ class TestOpenCodeRunnerBuildCommand:
         """request.model takes precedence over default_model."""
         runner = make_opencode_runner()
         runner.default_model = "claude-3-5-sonnet"
-        cmd = runner.build_command(
-            make_prompt_request(agent="opencode", prompt="hi", model="gpt-4o")
-        )
+        cmd = runner.build_command(make_prompt_request(cli="opencode", prompt="hi", model="gpt-4o"))
         idx = cmd.index("--model")
         assert cmd[idx + 1] == "gpt-4o"
         assert "claude-3-5-sonnet" not in cmd
@@ -144,7 +140,7 @@ class TestOpenCodeRunnerBuildCommandModes:
         """execution_mode='default' produces a valid command with --format json."""
         runner = make_opencode_runner()
         cmd = runner.build_command(
-            make_prompt_request(agent="opencode", prompt="x", execution_mode="default")
+            make_prompt_request(cli="opencode", prompt="x", execution_mode="default")
         )
         assert "run" in cmd
         assert "--format" in cmd
@@ -154,7 +150,7 @@ class TestOpenCodeRunnerBuildCommandModes:
         """execution_mode='yolo' produces a valid command with --format json."""
         runner = make_opencode_runner()
         cmd = runner.build_command(
-            make_prompt_request(agent="opencode", prompt="x", execution_mode="yolo")
+            make_prompt_request(cli="opencode", prompt="x", execution_mode="yolo")
         )
         assert "run" in cmd
         assert "--format" in cmd
@@ -165,7 +161,7 @@ class TestOpenCodeRunnerBuildCommandModes:
         runner = make_opencode_runner()
         for mode in ("default", "yolo"):
             cmd = runner.build_command(
-                make_prompt_request(agent="opencode", prompt="x", execution_mode=mode)
+                make_prompt_request(cli="opencode", prompt="x", execution_mode=mode)
             )
             assert "--allowedTools" not in cmd
 
@@ -174,7 +170,7 @@ class TestOpenCodeRunnerBuildCommandModes:
         runner = make_opencode_runner()
         cmd = runner.build_command(
             make_prompt_request(
-                agent="opencode", prompt="x", model="gpt-4o", execution_mode="default"
+                cli="opencode", prompt="x", model="gpt-4o", execution_mode="default"
             )
         )
         assert "--model" in cmd
@@ -183,7 +179,7 @@ class TestOpenCodeRunnerBuildCommandModes:
         """model + yolo mode: --model present in command."""
         runner = make_opencode_runner()
         cmd = runner.build_command(
-            make_prompt_request(agent="opencode", prompt="x", model="gpt-4o", execution_mode="yolo")
+            make_prompt_request(cli="opencode", prompt="x", model="gpt-4o", execution_mode="yolo")
         )
         assert "--model" in cmd
 
@@ -192,7 +188,7 @@ class TestOpenCodeRunnerBuildCommandModes:
         runner = make_opencode_runner()
         cmd = runner.build_command(
             make_prompt_request(
-                agent="opencode", prompt="x", model="gpt-4o", execution_mode="default"
+                cli="opencode", prompt="x", model="gpt-4o", execution_mode="default"
             )
         )
         assert cmd.index("--model") > cmd.index("--format")
@@ -210,7 +206,7 @@ class TestOpenCodeRunnerFileReferences:
         """File references are appended to the prompt string."""
         runner = make_opencode_runner()
         cmd = runner.build_command(
-            make_prompt_request(agent="opencode", prompt="analyse", file_refs=["src/main.py"])
+            make_prompt_request(cli="opencode", prompt="analyse", file_refs=["src/main.py"])
         )
         assert cmd[2].startswith("analyse")
         assert "src/main.py" in cmd[2]
@@ -218,7 +214,7 @@ class TestOpenCodeRunnerFileReferences:
     def test_prompt_unchanged_when_no_file_refs(self):
         """Prompt is unchanged when file_refs is empty."""
         runner = make_opencode_runner()
-        cmd = runner.build_command(make_prompt_request(agent="opencode", prompt="hello"))
+        cmd = runner.build_command(make_prompt_request(cli="opencode", prompt="hello"))
         assert cmd[2] == "hello"
 
 
@@ -517,9 +513,7 @@ class TestOpenCodeRunnerRetryableErrors:
             create_mock_process(stdout=OPENCODE_NDJSON_RESPONSE, returncode=0),
         ]
         runner = make_opencode_runner()
-        result = await runner.run(
-            make_prompt_request(agent="opencode", prompt="test", max_retries=2)
-        )
+        result = await runner.run(make_prompt_request(cli="opencode", prompt="test", max_retries=2))
         assert result.output == "test output"
         assert mock_exec.await_count == 2
 
@@ -529,7 +523,7 @@ class TestOpenCodeRunnerRetryableErrors:
         error_stdout = opencode_error_json("ServiceError", "unavailable", status_code=503)
         mock_exec.return_value = create_mock_process(stdout=error_stdout, stderr="", returncode=1)
         runner = make_opencode_runner()
-        request = make_prompt_request(agent="opencode", prompt="test", max_retries=3)
+        request = make_prompt_request(cli="opencode", prompt="test", max_retries=3)
         with pytest.raises(RetryableError):
             await runner.run(request)
         assert mock_exec.await_count == 3
@@ -552,7 +546,7 @@ class TestOpenCodeRunnerErrorRecovery:
             returncode=1,
         )
         runner = make_opencode_runner()
-        response = await runner.run(make_prompt_request(agent="opencode", prompt="test"))
+        response = await runner.run(make_prompt_request(cli="opencode", prompt="test"))
         assert response.output == "test output"
         assert response.metadata.get("recovered_from_error") is True
         assert response.metadata.get("original_exit_code") == 1
@@ -566,7 +560,7 @@ class TestOpenCodeRunnerErrorRecovery:
         )
         runner = make_opencode_runner()
         with pytest.raises(SubprocessError):
-            await runner.run(make_prompt_request(agent="opencode", prompt="x"))
+            await runner.run(make_prompt_request(cli="opencode", prompt="x"))
 
 
 # ---------------------------------------------------------------------------
@@ -596,7 +590,7 @@ class TestOpenCodeRunnerAPIErrorExtraction:
         runner = make_opencode_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="opencode", prompt="x", max_retries=1))
+            await runner.run(make_prompt_request(cli="opencode", prompt="x", max_retries=1))
 
         primary_message = exc_info.value.args[0]
         assert "OpenCode API error" in primary_message
@@ -613,7 +607,7 @@ class TestOpenCodeRunnerAPIErrorExtraction:
         runner = make_opencode_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="opencode", prompt="x", max_retries=1))
+            await runner.run(make_prompt_request(cli="opencode", prompt="x", max_retries=1))
 
         assert exc_info.value.command is not None
         assert "opencode" in exc_info.value.command[0]
@@ -629,7 +623,7 @@ class TestOpenCodeRunnerAPIErrorExtraction:
         runner = make_opencode_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="opencode", prompt="x"))
+            await runner.run(make_prompt_request(cli="opencode", prompt="x"))
 
         primary_message = exc_info.value.args[0]
         assert "OpenCode API error" not in primary_message
@@ -646,7 +640,7 @@ class TestOpenCodeRunnerAPIErrorExtraction:
         runner = make_opencode_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="opencode", prompt="x"))
+            await runner.run(make_prompt_request(cli="opencode", prompt="x"))
 
         primary_message = exc_info.value.args[0]
         assert "OpenCode API error" not in primary_message
@@ -662,7 +656,7 @@ class TestOpenCodeRunnerAPIErrorExtraction:
         runner = make_opencode_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="opencode", prompt="x"))
+            await runner.run(make_prompt_request(cli="opencode", prompt="x"))
 
         primary_message = exc_info.value.args[0]
         assert "OpenCode API error" not in primary_message
@@ -690,7 +684,7 @@ class TestOpenCodeRunnerDualFieldRecovery:
             returncode=1,
         )
         runner = make_opencode_runner()
-        request = make_prompt_request(agent="opencode", prompt="x")
+        request = make_prompt_request(cli="opencode", prompt="x")
 
         with pytest.raises(RetryableError):
             await runner.run(request)
@@ -708,14 +702,14 @@ class TestOpenCodeRunnerEnvConfiguration:
     def test_opencode_runner_uses_custom_path_from_env(self):
         """OpenCodeRunner uses NEXUS_OPENCODE_PATH if set."""
         runner = make_opencode_runner()
-        cmd = runner.build_command(make_prompt_request(agent="opencode", prompt="test"))
+        cmd = runner.build_command(make_prompt_request(cli="opencode", prompt="test"))
         assert cmd[0] == "/opt/custom/opencode"
 
     @patch.dict("os.environ", {"NEXUS_OPENCODE_MODEL": "gpt-4o"})
     def test_opencode_runner_uses_default_model_from_env(self):
         """OpenCodeRunner uses NEXUS_OPENCODE_MODEL as default if request.model is None."""
         runner = make_opencode_runner()
-        cmd = runner.build_command(make_prompt_request(agent="opencode", prompt="test", model=None))
+        cmd = runner.build_command(make_prompt_request(cli="opencode", prompt="test", model=None))
         assert "--model" in cmd
         assert "gpt-4o" in cmd
 
@@ -724,7 +718,7 @@ class TestOpenCodeRunnerEnvConfiguration:
         """Request model overrides NEXUS_OPENCODE_MODEL env default."""
         runner = make_opencode_runner()
         cmd = runner.build_command(
-            make_prompt_request(agent="opencode", prompt="test", model="claude-sonnet-4-6")
+            make_prompt_request(cli="opencode", prompt="test", model="claude-sonnet-4-6")
         )
         assert "claude-sonnet-4-6" in cmd
         assert "gpt-4o" not in cmd
@@ -746,7 +740,7 @@ class TestOpenCodeRunnerIntegration:
             returncode=0,
         )
         runner = make_opencode_runner()
-        request = make_prompt_request(agent="opencode", prompt="test prompt")
+        request = make_prompt_request(cli="opencode", prompt="test prompt")
 
         response = await runner.run(request)
 
@@ -774,7 +768,7 @@ class TestOpenCodeRunnerIntegration:
         runner = make_opencode_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="opencode", prompt="x"))
+            await runner.run(make_prompt_request(cli="opencode", prompt="x"))
 
         assert exc_info.value.returncode == 1
         assert "API key" in exc_info.value.stderr

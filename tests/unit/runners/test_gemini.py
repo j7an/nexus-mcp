@@ -820,7 +820,7 @@ class TestGeminiRunnerIntegration:
         )
         runner = make_gemini_runner()
         request = make_prompt_request(
-            agent="gemini",
+            cli="gemini",
             prompt="test prompt",
             model="gemini-2.5-flash",
         )

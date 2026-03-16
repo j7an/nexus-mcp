@@ -76,7 +76,7 @@ def _next_available_label(base: str, reserved: set[str]) -> str:
     Returns base if available, otherwise base-2, base-3, etc.
 
     Args:
-        base: Preferred label (typically agent name).
+        base: Preferred label (typically cli name).
         reserved: Set of already-taken labels.
 
     Returns:
@@ -112,7 +112,7 @@ def _assign_labels(tasks: list[AgentTask]) -> list[AgentTask]:
             result.append(task)
             continue
 
-        label = _next_available_label(task.agent, reserved)
+        label = _next_available_label(task.cli, reserved)
         reserved.add(label)
         result.append(task.model_copy(update={"label": label}))
 
@@ -162,7 +162,7 @@ async def batch_prompt(
         async with semaphore:
             try:
                 request = task.to_request()
-                runner = RunnerFactory.create(task.agent)
+                runner = RunnerFactory.create(task.cli)
                 response = await runner.run(request)
                 return AgentTaskResult(label=task.label, output=response.output)  # type: ignore[arg-type]
             except Exception as e:
@@ -185,7 +185,7 @@ async def batch_prompt(
 
 
 async def prompt(
-    agent: str,
+    cli: str,
     prompt: str,
     context: dict[str, Any] | None = None,
     execution_mode: ExecutionMode | None = None,
@@ -199,7 +199,7 @@ async def prompt(
     This prevents timeouts for long operations (YOLO mode: 2-5 minutes).
 
     Args:
-        agent: Agent name (e.g., "gemini")
+        cli: CLI agent name (e.g., "gemini")
         prompt: Prompt text to send to the agent
         context: Optional context metadata
         execution_mode: 'default' (safe) or 'yolo'. None inherits session preference.
@@ -217,7 +217,7 @@ async def prompt(
     resolved_model = model if model is not None else prefs.model
 
     task = AgentTask(
-        agent=agent,
+        cli=cli,
         prompt=prompt,
         context=context or {},
         execution_mode=resolved_mode,
@@ -238,7 +238,7 @@ def list_agents() -> list[str]:
     Returns:
         List of agent names that can be used with prompt or batch_prompt.
     """
-    return RunnerFactory.list_agents()
+    return RunnerFactory.list_clis()
 
 
 async def set_preferences(

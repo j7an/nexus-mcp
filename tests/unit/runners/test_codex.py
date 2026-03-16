@@ -82,13 +82,13 @@ class TestCodexRunnerBuildCommand:
     def test_default_command_shape(self):
         """Default command: [cli_path, 'exec', prompt, '--json']."""
         runner = make_codex_runner()
-        cmd = runner.build_command(make_prompt_request(agent="codex", prompt="hello"))
+        cmd = runner.build_command(make_prompt_request(cli="codex", prompt="hello"))
         assert cmd == ["codex", "exec", "hello", "--json"]
 
     def test_model_override(self):
         """request.model is forwarded as --model flag (adjacent to value)."""
         runner = make_codex_runner()
-        cmd = runner.build_command(make_prompt_request(agent="codex", prompt="hi", model="o3"))
+        cmd = runner.build_command(make_prompt_request(cli="codex", prompt="hi", model="o3"))
         idx = cmd.index("--model")
         assert cmd[idx + 1] == "o3"
 
@@ -96,7 +96,7 @@ class TestCodexRunnerBuildCommand:
         """default_model from env is used when request.model is None."""
         runner = make_codex_runner()
         runner.default_model = "o1-mini"
-        cmd = runner.build_command(make_prompt_request(agent="codex", prompt="hi"))
+        cmd = runner.build_command(make_prompt_request(cli="codex", prompt="hi"))
         idx = cmd.index("--model")
         assert cmd[idx + 1] == "o1-mini"
 
@@ -104,7 +104,7 @@ class TestCodexRunnerBuildCommand:
         """request.model takes precedence over default_model."""
         runner = make_codex_runner()
         runner.default_model = "o1-mini"
-        cmd = runner.build_command(make_prompt_request(agent="codex", prompt="hi", model="o3"))
+        cmd = runner.build_command(make_prompt_request(cli="codex", prompt="hi", model="o3"))
         idx = cmd.index("--model")
         assert cmd[idx + 1] == "o3"
         assert "o1-mini" not in cmd
@@ -122,7 +122,7 @@ class TestCodexRunnerBuildCommandModes:
         """execution_mode='yolo' adds --dangerously-bypass-approvals-and-sandbox flag."""
         runner = make_codex_runner()
         cmd = runner.build_command(
-            make_prompt_request(agent="codex", prompt="x", execution_mode="yolo")
+            make_prompt_request(cli="codex", prompt="x", execution_mode="yolo")
         )
         assert "--dangerously-bypass-approvals-and-sandbox" in cmd
 
@@ -130,7 +130,7 @@ class TestCodexRunnerBuildCommandModes:
         """execution_mode='default' adds no extra approve flags."""
         runner = make_codex_runner()
         cmd = runner.build_command(
-            make_prompt_request(agent="codex", prompt="x", execution_mode="default")
+            make_prompt_request(cli="codex", prompt="x", execution_mode="default")
         )
         assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
 
@@ -138,7 +138,7 @@ class TestCodexRunnerBuildCommandModes:
         """model + yolo: --model appears before --dangerously-bypass-approvals-and-sandbox."""
         runner = make_codex_runner()
         cmd = runner.build_command(
-            make_prompt_request(agent="codex", prompt="x", model="o3", execution_mode="yolo")
+            make_prompt_request(cli="codex", prompt="x", model="o3", execution_mode="yolo")
         )
         assert "--model" in cmd
         assert "o3" in cmd
@@ -158,7 +158,7 @@ class TestCodexRunnerFileReferences:
         """File references are appended to the prompt string."""
         runner = make_codex_runner()
         cmd = runner.build_command(
-            make_prompt_request(agent="codex", prompt="analyse", file_refs=["src/main.py"])
+            make_prompt_request(cli="codex", prompt="analyse", file_refs=["src/main.py"])
         )
         assert cmd[2].startswith("analyse")
         assert "src/main.py" in cmd[2]
@@ -166,7 +166,7 @@ class TestCodexRunnerFileReferences:
     def test_prompt_unchanged_when_no_file_refs(self):
         """Prompt is unchanged when file_refs is empty."""
         runner = make_codex_runner()
-        cmd = runner.build_command(make_prompt_request(agent="codex", prompt="hello"))
+        cmd = runner.build_command(make_prompt_request(cli="codex", prompt="hello"))
         assert cmd[2] == "hello"
 
 
@@ -374,7 +374,7 @@ class TestCodexRunnerRetryableErrors:
             create_mock_process(stdout=CODEX_NDJSON_RESPONSE, returncode=0),
         ]
         runner = make_codex_runner()
-        result = await runner.run(make_prompt_request(agent="codex", prompt="test", max_retries=2))
+        result = await runner.run(make_prompt_request(cli="codex", prompt="test", max_retries=2))
         assert result.output == "pong"
         assert mock_exec.await_count == 2
 
@@ -384,7 +384,7 @@ class TestCodexRunnerRetryableErrors:
         error_stderr = json.dumps({"error": {"code": 503, "message": "Service unavailable"}})
         mock_exec.return_value = create_mock_process(stdout="", stderr=error_stderr, returncode=1)
         runner = make_codex_runner()
-        request = make_prompt_request(agent="codex", prompt="test", max_retries=3)
+        request = make_prompt_request(cli="codex", prompt="test", max_retries=3)
         with pytest.raises(RetryableError):
             await runner.run(request)
         assert mock_exec.await_count == 3
@@ -407,7 +407,7 @@ class TestCodexRunnerErrorRecovery:
             returncode=1,
         )
         runner = make_codex_runner()
-        response = await runner.run(make_prompt_request(agent="codex", prompt="test"))
+        response = await runner.run(make_prompt_request(cli="codex", prompt="test"))
         assert response.output == "pong"
         assert response.metadata.get("recovered_from_error") is True
         assert response.metadata.get("original_exit_code") == 1
@@ -421,7 +421,7 @@ class TestCodexRunnerErrorRecovery:
         )
         runner = make_codex_runner()
         with pytest.raises(SubprocessError):
-            await runner.run(make_prompt_request(agent="codex", prompt="x"))
+            await runner.run(make_prompt_request(cli="codex", prompt="x"))
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +451,7 @@ class TestCodexRunnerAPIErrorExtraction:
         runner = make_codex_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="codex", prompt="x", max_retries=1))
+            await runner.run(make_prompt_request(cli="codex", prompt="x", max_retries=1))
 
         primary_message = exc_info.value.args[0]
         assert "Codex API error" in primary_message
@@ -468,7 +468,7 @@ class TestCodexRunnerAPIErrorExtraction:
         runner = make_codex_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="codex", prompt="x", max_retries=1))
+            await runner.run(make_prompt_request(cli="codex", prompt="x", max_retries=1))
 
         assert exc_info.value.command is not None
         assert "codex" in exc_info.value.command[0]
@@ -484,7 +484,7 @@ class TestCodexRunnerAPIErrorExtraction:
         runner = make_codex_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="codex", prompt="x"))
+            await runner.run(make_prompt_request(cli="codex", prompt="x"))
 
         primary_message = exc_info.value.args[0]
         assert "Codex API error" not in primary_message
@@ -501,7 +501,7 @@ class TestCodexRunnerAPIErrorExtraction:
         runner = make_codex_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="codex", prompt="x"))
+            await runner.run(make_prompt_request(cli="codex", prompt="x"))
 
         primary_message = exc_info.value.args[0]
         assert "Codex API error" not in primary_message
@@ -517,7 +517,7 @@ class TestCodexRunnerAPIErrorExtraction:
         runner = make_codex_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="codex", prompt="x"))
+            await runner.run(make_prompt_request(cli="codex", prompt="x"))
 
         primary_message = exc_info.value.args[0]
         assert "Codex API error" not in primary_message
@@ -544,7 +544,7 @@ class TestCodexRunnerDualFieldRecovery:
             returncode=1,
         )
         runner = make_codex_runner()
-        request = make_prompt_request(agent="codex", prompt="x")
+        request = make_prompt_request(cli="codex", prompt="x")
 
         response = await runner.run(request)
 
@@ -564,14 +564,14 @@ class TestCodexRunnerEnvConfiguration:
     def test_codex_runner_uses_custom_path_from_env(self):
         """CodexRunner uses NEXUS_CODEX_PATH if set."""
         runner = make_codex_runner()
-        cmd = runner.build_command(make_prompt_request(agent="codex", prompt="test"))
+        cmd = runner.build_command(make_prompt_request(cli="codex", prompt="test"))
         assert cmd[0] == "/opt/custom/codex"
 
     @patch.dict("os.environ", {"NEXUS_CODEX_MODEL": "o3"})
     def test_codex_runner_uses_default_model_from_env(self):
         """CodexRunner uses NEXUS_CODEX_MODEL as default if request.model is None."""
         runner = make_codex_runner()
-        cmd = runner.build_command(make_prompt_request(agent="codex", prompt="test", model=None))
+        cmd = runner.build_command(make_prompt_request(cli="codex", prompt="test", model=None))
         assert "--model" in cmd
         assert "o3" in cmd
 
@@ -579,7 +579,7 @@ class TestCodexRunnerEnvConfiguration:
     def test_codex_runner_request_model_overrides_env(self):
         """Request model overrides NEXUS_CODEX_MODEL env default."""
         runner = make_codex_runner()
-        cmd = runner.build_command(make_prompt_request(agent="codex", prompt="test", model="o3"))
+        cmd = runner.build_command(make_prompt_request(cli="codex", prompt="test", model="o3"))
         assert "o3" in cmd
         assert "o1-mini" not in cmd
 
@@ -600,7 +600,7 @@ class TestCodexRunnerIntegration:
             returncode=0,
         )
         runner = make_codex_runner()
-        request = make_prompt_request(agent="codex", prompt="test prompt")
+        request = make_prompt_request(cli="codex", prompt="test prompt")
 
         response = await runner.run(request)
 
@@ -627,7 +627,7 @@ class TestCodexRunnerIntegration:
         runner = make_codex_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="codex", prompt="x"))
+            await runner.run(make_prompt_request(cli="codex", prompt="x"))
 
         assert exc_info.value.returncode == 1
         assert "API key" in exc_info.value.stderr

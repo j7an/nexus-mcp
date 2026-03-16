@@ -44,7 +44,7 @@ class TestOpenCodeRunnerBuildCommand:
 
     def test_build_command_includes_json_flag(self, opencode_runner: OpenCodeRunner) -> None:
         """build_command() should include --format json flags."""
-        request = make_prompt_request(agent="opencode", prompt="test")
+        request = make_prompt_request(cli="opencode", prompt="test")
         command = opencode_runner.build_command(request)
 
         assert "--format" in command
@@ -52,14 +52,14 @@ class TestOpenCodeRunnerBuildCommand:
 
     def test_build_command_includes_prompt_flag(self, opencode_runner: OpenCodeRunner) -> None:
         """build_command() should include the prompt as a positional argument."""
-        request = make_prompt_request(agent="opencode", prompt="test")
+        request = make_prompt_request(cli="opencode", prompt="test")
         command = opencode_runner.build_command(request)
 
         assert "test" in command
 
     def test_build_command_cli_path_is_real(self, opencode_runner: OpenCodeRunner) -> None:
         """build_command() CLI path should resolve to an installed binary."""
-        request = make_prompt_request(agent="opencode", prompt="test")
+        request = make_prompt_request(cli="opencode", prompt="test")
         command = opencode_runner.build_command(request)
 
         assert shutil.which(command[0]) is not None, (
@@ -76,7 +76,7 @@ class TestOpenCodeRunnerEndToEnd:
         self, opencode_runner: OpenCodeRunner
     ) -> None:
         """run() should return an AgentResponse with non-empty output."""
-        request = make_prompt_request(agent="opencode", prompt=PING_PROMPT)
+        request = make_prompt_request(cli="opencode", prompt=PING_PROMPT)
         response = await opencode_runner.run(request)
 
         assert isinstance(response, AgentResponse)
@@ -85,9 +85,7 @@ class TestOpenCodeRunnerEndToEnd:
 
     async def test_run_default_mode_restricts_tools(self, opencode_runner: OpenCodeRunner) -> None:
         """run() with default mode should succeed (no tool restriction flags available)."""
-        request = make_prompt_request(
-            agent="opencode", prompt=PING_PROMPT, execution_mode="default"
-        )
+        request = make_prompt_request(cli="opencode", prompt=PING_PROMPT, execution_mode="default")
         response = await opencode_runner.run(request)
 
         assert isinstance(response, AgentResponse)
@@ -95,7 +93,7 @@ class TestOpenCodeRunnerEndToEnd:
 
     async def test_run_schema_discovery(self, opencode_runner: OpenCodeRunner) -> None:
         """Verify raw_output is non-empty and format matches NDJSON event stream."""
-        request = make_prompt_request(agent="opencode", prompt=PING_PROMPT)
+        request = make_prompt_request(cli="opencode", prompt=PING_PROMPT)
         response = await opencode_runner.run(request)
 
         # Print raw output for empirical format verification

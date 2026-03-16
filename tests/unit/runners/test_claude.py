@@ -84,14 +84,14 @@ class TestClaudeRunnerBuildCommand:
     def test_default_command_shape(self):
         """Default command: [cli_path, '-p', prompt, '--output-format', 'json']."""
         runner = make_claude_runner()
-        cmd = runner.build_command(make_prompt_request(agent="claude", prompt="hello"))
+        cmd = runner.build_command(make_prompt_request(cli="claude", prompt="hello"))
         assert cmd == ["claude", "-p", "hello", "--output-format", "json"]
 
     def test_model_override(self):
         """request.model is forwarded as --model flag."""
         runner = make_claude_runner()
         cmd = runner.build_command(
-            make_prompt_request(agent="claude", prompt="hi", model="claude-sonnet-4-6")
+            make_prompt_request(cli="claude", prompt="hi", model="claude-sonnet-4-6")
         )
         idx = cmd.index("--model")
         assert cmd[idx + 1] == "claude-sonnet-4-6"
@@ -100,7 +100,7 @@ class TestClaudeRunnerBuildCommand:
         """default_model from env is used when request.model is None."""
         runner = make_claude_runner()
         runner.default_model = "claude-haiku-4-5-20251001"
-        cmd = runner.build_command(make_prompt_request(agent="claude", prompt="hi"))
+        cmd = runner.build_command(make_prompt_request(cli="claude", prompt="hi"))
         idx = cmd.index("--model")
         assert cmd[idx + 1] == "claude-haiku-4-5-20251001"
 
@@ -109,7 +109,7 @@ class TestClaudeRunnerBuildCommand:
         runner = make_claude_runner()
         runner.default_model = "claude-haiku-4-5-20251001"
         cmd = runner.build_command(
-            make_prompt_request(agent="claude", prompt="hi", model="claude-sonnet-4-6")
+            make_prompt_request(cli="claude", prompt="hi", model="claude-sonnet-4-6")
         )
         idx = cmd.index("--model")
         assert cmd[idx + 1] == "claude-sonnet-4-6"
@@ -120,7 +120,7 @@ class TestClaudeRunnerBuildCommand:
         runner = make_claude_runner()
         cmd = runner.build_command(
             make_prompt_request(
-                agent="claude",
+                cli="claude",
                 prompt="analyse",
                 model="claude-sonnet-4-6",
                 execution_mode="yolo",
@@ -145,7 +145,7 @@ class TestClaudeRunnerBuildCommandModes:
         """execution_mode='yolo' adds --dangerously-skip-permissions flag."""
         runner = make_claude_runner()
         cmd = runner.build_command(
-            make_prompt_request(agent="claude", prompt="x", execution_mode="yolo")
+            make_prompt_request(cli="claude", prompt="x", execution_mode="yolo")
         )
         assert "--dangerously-skip-permissions" in cmd
 
@@ -153,7 +153,7 @@ class TestClaudeRunnerBuildCommandModes:
         """execution_mode='default' adds no extra approve flags."""
         runner = make_claude_runner()
         cmd = runner.build_command(
-            make_prompt_request(agent="claude", prompt="x", execution_mode="default")
+            make_prompt_request(cli="claude", prompt="x", execution_mode="default")
         )
         assert "--dangerously-skip-permissions" not in cmd
 
@@ -170,7 +170,7 @@ class TestClaudeRunnerFileReferences:
         """File references are appended to the prompt string."""
         runner = make_claude_runner()
         cmd = runner.build_command(
-            make_prompt_request(agent="claude", prompt="analyse", file_refs=["src/main.py"])
+            make_prompt_request(cli="claude", prompt="analyse", file_refs=["src/main.py"])
         )
         assert cmd[2].startswith("analyse")
         assert "src/main.py" in cmd[2]
@@ -178,7 +178,7 @@ class TestClaudeRunnerFileReferences:
     def test_prompt_unchanged_when_no_file_refs(self):
         """Prompt is unchanged when file_refs is empty."""
         runner = make_claude_runner()
-        cmd = runner.build_command(make_prompt_request(agent="claude", prompt="hello"))
+        cmd = runner.build_command(make_prompt_request(cli="claude", prompt="hello"))
         assert cmd[2] == "hello"
 
 
@@ -435,7 +435,7 @@ class TestClaudeRunnerParseOutputAdvanced:
             returncode=1,
         )
         runner = make_claude_runner()
-        result = await runner.run(make_prompt_request(agent="claude", prompt="test"))
+        result = await runner.run(make_prompt_request(cli="claude", prompt="test"))
         assert result.metadata.get("original_exit_code") == 1
         assert result.metadata.get("stderr") == "some stderr text"
         assert result.metadata.get("recovered_from_error") is True
@@ -614,7 +614,7 @@ class TestClaudeRunnerRetryableErrors:
             create_mock_process(stdout=CLAUDE_JSON_RESPONSE, returncode=0),
         ]
         runner = make_claude_runner()
-        result = await runner.run(make_prompt_request(agent="claude", prompt="x", max_retries=2))
+        result = await runner.run(make_prompt_request(cli="claude", prompt="x", max_retries=2))
         assert result.output == "test output"
         assert mock_exec.await_count == 2
 
@@ -626,7 +626,7 @@ class TestClaudeRunnerRetryableErrors:
         )
         runner = make_claude_runner()
         with pytest.raises(SubprocessError):
-            await runner.run(make_prompt_request(agent="claude", prompt="x"))
+            await runner.run(make_prompt_request(cli="claude", prompt="x"))
 
     def test_stderr_json_without_error_key_falls_through_to_stdout(self):
         """stderr JSON without 'error' key → stdout inspected; 429 in stdout → RetryableError."""
@@ -642,7 +642,7 @@ class TestClaudeRunnerRetryableErrors:
         error_stderr = json.dumps({"error": {"code": 429, "message": "rate limited"}})
         mock_exec.return_value = create_mock_process(stdout="", stderr=error_stderr, returncode=1)
         runner = make_claude_runner()
-        request = make_prompt_request(agent="claude", prompt="x", max_retries=3)
+        request = make_prompt_request(cli="claude", prompt="x", max_retries=3)
         with pytest.raises(RetryableError):
             await runner.run(request)
         assert mock_exec.await_count == 3
@@ -665,7 +665,7 @@ class TestClaudeRunnerErrorRecovery:
             returncode=1,
         )
         runner = make_claude_runner()
-        response = await runner.run(make_prompt_request(agent="claude", prompt="test"))
+        response = await runner.run(make_prompt_request(cli="claude", prompt="test"))
         assert response.output == "test output"
         assert response.metadata.get("recovered_from_error") is True
         assert response.metadata.get("original_exit_code") == 1
@@ -681,7 +681,7 @@ class TestClaudeRunnerErrorRecovery:
         )
         runner = make_claude_runner()
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="claude", prompt="test"))
+            await runner.run(make_prompt_request(cli="claude", prompt="test"))
         assert exc_info.value.returncode == 1
         assert "Error: 401 Unauthorized" in exc_info.value.stderr
 
@@ -700,7 +700,7 @@ class TestClaudeRunnerErrorRecovery:
         )
         runner = make_claude_runner()
         with pytest.raises(SubprocessError):
-            await runner.run(make_prompt_request(agent="claude", prompt="x"))
+            await runner.run(make_prompt_request(cli="claude", prompt="x"))
 
 
 # ---------------------------------------------------------------------------
@@ -730,7 +730,7 @@ class TestClaudeRunnerAPIErrorExtraction:
         runner = make_claude_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="claude", prompt="x", max_retries=1))
+            await runner.run(make_prompt_request(cli="claude", prompt="x", max_retries=1))
 
         primary_message = exc_info.value.args[0]
         assert "Claude API error" in primary_message
@@ -747,7 +747,7 @@ class TestClaudeRunnerAPIErrorExtraction:
         runner = make_claude_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="claude", prompt="x", max_retries=1))
+            await runner.run(make_prompt_request(cli="claude", prompt="x", max_retries=1))
 
         assert exc_info.value.command is not None
         assert "claude" in exc_info.value.command[0]
@@ -763,7 +763,7 @@ class TestClaudeRunnerAPIErrorExtraction:
         runner = make_claude_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="claude", prompt="x"))
+            await runner.run(make_prompt_request(cli="claude", prompt="x"))
 
         primary_message = exc_info.value.args[0]
         assert "Claude API error" not in primary_message
@@ -780,7 +780,7 @@ class TestClaudeRunnerAPIErrorExtraction:
         runner = make_claude_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="claude", prompt="x"))
+            await runner.run(make_prompt_request(cli="claude", prompt="x"))
 
         primary_message = exc_info.value.args[0]
         assert "Claude API error" not in primary_message
@@ -796,7 +796,7 @@ class TestClaudeRunnerAPIErrorExtraction:
         runner = make_claude_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="claude", prompt="x"))
+            await runner.run(make_prompt_request(cli="claude", prompt="x"))
 
         primary_message = exc_info.value.args[0]
         assert "Claude API error" not in primary_message
@@ -823,7 +823,7 @@ class TestClaudeRunnerDualFieldRecovery:
             returncode=1,
         )
         runner = make_claude_runner()
-        request = make_prompt_request(agent="claude", prompt="x")
+        request = make_prompt_request(cli="claude", prompt="x")
 
         response = await runner.run(request)
 
@@ -843,14 +843,14 @@ class TestClaudeRunnerEnvConfiguration:
     def test_claude_runner_uses_custom_path_from_env(self):
         """ClaudeRunner uses NEXUS_CLAUDE_PATH if set."""
         runner = make_claude_runner()
-        cmd = runner.build_command(make_prompt_request(agent="claude", prompt="test"))
+        cmd = runner.build_command(make_prompt_request(cli="claude", prompt="test"))
         assert cmd[0] == "/opt/custom/claude"
 
     @patch.dict("os.environ", {"NEXUS_CLAUDE_MODEL": "claude-haiku-4-5-20251001"})
     def test_claude_runner_uses_default_model_from_env(self):
         """ClaudeRunner uses NEXUS_CLAUDE_MODEL as default if request.model is None."""
         runner = make_claude_runner()
-        cmd = runner.build_command(make_prompt_request(agent="claude", prompt="test", model=None))
+        cmd = runner.build_command(make_prompt_request(cli="claude", prompt="test", model=None))
         assert "--model" in cmd
         assert "claude-haiku-4-5-20251001" in cmd
 
@@ -859,7 +859,7 @@ class TestClaudeRunnerEnvConfiguration:
         """Request model overrides NEXUS_CLAUDE_MODEL env default."""
         runner = make_claude_runner()
         cmd = runner.build_command(
-            make_prompt_request(agent="claude", prompt="test", model="claude-sonnet-4-6")
+            make_prompt_request(cli="claude", prompt="test", model="claude-sonnet-4-6")
         )
         assert "claude-sonnet-4-6" in cmd
         assert "claude-haiku-4-5-20251001" not in cmd
@@ -940,7 +940,7 @@ class TestClaudeRunnerIntegration:
             returncode=0,
         )
         runner = make_claude_runner()
-        request = make_prompt_request(agent="claude", prompt=prompt, model=model)
+        request = make_prompt_request(cli="claude", prompt=prompt, model=model)
 
         response = await runner.run(request)
 
@@ -971,7 +971,7 @@ class TestClaudeRunnerIntegration:
         runner = make_claude_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(agent="claude", prompt="x"))
+            await runner.run(make_prompt_request(cli="claude", prompt="x"))
 
         assert exc_info.value.returncode == 1
         assert "API key" in exc_info.value.stderr

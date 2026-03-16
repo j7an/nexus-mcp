@@ -41,21 +41,21 @@ class TestCodexRunnerBuildCommand:
 
     def test_build_command_includes_json_flag(self, codex_runner: CodexRunner) -> None:
         """build_command() should include --json flag."""
-        request = make_prompt_request(agent="codex", prompt="test")
+        request = make_prompt_request(cli="codex", prompt="test")
         command = codex_runner.build_command(request)
 
         assert "--json" in command
 
     def test_build_command_includes_exec_subcommand(self, codex_runner: CodexRunner) -> None:
         """build_command() should use 'exec' subcommand."""
-        request = make_prompt_request(agent="codex", prompt="test")
+        request = make_prompt_request(cli="codex", prompt="test")
         command = codex_runner.build_command(request)
 
         assert "exec" in command
 
     def test_build_command_cli_path_is_real(self, codex_runner: CodexRunner) -> None:
         """build_command() CLI path should resolve to an installed binary."""
-        request = make_prompt_request(agent="codex", prompt="test")
+        request = make_prompt_request(cli="codex", prompt="test")
         command = codex_runner.build_command(request)
 
         assert shutil.which(command[0]) is not None, (
@@ -72,7 +72,7 @@ class TestCodexRunnerEndToEnd:
         self, codex_runner: CodexRunner
     ) -> None:
         """run() should return an AgentResponse with non-empty output."""
-        request = make_prompt_request(agent="codex", prompt=PING_PROMPT)
+        request = make_prompt_request(cli="codex", prompt=PING_PROMPT)
         response = await codex_runner.run(request)
 
         assert isinstance(response, AgentResponse)
@@ -81,7 +81,7 @@ class TestCodexRunnerEndToEnd:
 
     async def test_run_returns_parsed_output(self, codex_runner: CodexRunner) -> None:
         """run() should populate all AgentResponse fields from parsed NDJSON."""
-        request = make_prompt_request(agent="codex", prompt=PING_PROMPT)
+        request = make_prompt_request(cli="codex", prompt=PING_PROMPT)
         response = await codex_runner.run(request)
 
         assert isinstance(response.output, str)

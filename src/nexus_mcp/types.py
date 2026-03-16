@@ -19,7 +19,7 @@ MAX_PROMPT_LENGTH = 131072  # 128KB character limit — conservative guard again
 
 
 class PromptRequest(BaseModel):
-    agent: str = Field(..., min_length=1)
+    cli: str = Field(..., min_length=1)
     prompt: str = Field(..., min_length=1, max_length=MAX_PROMPT_LENGTH)
     context: dict[str, Any] = Field(default_factory=dict)
     execution_mode: ExecutionMode = Field(
@@ -91,7 +91,7 @@ class SubprocessResult(BaseModel):
 class AgentTask(BaseModel):
     """Per-task input for batch_prompt."""
 
-    agent: str = Field(..., min_length=1)
+    cli: str = Field(..., min_length=1)
     prompt: str = Field(..., min_length=1, max_length=MAX_PROMPT_LENGTH)
     label: str | None = None
     context: dict[str, Any] = Field(default_factory=dict)
@@ -102,7 +102,7 @@ class AgentTask(BaseModel):
     def to_request(self) -> "PromptRequest":
         """Convert this task to a PromptRequest for runner execution."""
         return PromptRequest(
-            agent=self.agent,
+            cli=self.cli,
             prompt=self.prompt,
             context=self.context,
             execution_mode=self.execution_mode or "default",  # safety net: None → "default"

@@ -79,7 +79,7 @@ class TestPreferenceAffectsPrompt:
         mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
 
         await mcp_client.call_tool("set_preferences", {"execution_mode": "yolo"})
-        await mcp_client.call_tool("prompt", {"agent": "gemini", "prompt": "test"})
+        await mcp_client.call_tool("prompt", {"cli": "gemini", "prompt": "test"})
 
         args = list(mock_subprocess.call_args.args)
         assert "--yolo" in args
@@ -90,7 +90,7 @@ class TestPreferenceAffectsPrompt:
 
         await mcp_client.call_tool("set_preferences", {"execution_mode": "yolo"})
         await mcp_client.call_tool(
-            "prompt", {"agent": "gemini", "prompt": "test", "execution_mode": "default"}
+            "prompt", {"cli": "gemini", "prompt": "test", "execution_mode": "default"}
         )
 
         args = list(mock_subprocess.call_args.args)
@@ -101,7 +101,7 @@ class TestPreferenceAffectsPrompt:
         mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
 
         await mcp_client.call_tool("set_preferences", {"model": "gemini-2.5-flash"})
-        await mcp_client.call_tool("prompt", {"agent": "gemini", "prompt": "test"})
+        await mcp_client.call_tool("prompt", {"cli": "gemini", "prompt": "test"})
 
         args = list(mock_subprocess.call_args.args)
         assert "--model" in args
@@ -113,7 +113,7 @@ class TestPreferenceAffectsPrompt:
 
         await mcp_client.call_tool("set_preferences", {"model": "gemini-2.5-flash"})
         await mcp_client.call_tool(
-            "prompt", {"agent": "gemini", "prompt": "test", "model": "gemini-1.5-pro"}
+            "prompt", {"cli": "gemini", "prompt": "test", "model": "gemini-1.5-pro"}
         )
 
         args = list(mock_subprocess.call_args.args)
@@ -124,7 +124,7 @@ class TestPreferenceAffectsPrompt:
         """Without session or explicit mode, prompt uses 'default' (no --yolo flag)."""
         mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
 
-        await mcp_client.call_tool("prompt", {"agent": "gemini", "prompt": "test"})
+        await mcp_client.call_tool("prompt", {"cli": "gemini", "prompt": "test"})
 
         args = list(mock_subprocess.call_args.args)
         assert "--yolo" not in args
@@ -144,7 +144,7 @@ class TestPreferenceAffectsBatchPrompt:
         await mcp_client.call_tool("set_preferences", {"execution_mode": "yolo"})
         result = await mcp_client.call_tool(
             "batch_prompt",
-            {"tasks": [{"agent": "gemini", "prompt": "test"}]},
+            {"tasks": [{"cli": "gemini", "prompt": "test"}]},
         )
 
         assert result.is_error is False
@@ -160,7 +160,7 @@ class TestPreferenceAffectsBatchPrompt:
         await mcp_client.call_tool("set_preferences", {"execution_mode": "yolo"})
         await mcp_client.call_tool(
             "batch_prompt",
-            {"tasks": [{"agent": "gemini", "prompt": "test", "execution_mode": "default"}]},
+            {"tasks": [{"cli": "gemini", "prompt": "test", "execution_mode": "default"}]},
         )
 
         args = list(mock_subprocess.call_args.args)

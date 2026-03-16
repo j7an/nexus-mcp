@@ -269,9 +269,9 @@ def make_prompt_request(**overrides: Any) -> PromptRequest:
 
         req = make_prompt_request()                          # defaults
         req = make_prompt_request(execution_mode="yolo")     # override one field
-        req = make_prompt_request(agent="codex", prompt="X") # override multiple
+        req = make_prompt_request(cli="codex", prompt="X") # override multiple
     """
-    defaults: dict[str, Any] = {"agent": "gemini", "prompt": "Hello"}
+    defaults: dict[str, Any] = {"cli": "gemini", "prompt": "Hello"}
     return PromptRequest(**(defaults | overrides))
 
 
@@ -298,10 +298,10 @@ def make_agent_task(**overrides: Any) -> AgentTask:
     Usage::
 
         task = make_agent_task()                              # defaults
-        task = make_agent_task(agent="codex")                 # override agent
+        task = make_agent_task(cli="codex")                 # override cli
         task = make_agent_task(prompt="Do X", label="my-task")
     """
-    defaults: dict[str, Any] = {"agent": "gemini", "prompt": "Hello", "execution_mode": "default"}
+    defaults: dict[str, Any] = {"cli": "gemini", "prompt": "Hello", "execution_mode": "default"}
     return AgentTask(**(defaults | overrides))
 
 

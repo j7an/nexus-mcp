@@ -44,7 +44,7 @@ class TestClaudeRunnerBuildCommand:
 
     def test_build_command_includes_json_flag(self, claude_runner: ClaudeRunner) -> None:
         """build_command() should include --output-format json flags."""
-        request = make_prompt_request(agent="claude", prompt="test")
+        request = make_prompt_request(cli="claude", prompt="test")
         command = claude_runner.build_command(request)
 
         assert "--output-format" in command
@@ -52,14 +52,14 @@ class TestClaudeRunnerBuildCommand:
 
     def test_build_command_includes_prompt_flag(self, claude_runner: ClaudeRunner) -> None:
         """build_command() should pass the prompt via the -p flag."""
-        request = make_prompt_request(agent="claude", prompt="test")
+        request = make_prompt_request(cli="claude", prompt="test")
         command = claude_runner.build_command(request)
 
         assert "-p" in command
 
     def test_build_command_cli_path_is_real(self, claude_runner: ClaudeRunner) -> None:
         """build_command() CLI path should resolve to an installed binary."""
-        request = make_prompt_request(agent="claude", prompt="test")
+        request = make_prompt_request(cli="claude", prompt="test")
         command = claude_runner.build_command(request)
 
         assert shutil.which(command[0]) is not None, (
@@ -76,7 +76,7 @@ class TestClaudeRunnerEndToEnd:
         self, claude_runner: ClaudeRunner
     ) -> None:
         """run() should return an AgentResponse with non-empty output."""
-        request = make_prompt_request(agent="claude", prompt=PING_PROMPT)
+        request = make_prompt_request(cli="claude", prompt=PING_PROMPT)
         response = await claude_runner.run(request)
 
         assert isinstance(response, AgentResponse)
@@ -85,7 +85,7 @@ class TestClaudeRunnerEndToEnd:
 
     async def test_run_returns_cost_and_timing_metadata(self, claude_runner: ClaudeRunner) -> None:
         """Claude CLI JSON response includes cost_usd and duration_ms in metadata."""
-        request = make_prompt_request(agent="claude", prompt=PING_PROMPT)
+        request = make_prompt_request(cli="claude", prompt=PING_PROMPT)
         response = await claude_runner.run(request)
 
         assert isinstance(response.metadata, dict)
@@ -96,7 +96,7 @@ class TestClaudeRunnerEndToEnd:
     async def test_run_with_model_flag(self, claude_runner: ClaudeRunner) -> None:
         """run() with an explicit model should succeed and return output."""
         request = make_prompt_request(
-            agent="claude", prompt=PING_PROMPT, model="claude-haiku-4-5-20251001"
+            cli="claude", prompt=PING_PROMPT, model="claude-haiku-4-5-20251001"
         )
         response = await claude_runner.run(request)
 
@@ -124,9 +124,7 @@ class TestClaudeRunnerErrorPath:
         """run() with a nonexistent model should either raise SubprocessError or recover."""
         from nexus_mcp.exceptions import SubprocessError
 
-        request = make_prompt_request(
-            agent="claude", prompt="ping", model="nonexistent-model-xyz-99"
-        )
+        request = make_prompt_request(cli="claude", prompt="ping", model="nonexistent-model-xyz-99")
         try:
             response = await claude_runner.run(request)
             # Recovery path: error was caught, metadata records it

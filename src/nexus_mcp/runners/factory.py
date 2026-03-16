@@ -116,15 +116,3 @@ class RunnerFactory:
             return cls._REGISTRY[name]
         except KeyError:
             raise UnsupportedAgentError(name) from None
-
-    @classmethod
-    def list_agents(cls) -> list[str]:
-        """List all supported agent names in sorted order.
-
-        Returns:
-            Sorted list of agent names that can be passed to create().
-
-        Example:
-            RunnerFactory.list_agents()  # → ["claude", "codex", "gemini", "opencode"]
-        """
-        return sorted(cls._REGISTRY)
