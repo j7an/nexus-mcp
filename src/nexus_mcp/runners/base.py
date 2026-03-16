@@ -88,7 +88,7 @@ class AbstractRunner(ABC):
     """
 
     AGENT_NAME: ClassVar[str]
-    _SUPPORTED_MODES: ClassVar[list[ExecutionMode]]
+    _SUPPORTED_MODES: ClassVar[tuple[ExecutionMode, ...]]
     _RETRYABLE_CODES: ClassVar[frozenset[int]] = frozenset({429, 503})
 
     def __init__(self) -> None:

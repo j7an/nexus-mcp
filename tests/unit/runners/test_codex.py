@@ -635,4 +635,4 @@ class TestCodexRunnerIntegration:
 
 class TestCodexRunnerClassConstants:
     def test_supported_modes_class_constant(self):
-        assert CodexRunner._SUPPORTED_MODES == ["default", "yolo"]
+        assert CodexRunner._SUPPORTED_MODES == ("default", "yolo")

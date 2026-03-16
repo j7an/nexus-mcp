@@ -782,4 +782,4 @@ class TestOpenCodeRunnerIntegration:
 
 class TestOpenCodeRunnerClassConstants:
     def test_supported_modes_class_constant(self):
-        assert OpenCodeRunner._SUPPORTED_MODES == ["default"]
+        assert OpenCodeRunner._SUPPORTED_MODES == ("default",)

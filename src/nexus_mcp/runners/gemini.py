@@ -32,7 +32,7 @@ class GeminiRunner(AbstractRunner):
     """
 
     AGENT_NAME = "gemini"
-    _SUPPORTED_MODES: ClassVar[list[ExecutionMode]] = ["default", "yolo"]
+    _SUPPORTED_MODES: ClassVar[tuple[ExecutionMode, ...]] = ("default", "yolo")
 
     def build_command(self, request: PromptRequest) -> list[str]:
         """Build Gemini CLI command from request.

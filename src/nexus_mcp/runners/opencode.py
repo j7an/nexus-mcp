@@ -39,7 +39,7 @@ class OpenCodeRunner(AbstractRunner):
     """
 
     AGENT_NAME = "opencode"
-    _SUPPORTED_MODES: ClassVar[list[ExecutionMode]] = ["default"]
+    _SUPPORTED_MODES: ClassVar[tuple[ExecutionMode, ...]] = ("default",)
 
     def build_command(self, request: PromptRequest) -> list[str]:
         """Build OpenCode CLI command from request.

@@ -995,4 +995,4 @@ class TestGaxiosErrorExtraction:
 
 class TestGeminiRunnerClassConstants:
     def test_supported_modes_class_constant(self):
-        assert GeminiRunner._SUPPORTED_MODES == ["default", "yolo"]
+        assert GeminiRunner._SUPPORTED_MODES == ("default", "yolo")

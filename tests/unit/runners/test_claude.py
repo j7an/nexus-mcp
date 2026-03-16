@@ -979,4 +979,4 @@ class TestClaudeRunnerIntegration:
 
 class TestClaudeRunnerClassConstants:
     def test_supported_modes_class_constant(self):
-        assert ClaudeRunner._SUPPORTED_MODES == ["default", "yolo"]
+        assert ClaudeRunner._SUPPORTED_MODES == ("default", "yolo")

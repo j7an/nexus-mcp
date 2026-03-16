@@ -48,7 +48,7 @@ class ClaudeRunner(AbstractRunner):
     """
 
     AGENT_NAME = "claude"
-    _SUPPORTED_MODES: ClassVar[list[ExecutionMode]] = ["default", "yolo"]
+    _SUPPORTED_MODES: ClassVar[tuple[ExecutionMode, ...]] = ("default", "yolo")
 
     def build_command(self, request: PromptRequest) -> list[str]:
         """Build Claude Code CLI command from request.
