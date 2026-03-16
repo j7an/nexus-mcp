@@ -48,7 +48,7 @@ class TestGeminiRunnerEndToEnd:
         response = await gemini_runner.run(request)
 
         assert isinstance(response, AgentResponse)
-        assert response.agent == "gemini"
+        assert response.cli == "gemini"
         assert len(response.output) > 0
 
     async def test_run_returns_json_parsed_output(self, gemini_runner: GeminiRunner) -> None:

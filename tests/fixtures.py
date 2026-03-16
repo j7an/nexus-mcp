@@ -269,9 +269,9 @@ def make_prompt_request(**overrides: Any) -> PromptRequest:
 
         req = make_prompt_request()                          # defaults
         req = make_prompt_request(execution_mode="yolo")     # override one field
-        req = make_prompt_request(agent="codex", prompt="X") # override multiple
+        req = make_prompt_request(cli="codex", prompt="X") # override multiple
     """
-    defaults: dict[str, Any] = {"agent": "gemini", "prompt": "Hello"}
+    defaults: dict[str, Any] = {"cli": "gemini", "prompt": "Hello"}
     return PromptRequest(**(defaults | overrides))
 
 
@@ -282,10 +282,10 @@ def make_agent_response(**overrides: Any) -> AgentResponse:
 
         resp = make_agent_response()                              # defaults
         resp = make_agent_response(output="custom")               # override one field
-        resp = make_agent_response(agent="codex", output="Done")  # override multiple
+        resp = make_agent_response(cli="codex", output="Done")  # override multiple
     """
     defaults: dict[str, Any] = {
-        "agent": "gemini",
+        "cli": "gemini",
         "output": "test output",
         "raw_output": GEMINI_JSON_RESPONSE,
     }
@@ -298,10 +298,10 @@ def make_agent_task(**overrides: Any) -> AgentTask:
     Usage::
 
         task = make_agent_task()                              # defaults
-        task = make_agent_task(agent="codex")                 # override agent
+        task = make_agent_task(cli="codex")                 # override cli
         task = make_agent_task(prompt="Do X", label="my-task")
     """
-    defaults: dict[str, Any] = {"agent": "gemini", "prompt": "Hello", "execution_mode": "default"}
+    defaults: dict[str, Any] = {"cli": "gemini", "prompt": "Hello", "execution_mode": "default"}
     return AgentTask(**(defaults | overrides))
 
 
@@ -315,7 +315,7 @@ def make_session_preferences(**overrides: Any) -> SessionPreferences:
 
         prefs = make_session_preferences()                         # execution_mode=None, model=None
         prefs = make_session_preferences(execution_mode="yolo")    # override one field
-        prefs = make_session_preferences(execution_mode="sandbox", model="gemini-2.5-flash")
+        prefs = make_session_preferences(execution_mode="yolo", model="gemini-2.5-flash")
     """
     defaults: dict[str, Any] = {"execution_mode": None, "model": None}
     return SessionPreferences(**(defaults | overrides))

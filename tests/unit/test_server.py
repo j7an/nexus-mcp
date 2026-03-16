@@ -11,9 +11,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastmcp.exceptions import ToolError
 
-from nexus_mcp.config import get_tool_timeout
-from nexus_mcp.exceptions import ParseError, SubprocessError, UnsupportedAgentError
-from nexus_mcp.server import _assign_labels, batch_prompt, list_agents, mcp, prompt
+from nexus_mcp.config import RunnerConfig, get_tool_timeout
+from nexus_mcp.exceptions import (
+    CLINotFoundError,
+    ParseError,
+    SubprocessError,
+    UnsupportedAgentError,
+)
+from nexus_mcp.server import _assign_labels, batch_prompt, list_runners, mcp, prompt
 from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY, MultiPromptResponse
 from tests.fixtures import make_agent_response, make_agent_task
 
@@ -47,7 +52,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Agent response")
 
         result = await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt="Test prompt",
         )
 
@@ -65,7 +70,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt="Complex task",
             execution_mode="yolo",
         )
@@ -79,7 +84,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt="Test prompt",
             model="gemini-2.5-flash",
         )
@@ -93,7 +98,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt="Test prompt",
             context={"key": "value"},
         )
@@ -108,7 +113,7 @@ class TestPrompt:
 
         with pytest.raises(ToolError, match="unknown_agent"):
             await prompt(
-                agent="unknown_agent",
+                cli="unknown_agent",
                 prompt="Test prompt",
             )
 
@@ -122,7 +127,7 @@ class TestPrompt:
 
         with pytest.raises(ToolError, match="CLI command failed"):
             await prompt(
-                agent="gemini",
+                cli="gemini",
                 prompt="Test prompt",
             )
 
@@ -132,7 +137,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt="Test prompt",
             max_retries=7,
         )
@@ -146,7 +151,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt="Test prompt",
         )
 
@@ -159,7 +164,7 @@ class TestPrompt:
         _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt="Test prompt",
             ctx=ctx,
         )
@@ -177,7 +182,7 @@ class TestPrompt:
 
         with pytest.raises(ToolError, match=r"\[ParseError\].*Invalid JSON from Gemini CLI"):
             await prompt(
-                agent="gemini",
+                cli="gemini",
                 prompt="Test prompt",
             )
 
@@ -187,7 +192,7 @@ class TestToolTimeoutRegistration:
 
     Timeout is baked in at module import time via get_tool_timeout().
     These tests verify the default (900.0s) is applied to prompt/batch_prompt
-    and that list_agents has no timeout.
+    and that list_runners has no timeout.
     """
 
     async def test_prompt_has_timeout(self):
@@ -200,19 +205,92 @@ class TestToolTimeoutRegistration:
         tool = await mcp.get_tool("batch_prompt")
         assert tool.timeout == get_tool_timeout()
 
-    async def test_list_agents_no_timeout(self):
-        """list_agents tool has no timeout (instant operation)."""
-        tool = await mcp.get_tool("list_agents")
+    async def test_list_runners_no_timeout(self):
+        """list_runners tool has no timeout (instant operation)."""
+        tool = await mcp.get_tool("list_runners")
         assert tool.timeout is None
 
 
-class TestListAgents:
-    """Tests for the list_agents tool function."""
+class TestListRunners:
+    """Tests for the list_runners tool function."""
 
-    def test_list_agents_returns_supported_agents(self):
-        """list_agents returns exactly the supported agent names."""
-        agents = list_agents()
-        assert agents == ["claude", "codex", "gemini", "opencode"]
+    def test_list_runners_returns_all_runners(self):
+        result = list_runners()
+        assert len(result) == 4
+        names = [r.name for r in result]
+        assert names == ["claude", "codex", "gemini", "opencode"]
+
+    def test_list_runners_returns_runner_info_type(self):
+        result = list_runners()
+        from nexus_mcp.types import RunnerInfo
+
+        for r in result:
+            assert isinstance(r, RunnerInfo)
+
+    def test_list_runners_includes_execution_modes(self):
+        result = list_runners()
+        gemini = next(r for r in result if r.name == "gemini")
+        assert gemini.execution_modes == ("default", "yolo")
+        opencode = next(r for r in result if r.name == "opencode")
+        assert opencode.execution_modes == ("default",)
+
+    @patch(
+        "nexus_mcp.server._runner_config",
+        {"gemini": RunnerConfig(provider="google", models=("gemini-2.5-flash",))},
+    )
+    def test_list_runners_with_config(self):
+        result = list_runners()
+        gemini = next(r for r in result if r.name == "gemini")
+        assert gemini.provider == "google"
+        assert gemini.models == ("gemini-2.5-flash",)
+
+    def test_list_runners_without_config(self):
+        result = list_runners()
+        for r in result:
+            assert r.type == "cli"
+
+    @patch("nexus_mcp.server.detect_cli")
+    @patch("nexus_mcp.server._runner_config", {})
+    def test_list_runners_unavailable_cli(self, mock_detect_cli, monkeypatch):
+        """Unavailable CLI sets available=False and reads default_model from env var."""
+        from nexus_mcp.cli_detector import CLIInfo
+
+        mock_detect_cli.return_value = CLIInfo(found=False, path=None, version=None)
+        monkeypatch.setenv("NEXUS_GEMINI_MODEL", "gemini-test-model")
+        result = list_runners()
+        gemini = next(r for r in result if r.name == "gemini")
+        assert gemini.available is False
+        assert gemini.default_model == "gemini-test-model"
+
+    @patch("nexus_mcp.server._runner_config", {})
+    def test_list_runners_without_config_defaults(self):
+        """Without config, provider is None and models is empty for all runners."""
+        result = list_runners()
+        for r in result:
+            assert r.type == "cli"
+            assert r.provider is None
+            assert r.models == ()
+
+    @patch("nexus_mcp.server.RunnerFactory.create")
+    @patch("nexus_mcp.server.detect_cli")
+    @patch("nexus_mcp.server._runner_config", {})
+    def test_list_runners_toctou_cli_disappears(self, mock_detect_cli, mock_create, monkeypatch):
+        """CLI found by detect_cli but disappears before RunnerFactory.create() runs.
+
+        Simulates the TOCTOU race: detect_cli returns found=True, but create()
+        raises CLINotFoundError. Runner should appear as unavailable with model
+        falling back to the environment variable.
+        """
+        from nexus_mcp.cli_detector import CLIInfo
+
+        mock_detect_cli.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
+        mock_create.side_effect = CLINotFoundError("gemini")
+        monkeypatch.setenv("NEXUS_GEMINI_MODEL", "gemini-fallback-model")
+
+        result = list_runners()
+        gemini = next(r for r in result if r.name == "gemini")
+        assert gemini.available is False
+        assert gemini.default_model == "gemini-fallback-model"
 
 
 class TestAssignLabels:
@@ -220,20 +298,20 @@ class TestAssignLabels:
 
     def test_single_task_gets_agent_name(self):
         """A single unlabeled task gets its agent name as label."""
-        tasks = [make_agent_task(agent="gemini")]
+        tasks = [make_agent_task(cli="gemini")]
         result = _assign_labels(tasks)
         assert result[0].label == "gemini"
 
     def test_two_identical_agents_get_suffixes(self):
         """Two tasks with the same agent get 'agent' and 'agent-2'."""
-        tasks = [make_agent_task(agent="gemini"), make_agent_task(agent="gemini")]
+        tasks = [make_agent_task(cli="gemini"), make_agent_task(cli="gemini")]
         result = _assign_labels(tasks)
         assert result[0].label == "gemini"
         assert result[1].label == "gemini-2"
 
     def test_three_identical_agents_get_suffixes(self):
         """Three tasks with the same agent get 'agent', 'agent-2', 'agent-3'."""
-        tasks = [make_agent_task(agent="gemini") for _ in range(3)]
+        tasks = [make_agent_task(cli="gemini") for _ in range(3)]
         result = _assign_labels(tasks)
         assert result[0].label == "gemini"
         assert result[1].label == "gemini-2"
@@ -241,15 +319,15 @@ class TestAssignLabels:
 
     def test_explicit_label_preserved(self):
         """An explicit label is kept as-is, not overwritten."""
-        tasks = [make_agent_task(agent="gemini", label="my-task")]
+        tasks = [make_agent_task(cli="gemini", label="my-task")]
         result = _assign_labels(tasks)
         assert result[0].label == "my-task"
 
     def test_explicit_label_blocks_auto_name(self):
         """If 'gemini' is already an explicit label, auto-assigned gets 'gemini-2'."""
         tasks = [
-            make_agent_task(agent="gemini", label="gemini"),
-            make_agent_task(agent="gemini"),
+            make_agent_task(cli="gemini", label="gemini"),
+            make_agent_task(cli="gemini"),
         ]
         result = _assign_labels(tasks)
         assert result[0].label == "gemini"
@@ -257,14 +335,14 @@ class TestAssignLabels:
 
     def test_mixed_agents_no_suffix(self):
         """Different agents don't get suffixes when there are no collisions."""
-        tasks = [make_agent_task(agent="gemini"), make_agent_task(agent="codex")]
+        tasks = [make_agent_task(cli="gemini"), make_agent_task(cli="codex")]
         result = _assign_labels(tasks)
         assert result[0].label == "gemini"
         assert result[1].label == "codex"
 
     def test_returns_new_list_does_not_mutate(self):
         """_assign_labels() returns a new list; input tasks are unchanged."""
-        tasks = [make_agent_task(agent="gemini")]
+        tasks = [make_agent_task(cli="gemini")]
         assert tasks[0].label is None
         result = _assign_labels(tasks)
         assert tasks[0].label is None  # original unchanged
@@ -374,7 +452,7 @@ class TestBatchPrompt:
         """Unlabeled tasks receive unique auto-assigned labels."""
         _setup_mock_runner(mock_factory)
 
-        tasks = [make_agent_task(agent="gemini"), make_agent_task(agent="gemini")]
+        tasks = [make_agent_task(cli="gemini"), make_agent_task(cli="gemini")]
         result = await batch_prompt(tasks=tasks)
 
         labels = [r.label for r in result.results]
@@ -417,7 +495,7 @@ class TestBatchPrompt:
         """A single task's label is the agent name without any suffix."""
         _setup_mock_runner(mock_factory)
 
-        result = await batch_prompt(tasks=[make_agent_task(agent="gemini")])
+        result = await batch_prompt(tasks=[make_agent_task(cli="gemini")])
 
         assert result.results[0].label == "gemini"
 
@@ -515,7 +593,7 @@ class TestBatchPrompt:
         """Single-task call passes progress=1, total=1, and a formatted message."""
         _setup_mock_runner(mock_factory)
 
-        await batch_prompt(tasks=[make_agent_task(agent="gemini")], ctx=ctx)
+        await batch_prompt(tasks=[make_agent_task(cli="gemini")], ctx=ctx)
 
         ctx.report_progress.assert_awaited_once_with(
             progress=1,

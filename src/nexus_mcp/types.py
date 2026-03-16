@@ -2,7 +2,7 @@ from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
-type ExecutionMode = Literal["default", "sandbox", "yolo"]
+type ExecutionMode = Literal["default", "yolo"]
 
 
 class SessionPreferences(BaseModel):
@@ -19,12 +19,12 @@ MAX_PROMPT_LENGTH = 131072  # 128KB character limit — conservative guard again
 
 
 class PromptRequest(BaseModel):
-    agent: str = Field(..., min_length=1)
+    cli: str = Field(..., min_length=1)
     prompt: str = Field(..., min_length=1, max_length=MAX_PROMPT_LENGTH)
     context: dict[str, Any] = Field(default_factory=dict)
     execution_mode: ExecutionMode = Field(
         default="default",
-        description="Execution mode: 'default' (safe), 'sandbox', or 'yolo'",
+        description="Execution mode: 'default' (safe) or 'yolo'",
     )
     model: str | None = Field(
         default=None,
@@ -56,7 +56,7 @@ class PromptRequest(BaseModel):
 class AgentResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    agent: str
+    cli: str
     output: str
     raw_output: str
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -66,6 +66,18 @@ class AgentResponse(BaseModel):
         metadata = self.metadata.copy()
         metadata.update(updates)
         return self.model_copy(update={"metadata": metadata})
+
+
+class RunnerInfo(BaseModel, frozen=True):
+    """Metadata about a registered runner, returned by list_runners tool."""
+
+    name: str
+    type: Literal["cli", "server"]
+    provider: str | None
+    models: tuple[str, ...]
+    available: bool
+    default_model: str | None
+    execution_modes: tuple[ExecutionMode, ...]
 
 
 class SubprocessResult(BaseModel):
@@ -79,7 +91,7 @@ class SubprocessResult(BaseModel):
 class AgentTask(BaseModel):
     """Per-task input for batch_prompt."""
 
-    agent: str = Field(..., min_length=1)
+    cli: str = Field(..., min_length=1)
     prompt: str = Field(..., min_length=1, max_length=MAX_PROMPT_LENGTH)
     label: str | None = None
     context: dict[str, Any] = Field(default_factory=dict)
@@ -90,7 +102,7 @@ class AgentTask(BaseModel):
     def to_request(self) -> "PromptRequest":
         """Convert this task to a PromptRequest for runner execution."""
         return PromptRequest(
-            agent=self.agent,
+            cli=self.cli,
             prompt=self.prompt,
             context=self.context,
             execution_mode=self.execution_mode or "default",  # safety net: None → "default"

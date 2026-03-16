@@ -2,7 +2,7 @@
 """Tests for GeminiRunner.
 
 Tests verify:
-- Command building: gemini -p <prompt> --output-format json [--model X] [--sandbox/--yolo]
+- Command building: gemini -p <prompt> --output-format json [--model X] [--yolo]
 - Output parsing: {"response": "...", "stats": {...}} → AgentResponse
 - Error handling: invalid JSON, missing fields, subprocess errors
 """
@@ -135,10 +135,9 @@ class TestGeminiRunnerBuildCommandModes:
     @pytest.mark.parametrize(
         ("execution_mode", "expected_flag"),
         [
-            ("sandbox", "--sandbox"),
             ("yolo", "--yolo"),
         ],
-        ids=["sandbox", "yolo"],
+        ids=["yolo"],
     )
     def test_build_command_execution_mode(self, execution_mode, expected_flag):
         """Execution mode adds corresponding CLI flag."""
@@ -202,7 +201,7 @@ class TestGeminiRunnerParseOutput:
 
         response = runner.parse_output(GEMINI_JSON_RESPONSE, stderr="")
 
-        assert response.agent == "gemini"
+        assert response.cli == "gemini"
         assert response.output == "test output"
         assert response.raw_output == GEMINI_JSON_RESPONSE
         assert response.metadata == {}
@@ -213,7 +212,7 @@ class TestGeminiRunnerParseOutput:
 
         response = runner.parse_output(GEMINI_JSON_WITH_STATS, stderr="")
 
-        assert response.agent == "gemini"
+        assert response.cli == "gemini"
         assert response.output == "Hello, world!"
         assert response.raw_output == GEMINI_JSON_WITH_STATS
         assert response.metadata == {"models": {"gemini-2.5-flash": 1}}
@@ -319,7 +318,7 @@ class TestGeminiRunnerNoisyStdout:
 
         response = runner.parse_output(GEMINI_NOISY_STDOUT, stderr="")
 
-        assert response.agent == "gemini"
+        assert response.cli == "gemini"
         assert response.output == "test output"
         assert response.raw_output == GEMINI_NOISY_STDOUT
 
@@ -821,7 +820,7 @@ class TestGeminiRunnerIntegration:
         )
         runner = make_gemini_runner()
         request = make_prompt_request(
-            agent="gemini",
+            cli="gemini",
             prompt="test prompt",
             model="gemini-2.5-flash",
         )
@@ -844,7 +843,7 @@ class TestGeminiRunnerIntegration:
         )
 
         # Assert: Response parsed correctly
-        assert response.agent == "gemini"
+        assert response.cli == "gemini"
         assert response.output == "Hello, world!"
         assert response.metadata["models"]["gemini-2.5-flash"] == 1
 
@@ -992,3 +991,8 @@ class TestGaxiosErrorExtraction:
         primary_message = exc_info.value.args[0]
         assert "Gemini API error" not in primary_message
         assert "CLI command failed" in primary_message
+
+
+class TestGeminiRunnerClassConstants:
+    def test_supported_modes_class_constant(self):
+        assert GeminiRunner._SUPPORTED_MODES == ("default", "yolo")

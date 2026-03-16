@@ -1,7 +1,7 @@
 # tests/integration/test_server_pipeline.py
 """Integration tests for the full MCP server pipeline.
 
-Tests exercise prompt() and list_agents() from server.py using the
+Tests exercise prompt() and list_runners() from server.py using the
 real Gemini CLI. Only Context is mocked for progress assertions — all
 other components are real.
 
@@ -14,18 +14,18 @@ from unittest.mock import AsyncMock
 import pytest
 from fastmcp.exceptions import ToolError
 
-from nexus_mcp.server import list_agents, prompt
+from nexus_mcp.server import list_runners, prompt
 from tests.fixtures import PING_PROMPT
 
 
-class TestServerListAgentsSmokeTest:
-    """Smoke tests for list_agents() that require no CLI."""
+class TestServerListRunnersSmokeTest:
+    """Smoke tests for list_runners() that require no CLI."""
 
-    def test_list_agents_includes_gemini(self) -> None:
-        """list_agents() should always include 'gemini' (no CLI required)."""
-        agents = list_agents()
+    def test_list_runners_includes_gemini(self) -> None:
+        """list_runners() should always include a runner named 'gemini' (no CLI required)."""
+        runners = list_runners()
 
-        assert "gemini" in agents
+        assert any(r.name == "gemini" for r in runners)
 
 
 class TestServerPromptValidation:
@@ -35,7 +35,7 @@ class TestServerPromptValidation:
         """prompt() should raise ToolError for unknown agent names."""
         with pytest.raises(ToolError, match="nonexistent_agent_12345"):
             await prompt(
-                agent="nonexistent_agent_12345",
+                cli="nonexistent_agent_12345",
                 prompt="test",
             )
 
@@ -48,7 +48,7 @@ class TestServerPromptPipeline:
     async def test_prompt_returns_string(self, gemini_cli_available: str) -> None:  # noqa: ARG002
         """prompt() should return a non-empty string from real CLI output."""
         result = await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt=PING_PROMPT,
         )
 
@@ -59,7 +59,7 @@ class TestServerPromptPipeline:
     async def test_prompt_reports_progress(self, gemini_cli_available: str, ctx: AsyncMock) -> None:  # noqa: ARG002
         """prompt() should call ctx.report_progress once with progress=1, total=1."""
         await prompt(
-            agent="gemini",
+            cli="gemini",
             prompt=PING_PROMPT,
             ctx=ctx,
         )

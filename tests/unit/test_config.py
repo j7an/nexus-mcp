@@ -4,8 +4,10 @@ import os
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 
 from nexus_mcp.config import (
+    RunnerConfig,
     get_agent_env,
     get_cli_detection_timeout,
     get_global_output_limit,
@@ -14,6 +16,7 @@ from nexus_mcp.config import (
     get_retry_max_attempts,
     get_retry_max_delay,
     get_tool_timeout,
+    load_runner_config,
 )
 from nexus_mcp.exceptions import ConfigurationError
 
@@ -328,3 +331,100 @@ class TestGetAgentEnv:
         """get_agent_env normalizes agent name to uppercase."""
         model = get_agent_env("gemini", "MODEL")
         assert model == "gemini-2.5-flash"
+
+
+class TestRunnerConfig:
+    def test_defaults(self):
+        cfg = RunnerConfig()
+        assert cfg.type == "cli"
+        assert cfg.provider is None
+        assert cfg.models == ()
+        assert cfg.url is None
+
+    def test_frozen(self):
+        cfg = RunnerConfig()
+        with pytest.raises(ValidationError):
+            cfg.type = "server"
+
+    def test_full_config(self):
+        cfg = RunnerConfig(
+            type="server",
+            provider="google",
+            models=["gemini-2.5-flash"],
+            url="http://localhost:4000",
+        )
+        assert cfg.type == "server"
+        assert cfg.provider == "google"
+        assert cfg.models == ("gemini-2.5-flash",)
+        assert cfg.url == "http://localhost:4000"
+
+
+class TestLoadRunnerConfig:
+    def test_missing_file_returns_empty_dict(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(tmp_path / "nonexistent.toml"))
+        assert load_runner_config() == {}
+
+    def test_valid_toml(self, tmp_path, monkeypatch):
+        toml_file = tmp_path / "nexus-mcp.toml"
+        toml_file.write_text(
+            '[runner.gemini]\nprovider = "google"\nmodels = ["gemini-2.5-flash"]\n'
+        )
+        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
+        result = load_runner_config()
+        assert "gemini" in result
+        assert result["gemini"].provider == "google"
+        assert result["gemini"].models == ("gemini-2.5-flash",)
+        assert result["gemini"].type == "cli"
+
+    def test_invalid_toml_raises_config_error(self, tmp_path, monkeypatch):
+        toml_file = tmp_path / "bad.toml"
+        toml_file.write_text("not valid [[[ toml")
+        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
+        with pytest.raises(ConfigurationError):
+            load_runner_config()
+
+    def test_invalid_field_type_raises_config_error(self, tmp_path, monkeypatch):
+        toml_file = tmp_path / "bad-type.toml"
+        toml_file.write_text("[runner.gemini]\nprovider = 123\n")
+        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
+        with pytest.raises(ConfigurationError):
+            load_runner_config()
+
+    def test_env_var_overrides_cwd(self, tmp_path, monkeypatch):
+        toml_file = tmp_path / "custom.toml"
+        toml_file.write_text('[runner.test]\nprovider = "custom"\n')
+        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
+        result = load_runner_config()
+        assert "test" in result
+        assert result["test"].provider == "custom"
+
+    def test_cwd_fallback(self, tmp_path, monkeypatch):
+        toml_file = tmp_path / "nexus-mcp.toml"
+        toml_file.write_text('[runner.gemini]\nprovider = "google"\n')
+        monkeypatch.delenv("NEXUS_CONFIG_PATH", raising=False)
+        monkeypatch.chdir(tmp_path)
+        result = load_runner_config()
+        assert "gemini" in result
+
+    def test_server_type_config(self, tmp_path, monkeypatch):
+        toml_file = tmp_path / "server.toml"
+        toml_file.write_text(
+            "[runner.opencode]\n"
+            'type = "server"\n'
+            'url = "http://localhost:4000"\n'
+            'provider = "multi"\n'
+        )
+        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
+        result = load_runner_config()
+        assert result["opencode"].type == "server"
+        assert result["opencode"].url == "http://localhost:4000"
+
+    def test_non_table_runner_config_raises_config_error(self, tmp_path, monkeypatch):
+        """Runner section that is a scalar (not a TOML table) raises ConfigurationError."""
+        toml_file = tmp_path / "bad-runner.toml"
+        # TOML: runner.gemini = "string" makes gemini a string, not a table
+        toml_file.write_text('runner.gemini = "not-a-table"\n')
+        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
+        with pytest.raises(ConfigurationError) as exc_info:
+            load_runner_config()
+        assert exc_info.value.config_key == "runner.gemini"

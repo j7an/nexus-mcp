@@ -72,16 +72,6 @@ class TestPromptGeminiPipeline:
         assert "--model" in args
         assert "gemini-2.5-flash" in args
 
-    async def test_sandbox_mode_reaches_subprocess_args(self, mock_subprocess):
-        """execution_mode='sandbox' adds --sandbox but NOT --yolo to subprocess args."""
-        mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
-
-        await prompt("gemini", "test", execution_mode="sandbox")
-
-        args = list(mock_subprocess.call_args.args)
-        assert "--sandbox" in args
-        assert "--yolo" not in args
-
     async def test_yolo_mode_reaches_subprocess_args(self, mock_subprocess):
         """execution_mode='yolo' adds --yolo to subprocess args."""
         mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
@@ -220,19 +210,17 @@ class TestBatchPromptGeminiPipeline:
         assert "gemini-2.0-pro" in all_args
 
     async def test_different_execution_modes_per_task(self, mock_subprocess):
-        """--sandbox and --yolo appear in distinct subprocess calls for different modes."""
+        """--yolo appears in subprocess args for yolo task; default task has no extra flags."""
         mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
         tasks = [
             make_agent_task(prompt="default task"),
-            make_agent_task(prompt="sandbox task", execution_mode="sandbox"),
             make_agent_task(prompt="yolo task", execution_mode="yolo"),
         ]
 
         response = await batch_prompt(tasks=tasks)
 
-        assert response.succeeded == 3
+        assert response.succeeded == 2
         all_args = [arg for call in mock_subprocess.call_args_list for arg in call.args]
-        assert "--sandbox" in all_args
         assert "--yolo" in all_args
 
     async def test_retryable_error_retries_and_succeeds(self, mock_subprocess, fast_retry_sleep):

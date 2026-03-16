@@ -4,7 +4,7 @@
 Exposes three MCP tools:
 - batch_prompt: Send multiple prompts to CLI agents in parallel (primary tool)
 - prompt: Send a single prompt to a CLI agent, routes to batch_prompt
-- list_agents: Return list of supported agent names
+- list_runners: Return metadata for all registered CLI runners
 
 Background task design: both prompt and batch_prompt use @mcp.tool(task=True) so they
 run asynchronously and return task IDs immediately. This prevents MCP timeouts for long
@@ -24,7 +24,9 @@ from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import ValidationError
 
-from nexus_mcp.config import get_tool_timeout
+from nexus_mcp.cli_detector import CLIInfo, detect_cli
+from nexus_mcp.config import RunnerConfig, get_agent_env, get_tool_timeout, load_runner_config
+from nexus_mcp.exceptions import CLINotFoundError
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import (
     DEFAULT_MAX_CONCURRENCY,
@@ -32,6 +34,7 @@ from nexus_mcp.types import (
     AgentTaskResult,
     ExecutionMode,
     MultiPromptResponse,
+    RunnerInfo,
     SessionPreferences,
 )
 
@@ -39,6 +42,7 @@ mcp = FastMCP("nexus-mcp")
 logger = logging.getLogger(__name__)
 
 _PREFERENCES_KEY = "nexus:preferences"
+_runner_config: dict[str, RunnerConfig] = load_runner_config()
 
 
 async def _get_session_preferences(ctx: Context | None) -> SessionPreferences:
@@ -76,7 +80,7 @@ def _next_available_label(base: str, reserved: set[str]) -> str:
     Returns base if available, otherwise base-2, base-3, etc.
 
     Args:
-        base: Preferred label (typically agent name).
+        base: Preferred label (typically cli name).
         reserved: Set of already-taken labels.
 
     Returns:
@@ -95,7 +99,7 @@ def _assign_labels(tasks: list[AgentTask]) -> list[AgentTask]:
 
     Two-pass algorithm:
     1. Reserve all explicit labels
-    2. Auto-assign from agent name with -N suffixes for collisions
+    2. Auto-assign from cli name with -N suffixes for collisions
 
     Args:
         tasks: List of AgentTask objects (may have label=None).
@@ -112,7 +116,7 @@ def _assign_labels(tasks: list[AgentTask]) -> list[AgentTask]:
             result.append(task)
             continue
 
-        label = _next_available_label(task.agent, reserved)
+        label = _next_available_label(task.cli, reserved)
         reserved.add(label)
         result.append(task.model_copy(update={"label": label}))
 
@@ -124,15 +128,15 @@ async def batch_prompt(
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     ctx: Context | None = None,
 ) -> MultiPromptResponse:
-    """Send multiple prompts to CLI agents in parallel (primary tool).
+    """Send multiple prompts to CLI runners in parallel (primary tool).
 
     Fans out tasks server-side with asyncio.gather and a semaphore, enabling
-    true parallel agent execution within a single MCP call. Single-task usage
+    true parallel runner execution within a single MCP call. Single-task usage
     is perfectly valid — use prompt for convenience when sending one task.
 
     Args:
-        tasks: List of AgentTask objects, each with agent, prompt, and optional fields.
-        max_concurrency: Max parallel agent invocations (default: 3).
+        tasks: List of AgentTask objects, each with cli, prompt, and optional fields.
+        max_concurrency: Max parallel runner invocations (default: 3).
         ctx: MCP context (auto-injected by FastMCP). None when called directly in tests.
 
     Returns:
@@ -162,7 +166,7 @@ async def batch_prompt(
         async with semaphore:
             try:
                 request = task.to_request()
-                runner = RunnerFactory.create(task.agent)
+                runner = RunnerFactory.create(task.cli)
                 response = await runner.run(request)
                 return AgentTaskResult(label=task.label, output=response.output)  # type: ignore[arg-type]
             except Exception as e:
@@ -185,7 +189,7 @@ async def batch_prompt(
 
 
 async def prompt(
-    agent: str,
+    cli: str,
     prompt: str,
     context: dict[str, Any] | None = None,
     execution_mode: ExecutionMode | None = None,
@@ -193,22 +197,22 @@ async def prompt(
     max_retries: int | None = None,
     ctx: Context | None = None,
 ) -> str:
-    """Send a prompt to a CLI agent as a background task.
+    """Send a prompt to a CLI runner as a background task.
 
     Returns immediately with a task ID. Client polls for results.
     This prevents timeouts for long operations (YOLO mode: 2-5 minutes).
 
     Args:
-        agent: Agent name (e.g., "gemini")
-        prompt: Prompt text to send to the agent
+        cli: CLI runner name (e.g., "gemini")
+        prompt: Prompt text to send to the runner
         context: Optional context metadata
-        execution_mode: 'default' (safe), 'sandbox', or 'yolo'. None inherits session preference.
+        execution_mode: 'default' (safe) or 'yolo'. None inherits session preference.
         model: Optional model name. None inherits session preference or uses CLI default.
         max_retries: Max retry attempts for transient errors (None uses env default)
         ctx: MCP context (auto-injected by FastMCP). None when called directly in tests.
 
     Returns:
-        Agent's response text
+        Runner's response text
     """
     # Resolve session preferences here (foreground) so concrete values reach the Docket worker.
     prefs = await _get_session_preferences(ctx)
@@ -217,7 +221,7 @@ async def prompt(
     resolved_model = model if model is not None else prefs.model
 
     task = AgentTask(
-        agent=agent,
+        cli=cli,
         prompt=prompt,
         context=context or {},
         execution_mode=resolved_mode,
@@ -232,13 +236,42 @@ async def prompt(
     return task_result.output
 
 
-def list_agents() -> list[str]:
-    """Return list of supported agent names.
+def list_runners() -> list[RunnerInfo]:
+    """Return metadata for all registered CLI runners.
 
     Returns:
-        List of agent names that can be used with prompt or batch_prompt.
+        Sorted list of RunnerInfo with provider, models, availability,
+        default model, and supported execution modes per runner.
     """
-    return RunnerFactory.list_agents()
+    result: list[RunnerInfo] = []
+    for name in RunnerFactory.list_clis():
+        cli_info = detect_cli(name)
+        config = _runner_config.get(name)
+        runner_cls = RunnerFactory.get_runner_class(name)
+
+        if cli_info.found:
+            try:
+                instance = RunnerFactory.create(name)
+                default_model = instance.default_model
+            except CLINotFoundError:
+                logger.warning("CLI '%s' disappeared between detection and creation", name)
+                cli_info = CLIInfo(found=False)
+                default_model = get_agent_env(name, "MODEL")
+        else:
+            default_model = get_agent_env(name, "MODEL")
+
+        result.append(
+            RunnerInfo(
+                name=name,
+                type=config.type if config else "cli",
+                provider=config.provider if config else None,
+                models=config.models if config else (),
+                available=cli_info.found,
+                default_model=default_model,
+                execution_modes=runner_cls._SUPPORTED_MODES,
+            )
+        )
+    return result
 
 
 async def set_preferences(
@@ -257,7 +290,7 @@ async def set_preferences(
         set_preferences(clear_model=True)  # clears model, keeps execution_mode
 
     Args:
-        execution_mode: Default execution mode for this session ('default', 'sandbox', 'yolo').
+        execution_mode: Default execution mode for this session ('default' or 'yolo').
             None retains the current session value (use clear_execution_mode=True to reset).
         model: Default model name for this session (e.g. 'gemini-2.5-flash').
             None retains the current session value (use clear_model=True to reset).
@@ -326,7 +359,7 @@ async def clear_preferences(ctx: Context | None = None) -> str:
 _tool_timeout = get_tool_timeout()
 mcp.tool(task=True, timeout=_tool_timeout)(batch_prompt)
 mcp.tool(task=True, timeout=_tool_timeout)(prompt)
-mcp.tool()(list_agents)
+mcp.tool()(list_runners)
 mcp.tool()(set_preferences)
 mcp.tool()(get_preferences)
 mcp.tool()(clear_preferences)

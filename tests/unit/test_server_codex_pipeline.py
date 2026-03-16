@@ -61,25 +61,14 @@ class TestPromptCodexPipeline:
         assert "--model" in args
         assert "o3" in args
 
-    async def test_sandbox_mode_reaches_subprocess_args(self, mock_subprocess):
-        """execution_mode='sandbox' adds --sandbox workspace-write to subprocess args."""
-        mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE)
-
-        await prompt("codex", "test", execution_mode="sandbox")
-
-        args = list(mock_subprocess.call_args.args)
-        assert "--sandbox" in args
-        assert "workspace-write" in args
-        assert "--yolo" not in args
-
     async def test_yolo_mode_reaches_subprocess_args(self, mock_subprocess):
-        """execution_mode='yolo' adds --yolo to subprocess args."""
+        """execution_mode='yolo' adds --dangerously-bypass-approvals-and-sandbox."""
         mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE)
 
         await prompt("codex", "test", execution_mode="yolo")
 
         args = list(mock_subprocess.call_args.args)
-        assert "--yolo" in args
+        assert "--dangerously-bypass-approvals-and-sandbox" in args
 
     async def test_empty_stdout_raises_tool_error(self, mock_subprocess):
         """Empty stdout (no agent_message events) → ParseError → ToolError."""

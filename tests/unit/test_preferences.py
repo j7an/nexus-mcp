@@ -68,43 +68,43 @@ class TestGetSessionPreferences:
 
 class TestApplyPreferences:
     def test_fills_none_execution_mode_from_prefs(self):
-        task = AgentTask(agent="gemini", prompt="hi", execution_mode=None)
+        task = AgentTask(cli="gemini", prompt="hi", execution_mode=None)
         prefs = make_session_preferences(execution_mode="yolo")
         result = _apply_preferences(task, prefs)
         assert result.execution_mode == "yolo"
 
     def test_fills_none_execution_mode_with_default_when_prefs_none(self):
-        task = AgentTask(agent="gemini", prompt="hi", execution_mode=None)
+        task = AgentTask(cli="gemini", prompt="hi", execution_mode=None)
         prefs = make_session_preferences()  # both None
         result = _apply_preferences(task, prefs)
         assert result.execution_mode == "default"
 
     def test_does_not_override_explicit_execution_mode(self):
-        task = AgentTask(agent="gemini", prompt="hi", execution_mode="sandbox")
-        prefs = make_session_preferences(execution_mode="yolo")
+        task = AgentTask(cli="gemini", prompt="hi", execution_mode="yolo")
+        prefs = make_session_preferences(execution_mode="default")
         result = _apply_preferences(task, prefs)
-        assert result.execution_mode == "sandbox"
+        assert result.execution_mode == "yolo"
 
     def test_fills_none_model_from_prefs(self):
-        task = AgentTask(agent="gemini", prompt="hi", model=None)
+        task = AgentTask(cli="gemini", prompt="hi", model=None)
         prefs = make_session_preferences(model="gemini-2.5-flash")
         result = _apply_preferences(task, prefs)
         assert result.model == "gemini-2.5-flash"
 
     def test_does_not_override_explicit_model(self):
-        task = AgentTask(agent="gemini", prompt="hi", model="gemini-1.5-pro")
+        task = AgentTask(cli="gemini", prompt="hi", model="gemini-1.5-pro")
         prefs = make_session_preferences(model="gemini-2.5-flash")
         result = _apply_preferences(task, prefs)
         assert result.model == "gemini-1.5-pro"
 
     def test_does_not_fill_model_when_prefs_model_none(self):
-        task = AgentTask(agent="gemini", prompt="hi", model=None)
+        task = AgentTask(cli="gemini", prompt="hi", model=None)
         prefs = make_session_preferences()  # model=None
         result = _apply_preferences(task, prefs)
         assert result.model is None
 
     def test_returns_equivalent_task_when_no_updates(self):
-        task = AgentTask(agent="gemini", prompt="hi", execution_mode="default")
+        task = AgentTask(cli="gemini", prompt="hi", execution_mode="default")
         prefs = make_session_preferences()
         result = _apply_preferences(task, prefs)
         assert result == task
@@ -137,9 +137,9 @@ class TestSetPreferences:
 
     async def test_sets_both(self, ctx):
         ctx.get_state.return_value = None
-        await set_preferences(execution_mode="sandbox", model="gemini-2.5-flash", ctx=ctx)
+        await set_preferences(execution_mode="yolo", model="gemini-2.5-flash", ctx=ctx)
         ctx.set_state.assert_awaited_once_with(
-            _PREFS_KEY, {"execution_mode": "sandbox", "model": "gemini-2.5-flash"}
+            _PREFS_KEY, {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
         )
 
     async def test_merges_with_existing_prefs(self, ctx):
@@ -259,21 +259,21 @@ class TestPromptPreferenceFallback:
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
         ctx.get_state.return_value = {"execution_mode": "yolo", "model": None}
 
-        await prompt(agent="gemini", prompt="test", ctx=ctx)
+        await prompt(cli="gemini", prompt="test", ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.execution_mode == "yolo"
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_explicit_mode_overrides_session(self, mock_factory, ctx):
-        """Explicit execution_mode='sandbox' overrides session 'yolo'."""
+        """Explicit execution_mode='default' overrides session 'yolo'."""
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
         ctx.get_state.return_value = {"execution_mode": "yolo", "model": None}
 
-        await prompt(agent="gemini", prompt="test", execution_mode="sandbox", ctx=ctx)
+        await prompt(cli="gemini", prompt="test", execution_mode="default", ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
-        assert call_args.execution_mode == "sandbox"
+        assert call_args.execution_mode == "default"
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_session_model_used_when_no_explicit_model(self, mock_factory, ctx):
@@ -281,7 +281,7 @@ class TestPromptPreferenceFallback:
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
         ctx.get_state.return_value = {"execution_mode": None, "model": "gemini-2.5-flash"}
 
-        await prompt(agent="gemini", prompt="test", ctx=ctx)
+        await prompt(cli="gemini", prompt="test", ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.model == "gemini-2.5-flash"
@@ -292,7 +292,7 @@ class TestPromptPreferenceFallback:
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
         ctx.get_state.return_value = {"execution_mode": None, "model": "gemini-2.5-flash"}
 
-        await prompt(agent="gemini", prompt="test", model="gemini-1.5-pro", ctx=ctx)
+        await prompt(cli="gemini", prompt="test", model="gemini-1.5-pro", ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.model == "gemini-1.5-pro"
@@ -302,7 +302,7 @@ class TestPromptPreferenceFallback:
         """Without session or explicit params, execution_mode='default' and model=None."""
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
 
-        await prompt(agent="gemini", prompt="test")  # ctx=None → no session
+        await prompt(cli="gemini", prompt="test")  # ctx=None → no session
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.execution_mode == "default"
@@ -312,7 +312,7 @@ class TestPromptPreferenceFallback:
     async def test_ctx_none_does_not_crash(self, mock_factory):
         """prompt() with ctx=None falls back to defaults without raising."""
         _setup_mock_runner(mock_factory, output="ok")
-        result = await prompt(agent="gemini", prompt="test", ctx=None)
+        result = await prompt(cli="gemini", prompt="test", ctx=None)
         assert result == "ok"
 
 
@@ -328,7 +328,7 @@ class TestBatchPromptPreferenceFallback:
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
         ctx.get_state.return_value = {"execution_mode": "yolo", "model": None}
 
-        tasks = [AgentTask(agent="gemini", prompt="test", execution_mode=None)]
+        tasks = [AgentTask(cli="gemini", prompt="test", execution_mode=None)]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
@@ -336,15 +336,15 @@ class TestBatchPromptPreferenceFallback:
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_explicit_task_mode_not_overridden(self, mock_factory, ctx):
-        """Task with explicit execution_mode='sandbox' keeps it despite session 'yolo'."""
+        """Task with explicit execution_mode='default' keeps it despite session 'yolo'."""
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
         ctx.get_state.return_value = {"execution_mode": "yolo", "model": None}
 
-        tasks = [AgentTask(agent="gemini", prompt="test", execution_mode="sandbox")]
+        tasks = [AgentTask(cli="gemini", prompt="test", execution_mode="default")]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
-        assert call_args.execution_mode == "sandbox"
+        assert call_args.execution_mode == "default"
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_session_model_applied_to_tasks(self, mock_factory, ctx):
@@ -352,7 +352,7 @@ class TestBatchPromptPreferenceFallback:
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
         ctx.get_state.return_value = {"execution_mode": None, "model": "gemini-2.5-flash"}
 
-        tasks = [AgentTask(agent="gemini", prompt="test")]
+        tasks = [AgentTask(cli="gemini", prompt="test")]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
@@ -363,7 +363,7 @@ class TestBatchPromptPreferenceFallback:
         """Without session, task with execution_mode=None resolves to 'default'."""
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
 
-        tasks = [AgentTask(agent="gemini", prompt="test", execution_mode=None)]
+        tasks = [AgentTask(cli="gemini", prompt="test", execution_mode=None)]
         await batch_prompt(tasks=tasks)  # ctx=None
 
         call_args = mock_runner.run.call_args.args[0]
@@ -383,10 +383,10 @@ class TestBatchPromptPreferenceFallback:
         ctx.get_state.return_value = {"execution_mode": "yolo", "model": None}
 
         tasks = [
-            AgentTask(agent="gemini", prompt="t1", execution_mode=None),
-            AgentTask(agent="gemini", prompt="t2", execution_mode="sandbox"),
+            AgentTask(cli="gemini", prompt="t1", execution_mode=None),
+            AgentTask(cli="gemini", prompt="t2", execution_mode="default"),
         ]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
         assert "yolo" in call_modes
-        assert "sandbox" in call_modes
+        assert "default" in call_modes

@@ -35,7 +35,7 @@ parallel rather than sequentially:
 - **Automatic retries** — exponential backoff with full jitter for transient errors (HTTP 429/503)
 - **Output handling** — JSON-first parsing, brace-depth fallback for noisy stdout, temp-file
   spillover for outputs exceeding 50 KB
-- **Execution modes** — `default` (safe), `sandbox` (restricted), `yolo` (full auto-approve)
+- **Execution modes** — `default` (safe, no auto-approve), `yolo` (full auto-approve)
 - **CLI detection** — auto-detects binary path, version, and JSON output capability at startup
 - **Session preferences** — set defaults for execution mode and model once per session; subsequent calls inherit them without repeating parameters
 - **Tool timeouts** — configurable safety timeout (default 15 min) cancels long-running tool calls to prevent the server from blocking indefinitely
@@ -53,7 +53,7 @@ parallel rather than sequentially:
 Once nexus-mcp is configured in your MCP client, your AI assistant automatically sees its tools.
 The reliable trigger is **explicitly asking for output from an external AI agent** (e.g. Gemini, Codex, Claude Code, OpenCode).
 Generic "do this in parallel" prompts may be handled by the host AI's own capabilities instead.
-Because `agent` is a required parameter, the assistant typically calls `list_agents` first to discover
+Because `cli` is a required parameter, the assistant typically calls `list_runners` first to discover
 what's available, then fans out your request accordingly.
 
 ### Fan out a research question (batch_prompt)
@@ -61,27 +61,27 @@ what's available, then fans out your request accordingly.
 **You say to your AI assistant:**
 > "Get Gemini's perspective on transformer architectures — I want its summary of the Attention Is All You Need paper, its view on the main limitations, and its list of real-world applications beyond NLP."
 
-**Your AI assistant first calls `list_agents` to discover available agents:**
+**Your AI assistant first calls `list_runners` to discover available runners:**
 
 ```json
 {}
 ```
 
-**Response:** `["claude", "codex", "gemini", "opencode"]`
+**Response:** structured metadata for each runner (provider, models, available, execution_modes, default_model)
 
-**Then calls `batch_prompt` with the discovered agent:**
+**Then calls `batch_prompt` with the discovered runner:**
 
 ```json
 {
   "tasks": [
-    { "agent": "gemini", "prompt": "Summarize the key findings of the Attention Is All You Need paper", "label": "summary" },
-    { "agent": "gemini", "prompt": "What are the main limitations of transformer architectures?", "label": "limitations" },
-    { "agent": "gemini", "prompt": "List 3 real-world applications of transformers beyond NLP", "label": "applications" }
+    { "cli": "gemini", "prompt": "Summarize the key findings of the Attention Is All You Need paper", "label": "summary" },
+    { "cli": "gemini", "prompt": "What are the main limitations of transformer architectures?", "label": "limitations" },
+    { "cli": "gemini", "prompt": "List 3 real-world applications of transformers beyond NLP", "label": "applications" }
   ]
 }
 ```
 
-Agent discovery happens once per session; subsequent examples skip the `list_agents` step.
+Runner discovery happens once per session; subsequent examples skip the `list_runners` step.
 
 ### Code review from multiple angles (batch_prompt)
 
@@ -93,9 +93,9 @@ Agent discovery happens once per session; subsequent examples skip the `list_age
 ```json
 {
   "tasks": [
-    { "agent": "gemini", "prompt": "Review this diff for security vulnerabilities:\n\n<paste diff>", "label": "security" },
-    { "agent": "gemini", "prompt": "Review this diff for correctness and logic errors:\n\n<paste diff>", "label": "correctness" },
-    { "agent": "gemini", "prompt": "Review this diff for style and maintainability:\n\n<paste diff>", "label": "style" }
+    { "cli": "gemini", "prompt": "Review this diff for security vulnerabilities:\n\n<paste diff>", "label": "security" },
+    { "cli": "gemini", "prompt": "Review this diff for correctness and logic errors:\n\n<paste diff>", "label": "correctness" },
+    { "cli": "gemini", "prompt": "Review this diff for style and maintainability:\n\n<paste diff>", "label": "style" }
   ]
 }
 ```
@@ -109,7 +109,7 @@ Agent discovery happens once per session; subsequent examples skip the `list_age
 
 ```json
 {
-  "agent": "gemini",
+  "cli": "gemini",
   "prompt": "Explain the difference between TCP and UDP in simple terms",
   "model": "gemini-2.5-flash"
 }
@@ -138,7 +138,7 @@ Preferences set: {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
 
 ```json
 {
-  "agent": "gemini",
+  "cli": "gemini",
   "prompt": "Summarize the latest developments in Rust's async ecosystem"
 }
 ```
@@ -169,11 +169,11 @@ To clear a single preference, use `set_preferences` with the corresponding `clea
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `agent` | Yes | — | Agent name (e.g. `"gemini"`) |
+| `cli` | Yes | — | Runner name (e.g. `"gemini"`) |
 | `prompt` | Yes | — | Prompt text |
-| `label` | No | auto | Display label for results (auto-assigned from agent name if omitted) |
+| `label` | No | auto | Display label for results (auto-assigned from runner name if omitted) |
 | `context` | No | `{}` | Optional context metadata dict |
-| `execution_mode` | No | session pref or `"default"` | `"default"`, `"sandbox"`, or `"yolo"` |
+| `execution_mode` | No | session pref or `"default"` | `"default"` or `"yolo"` |
 | `model` | No | session pref or CLI default | Model name override |
 | `max_retries` | No | env default | Max retry attempts for transient errors |
 
@@ -181,22 +181,22 @@ To clear a single preference, use `set_preferences` with the corresponding `clea
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `agent` | Yes | — | Agent name |
+| `cli` | Yes | — | Runner name |
 | `prompt` | Yes | — | Prompt text |
 | `context` | No | `{}` | Optional context metadata dict |
-| `execution_mode` | No | session pref or `"default"` | `"default"`, `"sandbox"`, or `"yolo"` |
+| `execution_mode` | No | session pref or `"default"` | `"default"` or `"yolo"` |
 | `model` | No | session pref or CLI default | Model name override |
 | `max_retries` | No | env default | Max retry attempts for transient errors |
 
-#### `list_agents`
+#### `list_runners`
 
-No parameters.
+No parameters. Returns a list of `RunnerInfo` objects with fields: `name`, `type`, `provider`, `models`, `available`, `execution_modes`, `default_model`.
 
 #### `set_preferences`
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `execution_mode` | No | — | `"default"`, `"sandbox"`, or `"yolo"` |
+| `execution_mode` | No | — | `"default"` or `"yolo"` |
 | `model` | No | — | Model name (e.g. `"gemini-2.5-flash"`) |
 | `clear_execution_mode` | No | `false` | Clear execution mode (takes precedence if `execution_mode` is also provided) |
 | `clear_model` | No | `false` | Clear model (takes precedence if `model` is also provided) |
@@ -216,9 +216,9 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 
 | Tool | Task? | Description |
 |------|-------|-------------|
-| `batch_prompt` | Yes | Fan out prompts to multiple agents in parallel; returns `MultiPromptResponse` |
-| `prompt` | Yes | Single-agent convenience wrapper; routes to `batch_prompt` |
-| `list_agents` | No | Returns list of supported agent names |
+| `batch_prompt` | Yes | Fan out prompts to multiple runners in parallel; returns `MultiPromptResponse` |
+| `prompt` | Yes | Single-runner convenience wrapper; routes to `batch_prompt` |
+| `list_runners` | No | Returns structured metadata for each runner (provider, models, available, execution_modes, default_model) |
 | `set_preferences` | No | Set or selectively clear session defaults for execution mode and model |
 | `get_preferences` | No | Retrieve current session preferences |
 | `clear_preferences` | No | Reset all session preferences |
@@ -348,6 +348,30 @@ Pattern: `NEXUS_{AGENT}_{KEY}` (agent name uppercased)
 | `NEXUS_GEMINI_MODEL` | Default Gemini model (e.g. `gemini-2.5-flash`) |
 | `NEXUS_OPENCODE_PATH` | Override OpenCode CLI binary path |
 | `NEXUS_OPENCODE_MODEL` | Default OpenCode model |
+
+### Runner Config File (`nexus-mcp.toml`)
+
+An optional TOML file provides provider and model metadata per runner. By default, nexus-mcp looks for `nexus-mcp.toml` in the current working directory. Override the path with `NEXUS_CONFIG_PATH`.
+
+```toml
+[runner.gemini]
+provider = "Google"
+models = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+
+[runner.codex]
+provider = "OpenAI"
+models = ["o4-mini", "o3"]
+
+[runner.claude]
+provider = "Anthropic"
+models = ["claude-sonnet-4-6", "claude-opus-4-5"]
+
+[runner.opencode]
+provider = "OpenCode"
+models = []
+```
+
+All fields are optional. Omitting a runner section uses built-in defaults. The `models` list is surfaced in `list_runners` output so clients can discover available model names without hard-coding them.
 
 ## Development Workflow
 

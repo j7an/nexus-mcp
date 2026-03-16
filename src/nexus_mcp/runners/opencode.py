@@ -21,11 +21,12 @@ Output format (NDJSON events, verified against OpenCode CLI v1.2.20):
 """
 
 import json
+from typing import ClassVar
 
 from nexus_mcp.exceptions import ParseError
 from nexus_mcp.parser import extract_last_json_object
 from nexus_mcp.runners.base import AbstractRunner
-from nexus_mcp.types import AgentResponse, PromptRequest
+from nexus_mcp.types import AgentResponse, ExecutionMode, PromptRequest
 
 _JSON_OUTPUT_KEYS = ("message", "content", "text", "response")
 
@@ -38,6 +39,7 @@ class OpenCodeRunner(AbstractRunner):
     """
 
     AGENT_NAME = "opencode"
+    _SUPPORTED_MODES: ClassVar[tuple[ExecutionMode, ...]] = ("default",)
 
     def build_command(self, request: PromptRequest) -> list[str]:
         """Build OpenCode CLI command from request.
@@ -73,7 +75,7 @@ class OpenCodeRunner(AbstractRunner):
             stderr: Standard error output (not used for parsing).
 
         Returns:
-            AgentResponse with agent="opencode", parsed output, raw_output=stdout.
+            AgentResponse with cli="opencode", parsed output, raw_output=stdout.
 
         Raises:
             ParseError: If neither parse path yields output.
@@ -83,7 +85,7 @@ class OpenCodeRunner(AbstractRunner):
         ndjson_output = self._parse_opencode_ndjson(stdout)
         if ndjson_output is not None:
             return AgentResponse(
-                agent=self.AGENT_NAME,
+                cli=self.AGENT_NAME,
                 output=ndjson_output.strip(),
                 raw_output=stdout,
             )
@@ -92,7 +94,7 @@ class OpenCodeRunner(AbstractRunner):
         json_output = self._parse_json_object(stdout)
         if json_output is not None:
             return AgentResponse(
-                agent=self.AGENT_NAME,
+                cli=self.AGENT_NAME,
                 output=json_output.strip(),
                 raw_output=stdout,
             )

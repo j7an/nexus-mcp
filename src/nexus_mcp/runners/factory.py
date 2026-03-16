@@ -23,9 +23,9 @@ from nexus_mcp.runners.opencode import OpenCodeRunner
 class RunnerFactory:
     """Factory for creating CLI agent runners.
 
-    Creates appropriate runner instances based on agent name.
+    Creates appropriate runner instances based on CLI name.
     Uses a registry dict for O(1) lookup and a single source of truth for
-    supported agents (add to _REGISTRY to support new CLIs).
+    supported CLIs (add to _REGISTRY to support new CLIs).
 
     Runner instances are cached after first construction so that repeated
     create() calls do not re-invoke blocking CLI detection in __init__.
@@ -42,33 +42,33 @@ class RunnerFactory:
     _instances: ClassVar[dict[str, AbstractRunner]] = {}
 
     @classmethod
-    def create(cls, agent: str) -> AbstractRunner:
-        """Return cached runner instance for the specified agent.
+    def create(cls, name: str) -> AbstractRunner:
+        """Return cached runner instance for the specified CLI.
 
         Constructs and caches the runner on first call; subsequent calls with
-        the same agent name return the same object. This avoids repeated
+        the same CLI name return the same object. This avoids repeated
         blocking subprocess calls in runner __init__ methods.
 
         Args:
-            agent: Agent name (case-sensitive: "claude", "codex", "gemini", "opencode").
+            name: CLI runner name (case-sensitive: "claude", "codex", "gemini", "opencode").
 
         Returns:
-            AbstractRunner instance for the agent.
+            AbstractRunner instance for the name.
 
         Raises:
-            UnsupportedAgentError: If agent name is not recognized.
+            UnsupportedAgentError: If name is not recognized.
 
         Example:
             runner = RunnerFactory.create("gemini")  # → GeminiRunner instance
         """
-        cached = cls._instances.get(agent)
+        cached = cls._instances.get(name)
         if cached is not None:
             return cached
-        runner_class = cls._REGISTRY.get(agent)
+        runner_class = cls._REGISTRY.get(name)
         if runner_class is None:
-            raise UnsupportedAgentError(agent)
+            raise UnsupportedAgentError(name)
         instance = runner_class()
-        cls._instances[agent] = instance
+        cls._instances[name] = instance
         return instance
 
     @classmethod
@@ -85,13 +85,34 @@ class RunnerFactory:
         cls._instances.clear()
 
     @classmethod
-    def list_agents(cls) -> list[str]:
-        """List all supported agent names in sorted order.
+    def list_clis(cls) -> list[str]:
+        """Return sorted list of registered CLI runner names.
 
         Returns:
-            Sorted list of agent names that can be passed to create().
+            Sorted list of CLI names that can be passed to create() or get_runner_class().
 
         Example:
-            RunnerFactory.list_agents()  # → ["claude", "codex", "gemini", "opencode"]
+            RunnerFactory.list_clis()  # → ["claude", "codex", "gemini", "opencode"]
         """
         return sorted(cls._REGISTRY)
+
+    @classmethod
+    def get_runner_class(cls, name: str) -> type[AbstractRunner]:
+        """Return the runner class for the given name without instantiation.
+
+        Args:
+            name: CLI name (case-sensitive).
+
+        Returns:
+            The AbstractRunner subclass registered under that name.
+
+        Raises:
+            UnsupportedAgentError: If name is not in the registry.
+
+        Example:
+            cls = RunnerFactory.get_runner_class("gemini")  # → GeminiRunner
+        """
+        try:
+            return cls._REGISTRY[name]
+        except KeyError:
+            raise UnsupportedAgentError(name) from None

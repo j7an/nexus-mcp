@@ -5,7 +5,7 @@ Executes Google's Gemini CLI (https://github.com/google/generative-ai-python)
 with JSON output format.
 
 Command format:
-    gemini -p "<prompt>" --output-format json [--model <model>] [--sandbox|--yolo]
+    gemini -p "<prompt>" --output-format json [--model <model>] [--yolo]
 
 Expected JSON response:
     {"response": "...", "stats": {...}}  # stats field is optional
@@ -13,12 +13,12 @@ Expected JSON response:
 
 import contextlib
 import json
-from typing import Any
+from typing import Any, ClassVar
 
 from nexus_mcp.exceptions import ParseError
 from nexus_mcp.parser import extract_last_json_array, extract_last_json_object
 from nexus_mcp.runners.base import AbstractRunner
-from nexus_mcp.types import AgentResponse, PromptRequest
+from nexus_mcp.types import AgentResponse, ExecutionMode, PromptRequest
 
 
 class GeminiRunner(AbstractRunner):
@@ -32,6 +32,7 @@ class GeminiRunner(AbstractRunner):
     """
 
     AGENT_NAME = "gemini"
+    _SUPPORTED_MODES: ClassVar[tuple[ExecutionMode, ...]] = ("default", "yolo")
 
     def build_command(self, request: PromptRequest) -> list[str]:
         """Build Gemini CLI command from request.
@@ -46,8 +47,7 @@ class GeminiRunner(AbstractRunner):
             1. Base: {cli_path} -p <prompt> (with file_refs appended if provided)
             2. Add --output-format json if capabilities.supports_json
             3. Add --model <model> (request.model > env default > CLI default)
-            4. Add --sandbox if execution_mode == "sandbox"
-            5. Add --yolo if execution_mode == "yolo"
+            4. Add --yolo if execution_mode == "yolo"
         """
         command = [self.cli_path, "-p", self._build_prompt(request)]
 
@@ -62,8 +62,6 @@ class GeminiRunner(AbstractRunner):
 
         # Add execution mode flag
         match request.execution_mode:
-            case "sandbox":
-                command.append("--sandbox")
             case "yolo":
                 command.append("--yolo")
             case _:
@@ -132,7 +130,7 @@ class GeminiRunner(AbstractRunner):
         metadata = data.get("stats") or {}
 
         return AgentResponse(
-            agent=self.AGENT_NAME,
+            cli=self.AGENT_NAME,
             output=response_text.strip(),
             raw_output=stdout,
             metadata=metadata,

@@ -50,20 +50,20 @@ class TestToolDiscovery:
         assert names == {
             "prompt",
             "batch_prompt",
-            "list_agents",
+            "list_runners",
             "set_preferences",
             "get_preferences",
             "clear_preferences",
         }
 
     async def test_prompt_schema_has_required_params(self, mcp_client):
-        """prompt tool schema requires 'agent' and 'prompt' parameters."""
+        """prompt tool schema requires 'cli' and 'prompt' parameters."""
         tools = await mcp_client.list_tools()
         prompt_tool = next(t for t in tools if t.name == "prompt")
         schema = prompt_tool.inputSchema
         assert schema is not None
         required = schema.get("required", [])
-        assert "agent" in required
+        assert "cli" in required
         assert "prompt" in required
 
     async def test_batch_prompt_schema_has_tasks_array(self, mcp_client):
@@ -83,19 +83,30 @@ class TestToolDiscovery:
 
 
 # ---------------------------------------------------------------------------
-# Class 2: list_agents protocol
+# Class 2: list_runners protocol
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.e2e
-class TestListAgentsProtocol:
-    """Verify list_agents tool via the MCP protocol."""
+class TestListRunnersProtocol:
+    """Verify list_runners tool via the MCP protocol."""
 
-    async def test_list_agents_returns_all_agents(self, mcp_client):
-        """call_tool('list_agents') returns all supported agents through JSON-RPC."""
-        result = await mcp_client.call_tool("list_agents", {})
+    async def test_list_runners_returns_all_runners(self, mcp_client):
+        """call_tool('list_runners') returns all supported runners through JSON-RPC."""
+        result = await mcp_client.call_tool("list_runners", {})
         assert result.is_error is False
-        assert set(result.data) == {"claude", "codex", "gemini", "opencode"}
+        names = {r.name for r in result.data}
+        assert names == {"claude", "codex", "gemini", "opencode"}
+
+    async def test_list_runners_field_values_survive_json_rpc(self, mcp_client):
+        """RunnerInfo fields survive JSON-RPC round-trip with correct types."""
+        result = await mcp_client.call_tool("list_runners", {})
+        runners = {r.name: r for r in result.data}
+        gemini = runners["gemini"]
+        assert gemini.type == "cli"
+        assert isinstance(gemini.available, bool)
+        assert isinstance(gemini.execution_modes, (list, tuple))
+        assert "default" in gemini.execution_modes
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +126,7 @@ class TestPromptProtocol:
         """Full success path: subprocess returns valid JSON → call_tool returns output text."""
         mock_subprocess.return_value = create_mock_process(stdout=gemini_json("hello from e2e"))
 
-        result = await mcp_client.call_tool("prompt", {"agent": "gemini", "prompt": "say hello"})
+        result = await mcp_client.call_tool("prompt", {"cli": "gemini", "prompt": "say hello"})
 
         assert result.is_error is False
         assert result.data == "hello from e2e"
@@ -125,7 +136,7 @@ class TestPromptProtocol:
         mock_subprocess.return_value = create_mock_process(stdout=gemini_json("task result"))
 
         task = await mcp_client.call_tool(
-            "prompt", {"agent": "gemini", "prompt": "background task"}, task=True
+            "prompt", {"cli": "gemini", "prompt": "background task"}, task=True
         )
         result = await task
 
@@ -138,7 +149,7 @@ class TestPromptProtocol:
 
         await mcp_client.call_tool(
             "prompt",
-            {"agent": "gemini", "prompt": "test", "model": "gemini-2.5-flash"},
+            {"cli": "gemini", "prompt": "test", "model": "gemini-2.5-flash"},
         )
 
         args = list(mock_subprocess.call_args.args)
@@ -151,7 +162,7 @@ class TestPromptProtocol:
 
         await mcp_client.call_tool(
             "prompt",
-            {"agent": "gemini", "prompt": "test", "execution_mode": "yolo"},
+            {"cli": "gemini", "prompt": "test", "execution_mode": "yolo"},
         )
 
         args = list(mock_subprocess.call_args.args)
@@ -161,7 +172,7 @@ class TestPromptProtocol:
         """Node.js warnings before JSON are stripped correctly through the full protocol."""
         mock_subprocess.return_value = create_mock_process(stdout=GEMINI_NOISY_STDOUT, returncode=0)
 
-        result = await mcp_client.call_tool("prompt", {"agent": "gemini", "prompt": "noisy test"})
+        result = await mcp_client.call_tool("prompt", {"cli": "gemini", "prompt": "noisy test"})
 
         assert result.is_error is False
         assert result.data == "test output"
@@ -192,7 +203,7 @@ class TestPromptProtocol:
 
         result = await mcp_client.call_tool(
             "prompt",
-            {"agent": "gemini", "prompt": "test", "max_retries": 2},
+            {"cli": "gemini", "prompt": "test", "max_retries": 2},
         )
 
         assert result.is_error is False
@@ -202,7 +213,7 @@ class TestPromptProtocol:
     async def test_opencode_success_returns_parsed_ndjson(self, mock_subprocess, mcp_client):
         """Full success path for OpenCode: subprocess returns NDJSON → parsed output text."""
         mock_subprocess.return_value = create_mock_process(stdout=OPENCODE_NDJSON_RESPONSE)
-        result = await mcp_client.call_tool("prompt", {"agent": "opencode", "prompt": "say hello"})
+        result = await mcp_client.call_tool("prompt", {"cli": "opencode", "prompt": "say hello"})
         assert result.is_error is False
         assert result.data == "test output"
 
@@ -213,7 +224,7 @@ class TestPromptProtocol:
         result = await mcp_client.call_tool(
             "prompt",
             {
-                "agent": "gemini",
+                "cli": "gemini",
                 "prompt": "test",
                 "context": {"session_id": "abc-123", "metadata": {"nested": True}},
             },
@@ -240,8 +251,8 @@ class TestBatchPromptProtocol:
             "batch_prompt",
             {
                 "tasks": [
-                    {"agent": "gemini", "prompt": "task 1"},
-                    {"agent": "gemini", "prompt": "task 2"},
+                    {"cli": "gemini", "prompt": "task 1"},
+                    {"cli": "gemini", "prompt": "task 2"},
                 ]
             },
         )
@@ -265,8 +276,8 @@ class TestBatchPromptProtocol:
             "batch_prompt",
             {
                 "tasks": [
-                    {"agent": "gemini", "prompt": "please succeed"},
-                    {"agent": "gemini", "prompt": "will fail"},
+                    {"cli": "gemini", "prompt": "please succeed"},
+                    {"cli": "gemini", "prompt": "will fail"},
                 ]
             },
         )
@@ -285,8 +296,8 @@ class TestBatchPromptProtocol:
             "batch_prompt",
             {
                 "tasks": [
-                    {"agent": "gemini", "prompt": "first"},
-                    {"agent": "gemini", "prompt": "second"},
+                    {"cli": "gemini", "prompt": "first"},
+                    {"cli": "gemini", "prompt": "second"},
                 ]
             },
         )
@@ -303,8 +314,8 @@ class TestBatchPromptProtocol:
             "batch_prompt",
             {
                 "tasks": [
-                    {"agent": "gemini", "prompt": "first", "label": "my-task-a"},
-                    {"agent": "gemini", "prompt": "second", "label": "my-task-b"},
+                    {"cli": "gemini", "prompt": "first", "label": "my-task-a"},
+                    {"cli": "gemini", "prompt": "second", "label": "my-task-b"},
                 ]
             },
         )
@@ -318,7 +329,7 @@ class TestBatchPromptProtocol:
 
         task = await mcp_client.call_tool(
             "batch_prompt",
-            {"tasks": [{"agent": "gemini", "prompt": "docket test"}]},
+            {"tasks": [{"cli": "gemini", "prompt": "docket test"}]},
             task=True,
         )
         result = await task
@@ -334,8 +345,8 @@ class TestBatchPromptProtocol:
             "batch_prompt",
             {
                 "tasks": [
-                    {"agent": "gemini", "prompt": "task 1"},
-                    {"agent": "gemini", "prompt": "task 2"},
+                    {"cli": "gemini", "prompt": "task 1"},
+                    {"cli": "gemini", "prompt": "task 2"},
                 ],
                 "max_concurrency": 1,
             },
@@ -381,7 +392,7 @@ class TestToolTimeout:
         monkeypatch.setattr(tool, "timeout", 0.5)
         mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"), delay=5.0)
         with pytest.raises(ToolError, match="timed out after 0\\.5s"):
-            await mcp_client.call_tool("prompt", {"agent": "gemini", "prompt": "test"})
+            await mcp_client.call_tool("prompt", {"cli": "gemini", "prompt": "test"})
 
 
 # ---------------------------------------------------------------------------
@@ -396,17 +407,17 @@ class TestErrorHandlingProtocol:
     async def test_unknown_agent_raises_tool_error(self, mcp_client):
         """Unknown agent name → UnsupportedAgentError → ToolError through protocol."""
         with pytest.raises(ToolError, match="UnsupportedAgentError"):
-            await mcp_client.call_tool("prompt", {"agent": "unknown_agent", "prompt": "test"})
+            await mcp_client.call_tool("prompt", {"cli": "unknown_agent", "prompt": "test"})
 
     async def test_parse_error_raises_tool_error(self, mcp_client, mock_subprocess):
         """Invalid JSON stdout → ParseError → ToolError with [ParseError] prefix."""
         mock_subprocess.return_value = create_mock_process(stdout="not valid json", returncode=0)
 
         with pytest.raises(ToolError, match=r"\[ParseError\]"):
-            await mcp_client.call_tool("prompt", {"agent": "gemini", "prompt": "test"})
+            await mcp_client.call_tool("prompt", {"cli": "gemini", "prompt": "test"})
 
-    async def test_missing_agent_param_rejected_by_schema(self, mcp_client):
-        """Missing required 'agent' param is rejected at the MCP protocol/schema level."""
+    async def test_missing_cli_param_rejected_by_schema(self, mcp_client):
+        """Missing required 'cli' param is rejected at the MCP protocol/schema level."""
         with pytest.raises(ToolError):
             await mcp_client.call_tool("prompt", {"prompt": "test"})
 
@@ -418,7 +429,7 @@ class TestErrorHandlingProtocol:
         with pytest.raises(ToolError, match="SubprocessError"):
             await mcp_client.call_tool(
                 "prompt",
-                {"agent": "gemini", "prompt": "test", "max_retries": 3},
+                {"cli": "gemini", "prompt": "test", "max_retries": 3},
             )
 
         assert mock_subprocess.call_count == 1

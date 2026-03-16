@@ -26,20 +26,16 @@ Expected JSON response (array or single object):
       }
     ]
 
-Note: Claude Code has no sandbox concept. execution_mode="sandbox" maps to default
-(no extra flags), maintaining the safe-by-default principle.
+Note: Claude Code has no sandbox concept. Only "default" and "yolo" modes are supported.
 """
 
 import json
-import logging
-from typing import Any
+from typing import Any, ClassVar
 
 from nexus_mcp.exceptions import ParseError
 from nexus_mcp.parser import extract_last_json_list, extract_last_json_object
 from nexus_mcp.runners.base import AbstractRunner
-from nexus_mcp.types import AgentResponse, PromptRequest
-
-logger = logging.getLogger(__name__)
+from nexus_mcp.types import AgentResponse, ExecutionMode, PromptRequest
 
 
 class ClaudeRunner(AbstractRunner):
@@ -49,12 +45,10 @@ class ClaudeRunner(AbstractRunner):
         claude -p <prompt> --output-format json [options]
 
     Parses JSON array responses, extracting text from the result element.
-
-    Note: Claude Code has no sandbox concept. execution_mode="sandbox" maps
-    to default (no extra flags), matching the safe-by-default principle.
     """
 
     AGENT_NAME = "claude"
+    _SUPPORTED_MODES: ClassVar[tuple[ExecutionMode, ...]] = ("default", "yolo")
 
     def build_command(self, request: PromptRequest) -> list[str]:
         """Build Claude Code CLI command from request.
@@ -69,7 +63,6 @@ class ClaudeRunner(AbstractRunner):
             1. Base: {cli_path} -p <prompt> --output-format json
             2. Add --model <model> (request.model > env default > CLI default)
             3. Add --dangerously-skip-permissions if execution_mode == "yolo"
-            4. sandbox maps to default (no extra flags)
         """
         command = [self.cli_path, "-p", self._build_prompt(request), "--output-format", "json"]
 
@@ -78,8 +71,6 @@ class ClaudeRunner(AbstractRunner):
             command.extend(["--model", model])
 
         match request.execution_mode:
-            case "sandbox":
-                logger.debug("Claude Code has no sandbox mode; using default (safe) mode")
             case "yolo":
                 command.append("--dangerously-skip-permissions")
             case _:
@@ -135,7 +126,7 @@ class ClaudeRunner(AbstractRunner):
             raise ParseError("No result or assistant text in Claude CLI output", raw_output=stdout)
 
         return AgentResponse(
-            agent=self.AGENT_NAME,
+            cli=self.AGENT_NAME,
             output=result_text.strip(),
             raw_output=stdout,
             metadata=metadata,

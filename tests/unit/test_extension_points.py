@@ -76,7 +76,7 @@ class TestChunkExtensionPoint:
                 return ["echo"]
 
             def parse_output(self, stdout: str, stderr: str) -> AgentResponse:
-                return AgentResponse(agent="test", output=stdout, raw_output=stdout)
+                return AgentResponse(cli="test", output=stdout, raw_output=stdout)
 
             async def run(self, request):
                 return await super().run(request)
@@ -91,7 +91,7 @@ class TestFormatExtensionPoint:
     def test_agent_response_is_serializable(self):
         """Formatter needs structured response to transform."""
         response = AgentResponse(
-            agent="gemini",
+            cli="gemini",
             output="test",
             raw_output='{"response": "test"}',
             metadata={"cost": 0.01},
