@@ -128,15 +128,15 @@ async def batch_prompt(
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     ctx: Context | None = None,
 ) -> MultiPromptResponse:
-    """Send multiple prompts to CLI agents in parallel (primary tool).
+    """Send multiple prompts to CLI runners in parallel (primary tool).
 
     Fans out tasks server-side with asyncio.gather and a semaphore, enabling
-    true parallel agent execution within a single MCP call. Single-task usage
+    true parallel runner execution within a single MCP call. Single-task usage
     is perfectly valid — use prompt for convenience when sending one task.
 
     Args:
         tasks: List of AgentTask objects, each with cli, prompt, and optional fields.
-        max_concurrency: Max parallel agent invocations (default: 3).
+        max_concurrency: Max parallel runner invocations (default: 3).
         ctx: MCP context (auto-injected by FastMCP). None when called directly in tests.
 
     Returns:
@@ -197,14 +197,14 @@ async def prompt(
     max_retries: int | None = None,
     ctx: Context | None = None,
 ) -> str:
-    """Send a prompt to a CLI agent as a background task.
+    """Send a prompt to a CLI runner as a background task.
 
     Returns immediately with a task ID. Client polls for results.
     This prevents timeouts for long operations (YOLO mode: 2-5 minutes).
 
     Args:
-        cli: CLI agent name (e.g., "gemini")
-        prompt: Prompt text to send to the agent
+        cli: CLI runner name (e.g., "gemini")
+        prompt: Prompt text to send to the runner
         context: Optional context metadata
         execution_mode: 'default' (safe) or 'yolo'. None inherits session preference.
         model: Optional model name. None inherits session preference or uses CLI default.
@@ -212,7 +212,7 @@ async def prompt(
         ctx: MCP context (auto-injected by FastMCP). None when called directly in tests.
 
     Returns:
-        Agent's response text
+        Runner's response text
     """
     # Resolve session preferences here (foreground) so concrete values reach the Docket worker.
     prefs = await _get_session_preferences(ctx)

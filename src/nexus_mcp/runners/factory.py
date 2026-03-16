@@ -42,7 +42,7 @@ class RunnerFactory:
     _instances: ClassVar[dict[str, AbstractRunner]] = {}
 
     @classmethod
-    def create(cls, agent: str) -> AbstractRunner:
+    def create(cls, name: str) -> AbstractRunner:
         """Return cached runner instance for the specified CLI.
 
         Constructs and caches the runner on first call; subsequent calls with
@@ -50,25 +50,25 @@ class RunnerFactory:
         blocking subprocess calls in runner __init__ methods.
 
         Args:
-            agent: CLI runner name (case-sensitive: "claude", "codex", "gemini", "opencode").
+            name: CLI runner name (case-sensitive: "claude", "codex", "gemini", "opencode").
 
         Returns:
-            AbstractRunner instance for the agent.
+            AbstractRunner instance for the name.
 
         Raises:
-            UnsupportedAgentError: If agent name is not recognized.
+            UnsupportedAgentError: If name is not recognized.
 
         Example:
             runner = RunnerFactory.create("gemini")  # → GeminiRunner instance
         """
-        cached = cls._instances.get(agent)
+        cached = cls._instances.get(name)
         if cached is not None:
             return cached
-        runner_class = cls._REGISTRY.get(agent)
+        runner_class = cls._REGISTRY.get(name)
         if runner_class is None:
-            raise UnsupportedAgentError(agent)
+            raise UnsupportedAgentError(name)
         instance = runner_class()
-        cls._instances[agent] = instance
+        cls._instances[name] = instance
         return instance
 
     @classmethod

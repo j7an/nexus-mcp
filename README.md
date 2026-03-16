@@ -190,7 +190,7 @@ To clear a single preference, use `set_preferences` with the corresponding `clea
 
 #### `list_runners`
 
-No parameters. Returns a list of `RunnerInfo` objects with fields: `name`, `provider`, `models`, `available`, `execution_modes`, `default_model`.
+No parameters. Returns a list of `RunnerInfo` objects with fields: `name`, `type`, `provider`, `models`, `available`, `execution_modes`, `default_model`.
 
 #### `set_preferences`
 
@@ -354,19 +354,19 @@ Pattern: `NEXUS_{AGENT}_{KEY}` (agent name uppercased)
 An optional TOML file provides provider and model metadata per runner. By default, nexus-mcp looks for `nexus-mcp.toml` in the current working directory. Override the path with `NEXUS_CONFIG_PATH`.
 
 ```toml
-[runners.gemini]
+[runner.gemini]
 provider = "Google"
 models = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
 
-[runners.codex]
+[runner.codex]
 provider = "OpenAI"
 models = ["o4-mini", "o3"]
 
-[runners.claude]
+[runner.claude]
 provider = "Anthropic"
 models = ["claude-sonnet-4-6", "claude-opus-4-5"]
 
-[runners.opencode]
+[runner.opencode]
 provider = "OpenCode"
 models = []
 ```
