@@ -68,6 +68,18 @@ class AgentResponse(BaseModel):
         return self.model_copy(update={"metadata": metadata})
 
 
+class RunnerInfo(BaseModel, frozen=True):
+    """Metadata about a registered runner, returned by list_runners tool."""
+
+    name: str
+    type: str
+    provider: str | None
+    models: list[str]
+    available: bool
+    default_model: str | None
+    execution_modes: list[ExecutionMode]
+
+
 class SubprocessResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 

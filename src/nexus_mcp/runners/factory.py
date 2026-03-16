@@ -85,6 +85,39 @@ class RunnerFactory:
         cls._instances.clear()
 
     @classmethod
+    def list_clis(cls) -> list[str]:
+        """Return sorted list of registered runner names.
+
+        Returns:
+            Sorted list of CLI names that can be passed to create() or get_runner_class().
+
+        Example:
+            RunnerFactory.list_clis()  # → ["claude", "codex", "gemini", "opencode"]
+        """
+        return sorted(cls._REGISTRY)
+
+    @classmethod
+    def get_runner_class(cls, name: str) -> type[AbstractRunner]:
+        """Return the runner class for the given name without instantiation.
+
+        Args:
+            name: Agent name (case-sensitive).
+
+        Returns:
+            The AbstractRunner subclass registered under that name.
+
+        Raises:
+            UnsupportedAgentError: If name is not in the registry.
+
+        Example:
+            cls = RunnerFactory.get_runner_class("gemini")  # → GeminiRunner
+        """
+        try:
+            return cls._REGISTRY[name]
+        except KeyError:
+            raise UnsupportedAgentError(name) from None
+
+    @classmethod
     def list_agents(cls) -> list[str]:
         """List all supported agent names in sorted order.
 

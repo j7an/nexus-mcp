@@ -419,3 +419,53 @@ class TestSessionPreferences:
         prefs = SessionPreferences(execution_mode="default")
         with pytest.raises(ValidationError):
             prefs.execution_mode = "yolo"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# RunnerInfo tests
+# ---------------------------------------------------------------------------
+
+from nexus_mcp.types import RunnerInfo  # noqa: E402
+
+
+class TestRunnerInfo:
+    def test_runner_info_structure(self):
+        info = RunnerInfo(
+            name="gemini",
+            type="cli",
+            provider="google",
+            models=["gemini-2.5-flash"],
+            available=True,
+            default_model="gemini-2.5-flash",
+            execution_modes=["default", "yolo"],
+        )
+        assert info.name == "gemini"
+        assert info.type == "cli"
+        assert info.provider == "google"
+        assert info.available is True
+
+    def test_runner_info_frozen(self):
+        info = RunnerInfo(
+            name="gemini",
+            type="cli",
+            provider=None,
+            models=[],
+            available=False,
+            default_model=None,
+            execution_modes=["default"],
+        )
+        with pytest.raises(ValidationError):
+            info.name = "other"  # type: ignore[misc]
+
+    def test_runner_info_nullable_fields(self):
+        info = RunnerInfo(
+            name="test",
+            type="cli",
+            provider=None,
+            models=[],
+            available=False,
+            default_model=None,
+            execution_modes=["default"],
+        )
+        assert info.provider is None
+        assert info.default_model is None
