@@ -95,7 +95,7 @@ def _assign_labels(tasks: list[AgentTask]) -> list[AgentTask]:
 
     Two-pass algorithm:
     1. Reserve all explicit labels
-    2. Auto-assign from agent name with -N suffixes for collisions
+    2. Auto-assign from cli name with -N suffixes for collisions
 
     Args:
         tasks: List of AgentTask objects (may have label=None).
@@ -131,7 +131,7 @@ async def batch_prompt(
     is perfectly valid — use prompt for convenience when sending one task.
 
     Args:
-        tasks: List of AgentTask objects, each with agent, prompt, and optional fields.
+        tasks: List of AgentTask objects, each with cli, prompt, and optional fields.
         max_concurrency: Max parallel agent invocations (default: 3).
         ctx: MCP context (auto-injected by FastMCP). None when called directly in tests.
 

@@ -50,7 +50,7 @@ class RunnerFactory:
         blocking subprocess calls in runner __init__ methods.
 
         Args:
-            agent: Agent name (case-sensitive: "claude", "codex", "gemini", "opencode").
+            agent: CLI runner name (case-sensitive: "claude", "codex", "gemini", "opencode").
 
         Returns:
             AbstractRunner instance for the agent.
