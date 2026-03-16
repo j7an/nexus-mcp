@@ -12,10 +12,12 @@ Expected NDJSON response (one JSON object per line):
     {"type": "turn.completed", "turn_id": "..."}
 """
 
+from typing import ClassVar
+
 from nexus_mcp.exceptions import ParseError
 from nexus_mcp.parser import extract_last_json_object, parse_ndjson_events
 from nexus_mcp.runners.base import AbstractRunner
-from nexus_mcp.types import AgentResponse, PromptRequest
+from nexus_mcp.types import AgentResponse, ExecutionMode, PromptRequest
 
 
 class CodexRunner(AbstractRunner):
@@ -28,6 +30,7 @@ class CodexRunner(AbstractRunner):
     """
 
     AGENT_NAME = "codex"
+    _SUPPORTED_MODES: ClassVar[list[ExecutionMode]] = ["default", "yolo"]
 
     def build_command(self, request: PromptRequest) -> list[str]:
         """Build Codex CLI command from request.

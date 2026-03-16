@@ -778,3 +778,8 @@ class TestOpenCodeRunnerIntegration:
 
         assert exc_info.value.returncode == 1
         assert "API key" in exc_info.value.stderr
+
+
+class TestOpenCodeRunnerClassConstants:
+    def test_supported_modes_class_constant(self):
+        assert OpenCodeRunner._SUPPORTED_MODES == ["default"]

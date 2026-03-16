@@ -30,12 +30,12 @@ Note: Claude Code has no sandbox concept. Only "default" and "yolo" modes are su
 """
 
 import json
-from typing import Any
+from typing import Any, ClassVar
 
 from nexus_mcp.exceptions import ParseError
 from nexus_mcp.parser import extract_last_json_list, extract_last_json_object
 from nexus_mcp.runners.base import AbstractRunner
-from nexus_mcp.types import AgentResponse, PromptRequest
+from nexus_mcp.types import AgentResponse, ExecutionMode, PromptRequest
 
 
 class ClaudeRunner(AbstractRunner):
@@ -48,6 +48,7 @@ class ClaudeRunner(AbstractRunner):
     """
 
     AGENT_NAME = "claude"
+    _SUPPORTED_MODES: ClassVar[list[ExecutionMode]] = ["default", "yolo"]
 
     def build_command(self, request: PromptRequest) -> list[str]:
         """Build Claude Code CLI command from request.

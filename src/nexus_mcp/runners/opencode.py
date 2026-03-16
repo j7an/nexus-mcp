@@ -21,11 +21,12 @@ Output format (NDJSON events, verified against OpenCode CLI v1.2.20):
 """
 
 import json
+from typing import ClassVar
 
 from nexus_mcp.exceptions import ParseError
 from nexus_mcp.parser import extract_last_json_object
 from nexus_mcp.runners.base import AbstractRunner
-from nexus_mcp.types import AgentResponse, PromptRequest
+from nexus_mcp.types import AgentResponse, ExecutionMode, PromptRequest
 
 _JSON_OUTPUT_KEYS = ("message", "content", "text", "response")
 
@@ -38,6 +39,7 @@ class OpenCodeRunner(AbstractRunner):
     """
 
     AGENT_NAME = "opencode"
+    _SUPPORTED_MODES: ClassVar[list[ExecutionMode]] = ["default"]
 
     def build_command(self, request: PromptRequest) -> list[str]:
         """Build OpenCode CLI command from request.

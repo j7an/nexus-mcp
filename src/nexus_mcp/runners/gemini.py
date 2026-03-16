@@ -13,12 +13,12 @@ Expected JSON response:
 
 import contextlib
 import json
-from typing import Any
+from typing import Any, ClassVar
 
 from nexus_mcp.exceptions import ParseError
 from nexus_mcp.parser import extract_last_json_array, extract_last_json_object
 from nexus_mcp.runners.base import AbstractRunner
-from nexus_mcp.types import AgentResponse, PromptRequest
+from nexus_mcp.types import AgentResponse, ExecutionMode, PromptRequest
 
 
 class GeminiRunner(AbstractRunner):
@@ -32,6 +32,7 @@ class GeminiRunner(AbstractRunner):
     """
 
     AGENT_NAME = "gemini"
+    _SUPPORTED_MODES: ClassVar[list[ExecutionMode]] = ["default", "yolo"]
 
     def build_command(self, request: PromptRequest) -> list[str]:
         """Build Gemini CLI command from request.

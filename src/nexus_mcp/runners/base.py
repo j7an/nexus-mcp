@@ -41,7 +41,7 @@ from nexus_mcp.config import (
 )
 from nexus_mcp.exceptions import CLINotFoundError, ParseError, RetryableError, SubprocessError
 from nexus_mcp.process import run_subprocess
-from nexus_mcp.types import AgentResponse, PromptRequest
+from nexus_mcp.types import AgentResponse, ExecutionMode, PromptRequest
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +88,7 @@ class AbstractRunner(ABC):
     """
 
     AGENT_NAME: ClassVar[str]
+    _SUPPORTED_MODES: ClassVar[list[ExecutionMode]]
     _RETRYABLE_CODES: ClassVar[frozenset[int]] = frozenset({429, 503})
 
     def __init__(self) -> None:

@@ -991,3 +991,8 @@ class TestGaxiosErrorExtraction:
         primary_message = exc_info.value.args[0]
         assert "Gemini API error" not in primary_message
         assert "CLI command failed" in primary_message
+
+
+class TestGeminiRunnerClassConstants:
+    def test_supported_modes_class_constant(self):
+        assert GeminiRunner._SUPPORTED_MODES == ["default", "yolo"]
