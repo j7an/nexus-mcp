@@ -8,6 +8,11 @@ environment variables:
 
 import math
 import os
+import tomllib
+from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, ValidationError
 
 from nexus_mcp.exceptions import ConfigurationError
 
@@ -204,3 +209,52 @@ def get_agent_env(agent: str, key: str, default: str | None = None) -> str | Non
     """
     env_var = f"NEXUS_{agent.upper()}_{key}"
     return os.getenv(env_var, default)
+
+
+class RunnerConfig(BaseModel, frozen=True):
+    """Configuration for a runner from nexus-mcp.toml."""
+
+    type: Literal["cli", "server"] = "cli"
+    provider: str | None = None
+    models: list[str] = []
+    url: str | None = None
+
+
+def load_runner_config() -> dict[str, RunnerConfig]:
+    """Load runner configuration from nexus-mcp.toml.
+
+    Resolution order:
+        1. NEXUS_CONFIG_PATH env var (absolute path)
+        2. nexus-mcp.toml in current working directory
+
+    Returns:
+        Mapping of runner name to RunnerConfig. Empty dict if file not found.
+
+    Raises:
+        ConfigurationError: If TOML is invalid or field types don't match.
+    """
+    config_path = os.getenv("NEXUS_CONFIG_PATH")
+    if config_path is None:
+        config_path = "nexus-mcp.toml"
+
+    path = Path(config_path)
+    if not path.is_file():
+        return {}
+
+    try:
+        with path.open("rb") as f:
+            data = tomllib.load(f)
+    except tomllib.TOMLDecodeError as e:
+        msg = f"Invalid TOML in {path}: {e}"
+        raise ConfigurationError(msg, config_key=str(path)) from e
+
+    runners = data.get("runner", {})
+    result: dict[str, RunnerConfig] = {}
+    for name, cfg in runners.items():
+        try:
+            result[name] = RunnerConfig(**cfg)
+        except ValidationError as e:
+            msg = f"Invalid runner config for '{name}' in {path}: {e}"
+            raise ConfigurationError(msg, config_key=f"runner.{name}") from e
+
+    return result
