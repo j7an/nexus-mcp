@@ -194,7 +194,7 @@ class TestClaudeRunnerParseOutput:
         """Valid Claude JSON array → AgentResponse with correct output."""
         runner = make_claude_runner()
         result = runner.parse_output(CLAUDE_JSON_RESPONSE, "")
-        assert result.agent == "claude"
+        assert result.cli == "claude"
         assert result.output == "test output"
         assert result.raw_output == CLAUDE_JSON_RESPONSE
 
@@ -304,7 +304,7 @@ class TestClaudeRunnerParseOutput:
         runner = make_claude_runner()
         result = runner.parse_output(stdout, "")
         assert result.output == "pong"
-        assert result.agent == "claude"
+        assert result.cli == "claude"
 
     def test_single_object_with_metadata(self):
         """Single JSON object → metadata fields extracted correctly."""
@@ -507,7 +507,7 @@ class TestClaudeRunnerNoisyStdout:
         """CLAUDE_NOISY_STDOUT constant with log prefix → parses via json_list fallback."""
         runner = make_claude_runner()
         result = runner.parse_output(CLAUDE_NOISY_STDOUT, "")
-        assert result.agent == "claude"
+        assert result.cli == "claude"
         assert result.output == "test output"
         assert result.raw_output == CLAUDE_NOISY_STDOUT
 
@@ -956,7 +956,7 @@ class TestClaudeRunnerIntegration:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        assert response.agent == "claude"
+        assert response.cli == "claude"
         assert response.output == "test output"
         assert "cost_usd" in response.metadata
 

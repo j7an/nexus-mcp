@@ -48,9 +48,9 @@ def test_prompt_request_invalid_execution_mode():
 
 def test_agent_response_structure():
     resp = AgentResponse(
-        agent="gemini", output="test output", raw_output='{"response": "test output"}'
+        cli="gemini", output="test output", raw_output='{"response": "test output"}'
     )
-    assert resp.agent == "gemini"
+    assert resp.cli == "gemini"
     assert resp.output == "test output"
     assert resp.metadata == {}
 
@@ -139,7 +139,7 @@ def test_file_refs_accepts_normal_paths():
 
 def test_agent_response_with_metadata_adds_keys():
     """with_metadata() returns a new response with additional metadata keys."""
-    original = AgentResponse(agent="gemini", output="hello", raw_output="{}", metadata={"k": 1})
+    original = AgentResponse(cli="gemini", output="hello", raw_output="{}", metadata={"k": 1})
     updated = original.with_metadata(new_key="value", count=42)
 
     assert updated.metadata == {"k": 1, "new_key": "value", "count": 42}
@@ -147,17 +147,17 @@ def test_agent_response_with_metadata_adds_keys():
 
 def test_agent_response_with_metadata_preserves_other_fields():
     """with_metadata() preserves agent, output, and raw_output unchanged."""
-    original = AgentResponse(agent="gemini", output="hello", raw_output="{}")
+    original = AgentResponse(cli="gemini", output="hello", raw_output="{}")
     updated = original.with_metadata(x=1)
 
-    assert updated.agent == original.agent
+    assert updated.cli == original.cli
     assert updated.output == original.output
     assert updated.raw_output == original.raw_output
 
 
 def test_agent_response_with_metadata_does_not_mutate_original():
     """with_metadata() returns a new object; the original is unchanged."""
-    original = AgentResponse(agent="gemini", output="hello", raw_output="{}", metadata={"k": 1})
+    original = AgentResponse(cli="gemini", output="hello", raw_output="{}", metadata={"k": 1})
     original.with_metadata(k=999)
 
     assert original.metadata == {"k": 1}

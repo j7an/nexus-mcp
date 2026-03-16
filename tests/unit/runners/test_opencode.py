@@ -232,7 +232,7 @@ class TestOpenCodeRunnerParseOutput:
         """Valid NDJSON with agent_message → AgentResponse."""
         runner = make_opencode_runner()
         result = runner.parse_output(OPENCODE_NDJSON_RESPONSE, "")
-        assert result.agent == "opencode"
+        assert result.cli == "opencode"
         assert result.output == "test output"
         assert result.raw_output == OPENCODE_NDJSON_RESPONSE
 
@@ -264,7 +264,7 @@ class TestOpenCodeRunnerParseOutput:
         )
         runner = make_opencode_runner()
         result = runner.parse_output(ndjson, "")
-        assert result.agent == "opencode"
+        assert result.cli == "opencode"
         assert result.output == ""
         assert result.raw_output == ndjson
 
@@ -289,7 +289,7 @@ class TestOpenCodeRunnerParseOutput:
         """JSON object with 'message' key → AgentResponse via fallback."""
         runner = make_opencode_runner()
         result = runner.parse_output(OPENCODE_JSON_RESPONSE, "")
-        assert result.agent == "opencode"
+        assert result.cli == "opencode"
         assert result.output == "test output"
 
     def test_success_json_content_key(self):
@@ -340,10 +340,10 @@ class TestOpenCodeRunnerParseOutput:
             runner.parse_output("just some text", "")
 
     def test_agent_name_is_opencode(self):
-        """result.agent is always 'opencode'."""
+        """result.cli is always 'opencode'."""
         runner = make_opencode_runner()
         result = runner.parse_output(OPENCODE_NDJSON_RESPONSE, "")
-        assert result.agent == "opencode"
+        assert result.cli == "opencode"
 
     def test_raw_output_is_original_stdout(self):
         """result.raw_output matches the original stdout passed in."""
@@ -754,7 +754,7 @@ class TestOpenCodeRunnerIntegration:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        assert response.agent == "opencode"
+        assert response.cli == "opencode"
         assert response.output == "test output"
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")

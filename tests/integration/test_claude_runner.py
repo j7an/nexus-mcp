@@ -80,7 +80,7 @@ class TestClaudeRunnerEndToEnd:
         response = await claude_runner.run(request)
 
         assert isinstance(response, AgentResponse)
-        assert response.agent == "claude"
+        assert response.cli == "claude"
         assert len(response.output) > 0
 
     async def test_run_returns_cost_and_timing_metadata(self, claude_runner: ClaudeRunner) -> None:

@@ -24,8 +24,9 @@ from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import ValidationError
 
-from nexus_mcp.cli_detector import detect_cli
+from nexus_mcp.cli_detector import CLIInfo, detect_cli
 from nexus_mcp.config import RunnerConfig, get_agent_env, get_tool_timeout, load_runner_config
+from nexus_mcp.exceptions import CLINotFoundError
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import (
     DEFAULT_MAX_CONCURRENCY,
@@ -249,8 +250,13 @@ def list_runners() -> list[RunnerInfo]:
         runner_cls = RunnerFactory.get_runner_class(name)
 
         if cli_info.found:
-            instance = RunnerFactory.create(name)
-            default_model = instance.default_model
+            try:
+                instance = RunnerFactory.create(name)
+                default_model = instance.default_model
+            except CLINotFoundError:
+                logger.warning("CLI '%s' disappeared between detection and creation", name)
+                cli_info = CLIInfo(found=False)
+                default_model = get_agent_env(name, "MODEL")
         else:
             default_model = get_agent_env(name, "MODEL")
 

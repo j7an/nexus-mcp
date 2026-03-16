@@ -57,7 +57,7 @@ class TestToolDiscovery:
         }
 
     async def test_prompt_schema_has_required_params(self, mcp_client):
-        """prompt tool schema requires 'agent' and 'prompt' parameters."""
+        """prompt tool schema requires 'cli' and 'prompt' parameters."""
         tools = await mcp_client.list_tools()
         prompt_tool = next(t for t in tools if t.name == "prompt")
         schema = prompt_tool.inputSchema
@@ -97,6 +97,16 @@ class TestListRunnersProtocol:
         assert result.is_error is False
         names = {r.name for r in result.data}
         assert names == {"claude", "codex", "gemini", "opencode"}
+
+    async def test_list_runners_field_values_survive_json_rpc(self, mcp_client):
+        """RunnerInfo fields survive JSON-RPC round-trip with correct types."""
+        result = await mcp_client.call_tool("list_runners", {})
+        runners = {r.name: r for r in result.data}
+        gemini = runners["gemini"]
+        assert gemini.type == "cli"
+        assert isinstance(gemini.available, bool)
+        assert isinstance(gemini.execution_modes, (list, tuple))
+        assert "default" in gemini.execution_modes
 
 
 # ---------------------------------------------------------------------------
@@ -406,8 +416,8 @@ class TestErrorHandlingProtocol:
         with pytest.raises(ToolError, match=r"\[ParseError\]"):
             await mcp_client.call_tool("prompt", {"cli": "gemini", "prompt": "test"})
 
-    async def test_missing_agent_param_rejected_by_schema(self, mcp_client):
-        """Missing required 'agent' param is rejected at the MCP protocol/schema level."""
+    async def test_missing_cli_param_rejected_by_schema(self, mcp_client):
+        """Missing required 'cli' param is rejected at the MCP protocol/schema level."""
         with pytest.raises(ToolError):
             await mcp_client.call_tool("prompt", {"prompt": "test"})
 

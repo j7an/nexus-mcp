@@ -84,7 +84,7 @@ class CodexRunner(AbstractRunner):
                 raw_output=stdout,
             )
         return AgentResponse(
-            agent=self.AGENT_NAME,
+            cli=self.AGENT_NAME,
             output=output.strip(),
             raw_output=stdout,
         )

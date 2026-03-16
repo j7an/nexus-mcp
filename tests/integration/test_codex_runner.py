@@ -76,7 +76,7 @@ class TestCodexRunnerEndToEnd:
         response = await codex_runner.run(request)
 
         assert isinstance(response, AgentResponse)
-        assert response.agent == "codex"
+        assert response.cli == "codex"
         assert len(response.output) > 0
 
     async def test_run_returns_parsed_output(self, codex_runner: CodexRunner) -> None:

@@ -130,7 +130,7 @@ class GeminiRunner(AbstractRunner):
         metadata = data.get("stats") or {}
 
         return AgentResponse(
-            agent=self.AGENT_NAME,
+            cli=self.AGENT_NAME,
             output=response_text.strip(),
             raw_output=stdout,
             metadata=metadata,

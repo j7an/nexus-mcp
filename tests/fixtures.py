@@ -282,10 +282,10 @@ def make_agent_response(**overrides: Any) -> AgentResponse:
 
         resp = make_agent_response()                              # defaults
         resp = make_agent_response(output="custom")               # override one field
-        resp = make_agent_response(agent="codex", output="Done")  # override multiple
+        resp = make_agent_response(cli="codex", output="Done")  # override multiple
     """
     defaults: dict[str, Any] = {
-        "agent": "gemini",
+        "cli": "gemini",
         "output": "test output",
         "raw_output": GEMINI_JSON_RESPONSE,
     }

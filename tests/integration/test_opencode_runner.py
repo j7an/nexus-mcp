@@ -80,7 +80,7 @@ class TestOpenCodeRunnerEndToEnd:
         response = await opencode_runner.run(request)
 
         assert isinstance(response, AgentResponse)
-        assert response.agent == "opencode"
+        assert response.cli == "opencode"
         assert len(response.output) > 0
 
     async def test_run_default_mode_restricts_tools(self, opencode_runner: OpenCodeRunner) -> None:

@@ -201,7 +201,7 @@ class TestGeminiRunnerParseOutput:
 
         response = runner.parse_output(GEMINI_JSON_RESPONSE, stderr="")
 
-        assert response.agent == "gemini"
+        assert response.cli == "gemini"
         assert response.output == "test output"
         assert response.raw_output == GEMINI_JSON_RESPONSE
         assert response.metadata == {}
@@ -212,7 +212,7 @@ class TestGeminiRunnerParseOutput:
 
         response = runner.parse_output(GEMINI_JSON_WITH_STATS, stderr="")
 
-        assert response.agent == "gemini"
+        assert response.cli == "gemini"
         assert response.output == "Hello, world!"
         assert response.raw_output == GEMINI_JSON_WITH_STATS
         assert response.metadata == {"models": {"gemini-2.5-flash": 1}}
@@ -318,7 +318,7 @@ class TestGeminiRunnerNoisyStdout:
 
         response = runner.parse_output(GEMINI_NOISY_STDOUT, stderr="")
 
-        assert response.agent == "gemini"
+        assert response.cli == "gemini"
         assert response.output == "test output"
         assert response.raw_output == GEMINI_NOISY_STDOUT
 
@@ -843,7 +843,7 @@ class TestGeminiRunnerIntegration:
         )
 
         # Assert: Response parsed correctly
-        assert response.agent == "gemini"
+        assert response.cli == "gemini"
         assert response.output == "Hello, world!"
         assert response.metadata["models"]["gemini-2.5-flash"] == 1
 

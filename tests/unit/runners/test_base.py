@@ -35,7 +35,7 @@ class ConcreteRunner(AbstractRunner):
         if not stdout.strip():
             raise ParseError("No output from test-cli", raw_output=stdout)
         return AgentResponse(
-            agent="test",
+            cli="test",
             output=stdout.strip(),
             raw_output=stdout,
         )
@@ -82,7 +82,7 @@ class TestAbstractRunner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        assert response.agent == "test"
+        assert response.cli == "test"
         assert response.output == "success output"
         assert response.raw_output == "success output"
 
@@ -194,7 +194,7 @@ class TestAbstractRunner:
 
     def test_make_recovered_response_stamps_metadata(self, runner):
         """_make_recovered_response adds recovery keys to a copy of the response."""
-        original = AgentResponse(agent="test", output="ok", raw_output="{}", metadata={"k": 1})
+        original = AgentResponse(cli="test", output="ok", raw_output="{}", metadata={"k": 1})
 
         recovered = runner._make_recovered_response(original, returncode=2, stderr="err text")
 
@@ -206,7 +206,7 @@ class TestAbstractRunner:
 
     def test_make_recovered_response_does_not_mutate_original(self, runner):
         """_make_recovered_response leaves the original response unchanged."""
-        original = AgentResponse(agent="test", output="ok", raw_output="{}", metadata={"k": 1})
+        original = AgentResponse(cli="test", output="ok", raw_output="{}", metadata={"k": 1})
 
         runner._make_recovered_response(original, returncode=1, stderr="err")
 

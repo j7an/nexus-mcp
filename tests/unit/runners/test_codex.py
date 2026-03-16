@@ -182,7 +182,7 @@ class TestCodexRunnerParseOutput:
         """Valid NDJSON with single agent_message → AgentResponse."""
         runner = make_codex_runner()
         result = runner.parse_output(CODEX_NDJSON_RESPONSE, "")
-        assert result.agent == "codex"
+        assert result.cli == "codex"
         assert result.output == "pong"
         assert result.raw_output == CODEX_NDJSON_RESPONSE
 
@@ -613,7 +613,7 @@ class TestCodexRunnerIntegration:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        assert response.agent == "codex"
+        assert response.cli == "codex"
         assert response.output == "pong"
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")

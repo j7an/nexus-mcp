@@ -75,7 +75,7 @@ class OpenCodeRunner(AbstractRunner):
             stderr: Standard error output (not used for parsing).
 
         Returns:
-            AgentResponse with agent="opencode", parsed output, raw_output=stdout.
+            AgentResponse with cli="opencode", parsed output, raw_output=stdout.
 
         Raises:
             ParseError: If neither parse path yields output.
@@ -85,7 +85,7 @@ class OpenCodeRunner(AbstractRunner):
         ndjson_output = self._parse_opencode_ndjson(stdout)
         if ndjson_output is not None:
             return AgentResponse(
-                agent=self.AGENT_NAME,
+                cli=self.AGENT_NAME,
                 output=ndjson_output.strip(),
                 raw_output=stdout,
             )
@@ -94,7 +94,7 @@ class OpenCodeRunner(AbstractRunner):
         json_output = self._parse_json_object(stdout)
         if json_output is not None:
             return AgentResponse(
-                agent=self.AGENT_NAME,
+                cli=self.AGENT_NAME,
                 output=json_output.strip(),
                 raw_output=stdout,
             )

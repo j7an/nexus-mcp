@@ -23,9 +23,9 @@ from nexus_mcp.runners.opencode import OpenCodeRunner
 class RunnerFactory:
     """Factory for creating CLI agent runners.
 
-    Creates appropriate runner instances based on agent name.
+    Creates appropriate runner instances based on CLI name.
     Uses a registry dict for O(1) lookup and a single source of truth for
-    supported agents (add to _REGISTRY to support new CLIs).
+    supported CLIs (add to _REGISTRY to support new CLIs).
 
     Runner instances are cached after first construction so that repeated
     create() calls do not re-invoke blocking CLI detection in __init__.
@@ -43,10 +43,10 @@ class RunnerFactory:
 
     @classmethod
     def create(cls, agent: str) -> AbstractRunner:
-        """Return cached runner instance for the specified agent.
+        """Return cached runner instance for the specified CLI.
 
         Constructs and caches the runner on first call; subsequent calls with
-        the same agent name return the same object. This avoids repeated
+        the same CLI name return the same object. This avoids repeated
         blocking subprocess calls in runner __init__ methods.
 
         Args:
@@ -86,7 +86,7 @@ class RunnerFactory:
 
     @classmethod
     def list_clis(cls) -> list[str]:
-        """Return sorted list of registered runner names.
+        """Return sorted list of registered CLI runner names.
 
         Returns:
             Sorted list of CLI names that can be passed to create() or get_runner_class().
@@ -101,7 +101,7 @@ class RunnerFactory:
         """Return the runner class for the given name without instantiation.
 
         Args:
-            name: Agent name (case-sensitive).
+            name: CLI name (case-sensitive).
 
         Returns:
             The AbstractRunner subclass registered under that name.

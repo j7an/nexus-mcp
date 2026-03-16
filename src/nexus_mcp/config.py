@@ -251,6 +251,9 @@ def load_runner_config() -> dict[str, RunnerConfig]:
     runners = data.get("runner", {})
     result: dict[str, RunnerConfig] = {}
     for name, cfg in runners.items():
+        if not isinstance(cfg, dict):
+            msg = f"Runner '{name}' must be a TOML table, got {type(cfg).__name__}"
+            raise ConfigurationError(msg, config_key=f"runner.{name}")
         try:
             result[name] = RunnerConfig(**cfg)
         except ValidationError as e:

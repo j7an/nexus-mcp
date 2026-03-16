@@ -56,7 +56,7 @@ class PromptRequest(BaseModel):
 class AgentResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    agent: str
+    cli: str
     output: str
     raw_output: str
     metadata: dict[str, Any] = Field(default_factory=dict)

@@ -126,7 +126,7 @@ class ClaudeRunner(AbstractRunner):
             raise ParseError("No result or assistant text in Claude CLI output", raw_output=stdout)
 
         return AgentResponse(
-            agent=self.AGENT_NAME,
+            cli=self.AGENT_NAME,
             output=result_text.strip(),
             raw_output=stdout,
             metadata=metadata,
