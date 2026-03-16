@@ -777,3 +777,68 @@ class TestOpenCodeRunnerIntegration:
 class TestOpenCodeRunnerClassConstants:
     def test_supported_modes_class_constant(self):
         assert OpenCodeRunner._SUPPORTED_MODES == ("default",)
+
+
+# ---------------------------------------------------------------------------
+# _parse_opencode_ndjson — branch coverage for unusual-but-valid inputs
+# ---------------------------------------------------------------------------
+
+
+class TestOpenCodeParseNdjsonBranches:
+    """Cover branches in _parse_opencode_ndjson that require crafted inputs."""
+
+    def test_blank_lines_between_events_are_skipped(self):
+        """Blank/whitespace-only lines are skipped; surrounding valid events still parsed."""
+        valid_event = json.dumps({"type": "text", "part": {"type": "text", "text": "hello"}})
+        stdout = "\n   \n" + valid_event + "\n\n"
+        runner = make_opencode_runner()
+        result = runner.parse_output(stdout, "")
+        assert result.output == "hello"
+
+    def test_non_text_part_type_skipped_returns_empty_output(self):
+        """Part with type != 'text' (e.g. 'image') is skipped; found_json_event=True → ''."""
+        stdout = json.dumps({"type": "text", "part": {"type": "image", "url": "data:..."}})
+        runner = make_opencode_runner()
+        result = runner.parse_output(stdout, "")
+        assert result.output == ""
+
+    def test_non_string_text_value_not_appended(self):
+        """part.text that is not a str (e.g. int) skips the append; returns empty output."""
+        stdout = json.dumps({"type": "text", "part": {"type": "text", "text": 42}})
+        runner = make_opencode_runner()
+        result = runner.parse_output(stdout, "")
+        assert result.output == ""
+
+
+# ---------------------------------------------------------------------------
+# _try_extract_error — branch coverage for unusual-but-valid inputs
+# ---------------------------------------------------------------------------
+
+
+class TestOpenCodeTryExtractErrorBranches:
+    """Cover branches in _try_extract_error that require crafted inputs."""
+
+    def test_blank_lines_before_error_event_are_skipped(self):
+        """Blank lines before a valid NDJSON error event are skipped; error is still raised."""
+        error_event = opencode_error_json("AuthError", "unauthorized", status_code=401)
+        stdout = "\n   \n" + error_event
+        runner = make_opencode_runner()
+        with pytest.raises(SubprocessError):
+            runner._try_extract_error(stdout, "", 1)
+
+    def test_non_dict_error_field_in_error_event_is_skipped(self):
+        """NDJSON error event where error value is a string (not dict) is skipped silently."""
+        stdout = json.dumps({"type": "error", "error": "not a dict"})
+        runner = make_opencode_runner()
+        # Non-dict error field → continue; no legacy error either → returns without raising
+        runner._try_extract_error(stdout, "", 1)
+
+    def test_non_dict_error_data_falls_back_to_empty(self):
+        """error.data is a scalar (not dict) → reassigned to {}; name used for retryability."""
+        stdout = json.dumps(
+            {"type": "error", "error": {"name": "AuthError", "data": "plain string"}}
+        )
+        runner = make_opencode_runner()
+        with pytest.raises(SubprocessError) as exc_info:
+            runner._try_extract_error(stdout, "", 1)
+        assert "AuthError" in str(exc_info.value)

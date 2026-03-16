@@ -12,7 +12,12 @@ import pytest
 from fastmcp.exceptions import ToolError
 
 from nexus_mcp.config import RunnerConfig, get_tool_timeout
-from nexus_mcp.exceptions import ParseError, SubprocessError, UnsupportedAgentError
+from nexus_mcp.exceptions import (
+    CLINotFoundError,
+    ParseError,
+    SubprocessError,
+    UnsupportedAgentError,
+)
 from nexus_mcp.server import _assign_labels, batch_prompt, list_runners, mcp, prompt
 from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY, MultiPromptResponse
 from tests.fixtures import make_agent_response, make_agent_task
@@ -265,6 +270,27 @@ class TestListRunners:
             assert r.type == "cli"
             assert r.provider is None
             assert r.models == ()
+
+    @patch("nexus_mcp.server.RunnerFactory.create")
+    @patch("nexus_mcp.server.detect_cli")
+    @patch("nexus_mcp.server._runner_config", {})
+    def test_list_runners_toctou_cli_disappears(self, mock_detect_cli, mock_create, monkeypatch):
+        """CLI found by detect_cli but disappears before RunnerFactory.create() runs.
+
+        Simulates the TOCTOU race: detect_cli returns found=True, but create()
+        raises CLINotFoundError. Runner should appear as unavailable with model
+        falling back to the environment variable.
+        """
+        from nexus_mcp.cli_detector import CLIInfo
+
+        mock_detect_cli.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
+        mock_create.side_effect = CLINotFoundError("gemini")
+        monkeypatch.setenv("NEXUS_GEMINI_MODEL", "gemini-fallback-model")
+
+        result = list_runners()
+        gemini = next(r for r in result if r.name == "gemini")
+        assert gemini.available is False
+        assert gemini.default_model == "gemini-fallback-model"
 
 
 class TestAssignLabels:

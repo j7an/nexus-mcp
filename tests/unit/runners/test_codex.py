@@ -325,6 +325,13 @@ class TestCodexRunnerErrorHandling:
         result = runner._recover_from_error("", stderr, 1)
         assert result is None
 
+    def test_non_dict_error_field_returns_without_raising(self):
+        """error field in JSON is a string (not dict) → _try_extract_error returns silently."""
+        stdout = json.dumps({"error": "something went wrong"})
+        runner = make_codex_runner()
+        # extract_last_json_object finds {"error": "..."} but error is not a dict → return
+        runner._try_extract_error(stdout, "", 1)
+
     def test_try_extract_error_stdout_fallback(self):
         """stderr="" + stdout has error JSON with code 503 → RetryableError raised."""
         stdout = json.dumps({"error": {"code": 503, "message": "Service unavailable"}})

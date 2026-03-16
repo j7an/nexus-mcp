@@ -418,3 +418,13 @@ class TestLoadRunnerConfig:
         result = load_runner_config()
         assert result["opencode"].type == "server"
         assert result["opencode"].url == "http://localhost:4000"
+
+    def test_non_table_runner_config_raises_config_error(self, tmp_path, monkeypatch):
+        """Runner section that is a scalar (not a TOML table) raises ConfigurationError."""
+        toml_file = tmp_path / "bad-runner.toml"
+        # TOML: runner.gemini = "string" makes gemini a string, not a table
+        toml_file.write_text('runner.gemini = "not-a-table"\n')
+        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
+        with pytest.raises(ConfigurationError) as exc_info:
+            load_runner_config()
+        assert exc_info.value.config_key == "runner.gemini"
