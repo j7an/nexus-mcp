@@ -7,7 +7,7 @@ Tests verify:
 - build_command() respects model override and env default
 - build_command() uses custom CLI path
 - build_command() appends file_refs to prompt
-- execution mode flags: sandbox, yolo, default
+- execution mode flags: yolo, default
 - parse_output() success and failure paths
 - error handling: _recover_from_error, _try_extract_error
 """
@@ -118,22 +118,13 @@ class TestCodexRunnerBuildCommand:
 class TestCodexRunnerBuildCommandModes:
     """Test CodexRunner execution mode flags in build_command()."""
 
-    def test_sandbox_mode_adds_flags(self):
-        """execution_mode='sandbox' adds --sandbox workspace-write."""
-        runner = make_codex_runner()
-        cmd = runner.build_command(
-            make_prompt_request(agent="codex", prompt="x", execution_mode="sandbox")
-        )
-        assert "--sandbox" in cmd
-        assert "workspace-write" in cmd
-
     def test_yolo_mode_adds_flag(self):
-        """execution_mode='yolo' adds --yolo flag."""
+        """execution_mode='yolo' adds --dangerously-bypass-approvals-and-sandbox flag."""
         runner = make_codex_runner()
         cmd = runner.build_command(
             make_prompt_request(agent="codex", prompt="x", execution_mode="yolo")
         )
-        assert "--yolo" in cmd
+        assert "--dangerously-bypass-approvals-and-sandbox" in cmd
 
     def test_default_mode_no_extra_flags(self):
         """execution_mode='default' adds no extra approve flags."""
@@ -141,31 +132,18 @@ class TestCodexRunnerBuildCommandModes:
         cmd = runner.build_command(
             make_prompt_request(agent="codex", prompt="x", execution_mode="default")
         )
-        assert "--sandbox" not in cmd
-        assert "--yolo" not in cmd
+        assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
 
     def test_build_command_model_with_yolo(self):
-        """model + yolo: --model appears before --yolo in the command."""
+        """model + yolo: --model appears before --dangerously-bypass-approvals-and-sandbox."""
         runner = make_codex_runner()
         cmd = runner.build_command(
             make_prompt_request(agent="codex", prompt="x", model="o3", execution_mode="yolo")
         )
         assert "--model" in cmd
         assert "o3" in cmd
-        assert "--yolo" in cmd
-        assert cmd.index("--model") < cmd.index("--yolo")
-
-    def test_build_command_model_with_sandbox(self):
-        """model + sandbox: --model appears before --sandbox in the command."""
-        runner = make_codex_runner()
-        cmd = runner.build_command(
-            make_prompt_request(agent="codex", prompt="x", model="o3", execution_mode="sandbox")
-        )
-        assert "--model" in cmd
-        assert "o3" in cmd
-        assert "--sandbox" in cmd
-        assert "workspace-write" in cmd
-        assert cmd.index("--model") < cmd.index("--sandbox")
+        assert "--dangerously-bypass-approvals-and-sandbox" in cmd
+        assert cmd.index("--model") < cmd.index("--dangerously-bypass-approvals-and-sandbox")
 
 
 # ---------------------------------------------------------------------------

@@ -202,7 +202,7 @@ async def prompt(
         agent: Agent name (e.g., "gemini")
         prompt: Prompt text to send to the agent
         context: Optional context metadata
-        execution_mode: 'default' (safe), 'sandbox', or 'yolo'. None inherits session preference.
+        execution_mode: 'default' (safe) or 'yolo'. None inherits session preference.
         model: Optional model name. None inherits session preference or uses CLI default.
         max_retries: Max retry attempts for transient errors (None uses env default)
         ctx: MCP context (auto-injected by FastMCP). None when called directly in tests.
@@ -257,7 +257,7 @@ async def set_preferences(
         set_preferences(clear_model=True)  # clears model, keeps execution_mode
 
     Args:
-        execution_mode: Default execution mode for this session ('default', 'sandbox', 'yolo').
+        execution_mode: Default execution mode for this session ('default' or 'yolo').
             None retains the current session value (use clear_execution_mode=True to reset).
         model: Default model name for this session (e.g. 'gemini-2.5-flash').
             None retains the current session value (use clear_model=True to reset).

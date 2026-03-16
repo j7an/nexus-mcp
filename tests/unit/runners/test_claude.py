@@ -7,7 +7,7 @@ Tests verify:
 - build_command() respects model override and env default
 - build_command() uses custom CLI path
 - build_command() appends file_refs to prompt
-- execution mode flags: yolo, sandbox (maps to default), default
+- execution mode flags: yolo, default
 - parse_output() success and failure paths, including is_error handling
 - error handling: _recover_from_error, _try_extract_error
 """
@@ -148,14 +148,6 @@ class TestClaudeRunnerBuildCommandModes:
             make_prompt_request(agent="claude", prompt="x", execution_mode="yolo")
         )
         assert "--dangerously-skip-permissions" in cmd
-
-    def test_sandbox_mode_maps_to_default(self):
-        """execution_mode='sandbox' adds no extra flags (Claude has no sandbox)."""
-        runner = make_claude_runner()
-        cmd = runner.build_command(
-            make_prompt_request(agent="claude", prompt="x", execution_mode="sandbox")
-        )
-        assert "--dangerously-skip-permissions" not in cmd
 
     def test_default_mode_no_extra_flags(self):
         """execution_mode='default' adds no extra approve flags."""

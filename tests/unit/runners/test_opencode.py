@@ -6,7 +6,7 @@ Tests verify:
 - build_command() constructs correct base argument list
 - build_command() respects model override and env default
 - build_command() appends file_refs to prompt
-- execution mode flags (inverted permission model): default/sandbox/yolo
+- execution mode flags: default/yolo (all produce same command structure)
 - parse_output() NDJSON primary path and JSON fallback path
 - error handling: _recover_from_error, _try_extract_error, retry integration
 """
@@ -150,16 +150,6 @@ class TestOpenCodeRunnerBuildCommandModes:
         assert "--format" in cmd
         assert "json" in cmd
 
-    def test_sandbox_mode_produces_valid_command(self):
-        """execution_mode='sandbox' produces a valid command with --format json."""
-        runner = make_opencode_runner()
-        cmd = runner.build_command(
-            make_prompt_request(agent="opencode", prompt="x", execution_mode="sandbox")
-        )
-        assert "run" in cmd
-        assert "--format" in cmd
-        assert "json" in cmd
-
     def test_yolo_mode_produces_valid_command(self):
         """execution_mode='yolo' produces a valid command with --format json."""
         runner = make_opencode_runner()
@@ -173,7 +163,7 @@ class TestOpenCodeRunnerBuildCommandModes:
     def test_no_tool_restriction_flags_in_any_mode(self):
         """No tool restriction flags are added (opencode run has no --allowedTools)."""
         runner = make_opencode_runner()
-        for mode in ("default", "sandbox", "yolo"):
+        for mode in ("default", "yolo"):
             cmd = runner.build_command(
                 make_prompt_request(agent="opencode", prompt="x", execution_mode=mode)
             )
@@ -185,16 +175,6 @@ class TestOpenCodeRunnerBuildCommandModes:
         cmd = runner.build_command(
             make_prompt_request(
                 agent="opencode", prompt="x", model="gpt-4o", execution_mode="default"
-            )
-        )
-        assert "--model" in cmd
-
-    def test_model_with_sandbox_mode(self):
-        """model + sandbox mode: --model present in command."""
-        runner = make_opencode_runner()
-        cmd = runner.build_command(
-            make_prompt_request(
-                agent="opencode", prompt="x", model="gpt-4o", execution_mode="sandbox"
             )
         )
         assert "--model" in cmd

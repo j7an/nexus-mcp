@@ -5,7 +5,7 @@ Executes Google's Gemini CLI (https://github.com/google/generative-ai-python)
 with JSON output format.
 
 Command format:
-    gemini -p "<prompt>" --output-format json [--model <model>] [--sandbox|--yolo]
+    gemini -p "<prompt>" --output-format json [--model <model>] [--yolo]
 
 Expected JSON response:
     {"response": "...", "stats": {...}}  # stats field is optional
@@ -46,8 +46,7 @@ class GeminiRunner(AbstractRunner):
             1. Base: {cli_path} -p <prompt> (with file_refs appended if provided)
             2. Add --output-format json if capabilities.supports_json
             3. Add --model <model> (request.model > env default > CLI default)
-            4. Add --sandbox if execution_mode == "sandbox"
-            5. Add --yolo if execution_mode == "yolo"
+            4. Add --yolo if execution_mode == "yolo"
         """
         command = [self.cli_path, "-p", self._build_prompt(request)]
 
@@ -62,8 +61,6 @@ class GeminiRunner(AbstractRunner):
 
         # Add execution mode flag
         match request.execution_mode:
-            case "sandbox":
-                command.append("--sandbox")
             case "yolo":
                 command.append("--yolo")
             case _:

@@ -315,7 +315,7 @@ def make_session_preferences(**overrides: Any) -> SessionPreferences:
 
         prefs = make_session_preferences()                         # execution_mode=None, model=None
         prefs = make_session_preferences(execution_mode="yolo")    # override one field
-        prefs = make_session_preferences(execution_mode="sandbox", model="gemini-2.5-flash")
+        prefs = make_session_preferences(execution_mode="yolo", model="gemini-2.5-flash")
     """
     defaults: dict[str, Any] = {"execution_mode": None, "model": None}
     return SessionPreferences(**(defaults | overrides))

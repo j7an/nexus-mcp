@@ -2,7 +2,7 @@
 """Tests for GeminiRunner.
 
 Tests verify:
-- Command building: gemini -p <prompt> --output-format json [--model X] [--sandbox/--yolo]
+- Command building: gemini -p <prompt> --output-format json [--model X] [--yolo]
 - Output parsing: {"response": "...", "stats": {...}} → AgentResponse
 - Error handling: invalid JSON, missing fields, subprocess errors
 """
@@ -135,10 +135,9 @@ class TestGeminiRunnerBuildCommandModes:
     @pytest.mark.parametrize(
         ("execution_mode", "expected_flag"),
         [
-            ("sandbox", "--sandbox"),
             ("yolo", "--yolo"),
         ],
-        ids=["sandbox", "yolo"],
+        ids=["yolo"],
     )
     def test_build_command_execution_mode(self, execution_mode, expected_flag):
         """Execution mode adds corresponding CLI flag."""

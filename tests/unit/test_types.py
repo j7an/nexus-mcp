@@ -328,7 +328,7 @@ def test_agent_task_to_request_maps_all_fields():
     task = AgentTask(
         agent="gemini",
         prompt="Hello",
-        execution_mode="sandbox",
+        execution_mode="yolo",
         model="gemini-2.5-flash",
         max_retries=2,
     )
@@ -336,7 +336,7 @@ def test_agent_task_to_request_maps_all_fields():
     assert isinstance(req, PromptRequest)
     assert req.agent == "gemini"
     assert req.prompt == "Hello"
-    assert req.execution_mode == "sandbox"
+    assert req.execution_mode == "yolo"
     assert req.model == "gemini-2.5-flash"
     assert req.max_retries == 2
 
@@ -382,7 +382,7 @@ class TestSessionPreferences:
 
     def test_accepts_valid_execution_modes(self):
         """All ExecutionMode values are accepted."""
-        for mode in ("default", "sandbox", "yolo"):
+        for mode in ("default", "yolo"):
             prefs = SessionPreferences(execution_mode=mode)
             assert prefs.execution_mode == mode
 

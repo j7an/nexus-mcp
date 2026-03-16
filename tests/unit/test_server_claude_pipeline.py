@@ -80,16 +80,6 @@ class TestPromptClaudePipeline:
         assert "--model" in args
         assert "claude-sonnet-4-6" in args
 
-    async def test_sandbox_mode_noop(self, mock_subprocess):
-        """execution_mode='sandbox' adds NO extra flags for Claude (maps to default)."""
-        mock_subprocess.return_value = create_mock_process(stdout=_claude_json("ok"))
-
-        await prompt("claude", "test", execution_mode="sandbox")
-
-        args = list(mock_subprocess.call_args.args)
-        assert "--sandbox" not in args
-        assert "--dangerously-skip-permissions" not in args
-
     async def test_yolo_mode_adds_flag(self, mock_subprocess):
         """execution_mode='yolo' adds --dangerously-skip-permissions flag."""
         mock_subprocess.return_value = create_mock_process(stdout=_claude_json("ok"))

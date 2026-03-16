@@ -4,7 +4,7 @@
 Executes OpenAI's Codex CLI with NDJSON output format.
 
 Command format:
-    codex exec "<prompt>" --json [--model <model>] [--sandbox workspace-write|--yolo]
+    codex exec "<prompt>" --json [--model <model>] [--dangerously-bypass-approvals-and-sandbox]
 
 Expected NDJSON response (one JSON object per line):
     {"type": "thread.started", "thread_id": "..."}
@@ -42,8 +42,7 @@ class CodexRunner(AbstractRunner):
             1. Base: {cli_path} exec <prompt> (with file_refs appended if provided)
             2. Add --json
             3. Add --model <model> (request.model > env default > CLI default)
-            4. Add --sandbox workspace-write if execution_mode == "sandbox"
-            5. Add --yolo if execution_mode == "yolo"
+            4. Add --dangerously-bypass-approvals-and-sandbox if execution_mode == "yolo"
         """
         command = [self.cli_path, "exec", self._build_prompt(request), "--json"]
 
@@ -52,10 +51,8 @@ class CodexRunner(AbstractRunner):
             command.extend(["--model", model])
 
         match request.execution_mode:
-            case "sandbox":
-                command.extend(["--sandbox", "workspace-write"])
             case "yolo":
-                command.append("--yolo")
+                command.append("--dangerously-bypass-approvals-and-sandbox")
             case _:
                 pass
 

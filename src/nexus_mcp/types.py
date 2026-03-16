@@ -2,7 +2,7 @@ from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
-type ExecutionMode = Literal["default", "sandbox", "yolo"]
+type ExecutionMode = Literal["default", "yolo"]
 
 
 class SessionPreferences(BaseModel):
@@ -24,7 +24,7 @@ class PromptRequest(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
     execution_mode: ExecutionMode = Field(
         default="default",
-        description="Execution mode: 'default' (safe), 'sandbox', or 'yolo'",
+        description="Execution mode: 'default' (safe) or 'yolo'",
     )
     model: str | None = Field(
         default=None,
