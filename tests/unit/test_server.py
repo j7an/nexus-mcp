@@ -244,6 +244,27 @@ class TestListRunners:
         for r in result:
             assert r.type == "cli"
 
+    @patch("nexus_mcp.server.detect_cli")
+    @patch("nexus_mcp.server._runner_config", {})
+    def test_list_runners_unavailable_cli(self, mock_detect_cli, monkeypatch):
+        """Unavailable CLI sets available=False and reads default_model from env var."""
+        from nexus_mcp.cli_detector import CLIInfo
+
+        mock_detect_cli.return_value = CLIInfo(found=False, path=None, version=None)
+        monkeypatch.setenv("NEXUS_GEMINI_MODEL", "gemini-test-model")
+        result = list_runners()
+        gemini = next(r for r in result if r.name == "gemini")
+        assert gemini.available is False
+        assert gemini.default_model == "gemini-test-model"
+
+    def test_list_runners_without_config_defaults(self):
+        """Without config, provider is None and models is empty for all runners."""
+        result = list_runners()
+        for r in result:
+            assert r.type == "cli"
+            assert r.provider is None
+            assert r.models == ()
+
 
 class TestAssignLabels:
     """Tests for the _assign_labels() pure helper."""
