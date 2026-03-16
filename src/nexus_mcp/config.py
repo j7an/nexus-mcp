@@ -216,7 +216,7 @@ class RunnerConfig(BaseModel, frozen=True):
 
     type: Literal["cli", "server"] = "cli"
     provider: str | None = None
-    models: list[str] = []
+    models: tuple[str, ...] = ()
     url: str | None = None
 
 

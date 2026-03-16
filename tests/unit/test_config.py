@@ -338,7 +338,7 @@ class TestRunnerConfig:
         cfg = RunnerConfig()
         assert cfg.type == "cli"
         assert cfg.provider is None
-        assert cfg.models == []
+        assert cfg.models == ()
         assert cfg.url is None
 
     def test_frozen(self):
@@ -355,7 +355,7 @@ class TestRunnerConfig:
         )
         assert cfg.type == "server"
         assert cfg.provider == "google"
-        assert cfg.models == ["gemini-2.5-flash"]
+        assert cfg.models == ("gemini-2.5-flash",)
         assert cfg.url == "http://localhost:4000"
 
 
@@ -373,7 +373,7 @@ class TestLoadRunnerConfig:
         result = load_runner_config()
         assert "gemini" in result
         assert result["gemini"].provider == "google"
-        assert result["gemini"].models == ["gemini-2.5-flash"]
+        assert result["gemini"].models == ("gemini-2.5-flash",)
         assert result["gemini"].type == "cli"
 
     def test_invalid_toml_raises_config_error(self, tmp_path, monkeypatch):
