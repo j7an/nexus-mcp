@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastmcp.exceptions import ToolError
 
-from nexus_mcp.config import get_tool_timeout
+from nexus_mcp.config import RunnerConfig, get_tool_timeout
 from nexus_mcp.exceptions import ParseError, SubprocessError, UnsupportedAgentError
-from nexus_mcp.server import _assign_labels, batch_prompt, list_agents, mcp, prompt
+from nexus_mcp.server import _assign_labels, batch_prompt, list_runners, mcp, prompt
 from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY, MultiPromptResponse
 from tests.fixtures import make_agent_response, make_agent_task
 
@@ -200,19 +200,49 @@ class TestToolTimeoutRegistration:
         tool = await mcp.get_tool("batch_prompt")
         assert tool.timeout == get_tool_timeout()
 
-    async def test_list_agents_no_timeout(self):
-        """list_agents tool has no timeout (instant operation)."""
-        tool = await mcp.get_tool("list_agents")
+    async def test_list_runners_no_timeout(self):
+        """list_runners tool has no timeout (instant operation)."""
+        tool = await mcp.get_tool("list_runners")
         assert tool.timeout is None
 
 
-class TestListAgents:
-    """Tests for the list_agents tool function."""
+class TestListRunners:
+    """Tests for the list_runners tool function."""
 
-    def test_list_agents_returns_supported_agents(self):
-        """list_agents returns exactly the supported agent names."""
-        agents = list_agents()
-        assert agents == ["claude", "codex", "gemini", "opencode"]
+    def test_list_runners_returns_all_runners(self):
+        result = list_runners()
+        assert len(result) == 4
+        names = [r.name for r in result]
+        assert names == ["claude", "codex", "gemini", "opencode"]
+
+    def test_list_runners_returns_runner_info_type(self):
+        result = list_runners()
+        from nexus_mcp.types import RunnerInfo
+
+        for r in result:
+            assert isinstance(r, RunnerInfo)
+
+    def test_list_runners_includes_execution_modes(self):
+        result = list_runners()
+        gemini = next(r for r in result if r.name == "gemini")
+        assert gemini.execution_modes == ("default", "yolo")
+        opencode = next(r for r in result if r.name == "opencode")
+        assert opencode.execution_modes == ("default",)
+
+    @patch(
+        "nexus_mcp.server._runner_config",
+        {"gemini": RunnerConfig(provider="google", models=("gemini-2.5-flash",))},
+    )
+    def test_list_runners_with_config(self):
+        result = list_runners()
+        gemini = next(r for r in result if r.name == "gemini")
+        assert gemini.provider == "google"
+        assert gemini.models == ("gemini-2.5-flash",)
+
+    def test_list_runners_without_config(self):
+        result = list_runners()
+        for r in result:
+            assert r.type == "cli"
 
 
 class TestAssignLabels:

@@ -4,7 +4,7 @@
 Exposes three MCP tools:
 - batch_prompt: Send multiple prompts to CLI agents in parallel (primary tool)
 - prompt: Send a single prompt to a CLI agent, routes to batch_prompt
-- list_agents: Return list of supported agent names
+- list_runners: Return metadata for all registered CLI runners
 
 Background task design: both prompt and batch_prompt use @mcp.tool(task=True) so they
 run asynchronously and return task IDs immediately. This prevents MCP timeouts for long
@@ -24,7 +24,8 @@ from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import ValidationError
 
-from nexus_mcp.config import get_tool_timeout
+from nexus_mcp.cli_detector import detect_cli
+from nexus_mcp.config import RunnerConfig, get_agent_env, get_tool_timeout, load_runner_config
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import (
     DEFAULT_MAX_CONCURRENCY,
@@ -32,6 +33,7 @@ from nexus_mcp.types import (
     AgentTaskResult,
     ExecutionMode,
     MultiPromptResponse,
+    RunnerInfo,
     SessionPreferences,
 )
 
@@ -39,6 +41,7 @@ mcp = FastMCP("nexus-mcp")
 logger = logging.getLogger(__name__)
 
 _PREFERENCES_KEY = "nexus:preferences"
+_runner_config: dict[str, RunnerConfig] = load_runner_config()
 
 
 async def _get_session_preferences(ctx: Context | None) -> SessionPreferences:
@@ -232,13 +235,37 @@ async def prompt(
     return task_result.output
 
 
-def list_agents() -> list[str]:
-    """Return list of supported agent names.
+def list_runners() -> list[RunnerInfo]:
+    """Return metadata for all registered CLI runners.
 
     Returns:
-        List of agent names that can be used with prompt or batch_prompt.
+        Sorted list of RunnerInfo with provider, models, availability,
+        default model, and supported execution modes per runner.
     """
-    return RunnerFactory.list_clis()
+    result: list[RunnerInfo] = []
+    for name in RunnerFactory.list_clis():
+        cli_info = detect_cli(name)
+        config = _runner_config.get(name)
+        runner_cls = RunnerFactory.get_runner_class(name)
+
+        if cli_info.found:
+            instance = RunnerFactory.create(name)
+            default_model = instance.default_model
+        else:
+            default_model = get_agent_env(name, "MODEL")
+
+        result.append(
+            RunnerInfo(
+                name=name,
+                type=config.type if config else "cli",
+                provider=config.provider if config else None,
+                models=config.models if config else (),
+                available=cli_info.found,
+                default_model=default_model,
+                execution_modes=runner_cls._SUPPORTED_MODES,
+            )
+        )
+    return result
 
 
 async def set_preferences(
@@ -326,7 +353,7 @@ async def clear_preferences(ctx: Context | None = None) -> str:
 _tool_timeout = get_tool_timeout()
 mcp.tool(task=True, timeout=_tool_timeout)(batch_prompt)
 mcp.tool(task=True, timeout=_tool_timeout)(prompt)
-mcp.tool()(list_agents)
+mcp.tool()(list_runners)
 mcp.tool()(set_preferences)
 mcp.tool()(get_preferences)
 mcp.tool()(clear_preferences)

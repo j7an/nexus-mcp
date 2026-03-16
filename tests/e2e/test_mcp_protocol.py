@@ -50,7 +50,7 @@ class TestToolDiscovery:
         assert names == {
             "prompt",
             "batch_prompt",
-            "list_agents",
+            "list_runners",
             "set_preferences",
             "get_preferences",
             "clear_preferences",
@@ -88,14 +88,15 @@ class TestToolDiscovery:
 
 
 @pytest.mark.e2e
-class TestListAgentsProtocol:
-    """Verify list_agents tool via the MCP protocol."""
+class TestListRunnersProtocol:
+    """Verify list_runners tool via the MCP protocol."""
 
-    async def test_list_agents_returns_all_agents(self, mcp_client):
-        """call_tool('list_agents') returns all supported agents through JSON-RPC."""
-        result = await mcp_client.call_tool("list_agents", {})
+    async def test_list_runners_returns_all_runners(self, mcp_client):
+        """call_tool('list_runners') returns all supported runners through JSON-RPC."""
+        result = await mcp_client.call_tool("list_runners", {})
         assert result.is_error is False
-        assert set(result.data) == {"claude", "codex", "gemini", "opencode"}
+        names = {r.name for r in result.data}
+        assert names == {"claude", "codex", "gemini", "opencode"}
 
 
 # ---------------------------------------------------------------------------
