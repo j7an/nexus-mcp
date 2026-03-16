@@ -1,0 +1,23 @@
+# Runner configuration for nexus-mcp.
+# Each [runner.<name>] section configures provider and model metadata
+# for the list_runners tool. Optional — the server runs without this file.
+#
+# Location resolution:
+#   1. NEXUS_CONFIG_PATH env var (absolute path)
+#   2. nexus-mcp.toml in current working directory
+
+[runner.gemini]
+provider = "google"
+models = ["gemini-2.5-flash", "gemini-2.5-pro"]
+
+[runner.claude]
+provider = "anthropic"
+models = ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"]
+
+[runner.codex]
+provider = "openai"
+models = ["o3", "o4-mini", "codex-mini-latest"]
+
+[runner.opencode]
+provider = "multi"
+models = ["anthropic/claude-sonnet-4-6", "openai/gpt-4o", "google/gemini-2.5-flash"]

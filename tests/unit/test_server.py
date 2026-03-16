@@ -257,6 +257,7 @@ class TestListRunners:
         assert gemini.available is False
         assert gemini.default_model == "gemini-test-model"
 
+    @patch("nexus_mcp.server._runner_config", {})
     def test_list_runners_without_config_defaults(self):
         """Without config, provider is None and models is empty for all runners."""
         result = list_runners()
