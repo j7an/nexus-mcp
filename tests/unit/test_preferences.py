@@ -109,6 +109,42 @@ class TestApplyPreferences:
         result = _apply_preferences(task, prefs)
         assert result == task
 
+    def test_fills_none_max_retries_from_prefs(self):
+        task = AgentTask(cli="gemini", prompt="hi")
+        prefs = make_session_preferences(max_retries=5)
+        result = _apply_preferences(task, prefs)
+        assert result.max_retries == 5
+
+    def test_does_not_override_explicit_max_retries(self):
+        task = AgentTask(cli="gemini", prompt="hi", max_retries=2)
+        prefs = make_session_preferences(max_retries=5)
+        result = _apply_preferences(task, prefs)
+        assert result.max_retries == 2
+
+    def test_fills_none_output_limit_from_prefs(self):
+        task = AgentTask(cli="gemini", prompt="hi")
+        prefs = make_session_preferences(output_limit=4096)
+        result = _apply_preferences(task, prefs)
+        assert result.output_limit == 4096
+
+    def test_does_not_override_explicit_output_limit(self):
+        task = AgentTask(cli="gemini", prompt="hi", output_limit=1024)
+        prefs = make_session_preferences(output_limit=4096)
+        result = _apply_preferences(task, prefs)
+        assert result.output_limit == 1024
+
+    def test_fills_none_timeout_from_prefs(self):
+        task = AgentTask(cli="gemini", prompt="hi")
+        prefs = make_session_preferences(timeout=30)
+        result = _apply_preferences(task, prefs)
+        assert result.timeout == 30
+
+    def test_does_not_override_explicit_timeout(self):
+        task = AgentTask(cli="gemini", prompt="hi", timeout=10)
+        prefs = make_session_preferences(timeout=30)
+        result = _apply_preferences(task, prefs)
+        assert result.timeout == 10
+
 
 # ---------------------------------------------------------------------------
 # TestSetPreferences
@@ -124,7 +160,14 @@ class TestSetPreferences:
         ctx.get_state.return_value = None  # no existing prefs
         result = await set_preferences(execution_mode="yolo", ctx=ctx)
         ctx.set_state.assert_awaited_once_with(
-            _PREFS_KEY, {"execution_mode": "yolo", "model": None}
+            _PREFS_KEY,
+            {
+                "execution_mode": "yolo",
+                "model": None,
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": None,
+            },
         )
         assert "yolo" in result
 
@@ -132,14 +175,28 @@ class TestSetPreferences:
         ctx.get_state.return_value = None
         await set_preferences(model="gemini-2.5-flash", ctx=ctx)
         ctx.set_state.assert_awaited_once_with(
-            _PREFS_KEY, {"execution_mode": None, "model": "gemini-2.5-flash"}
+            _PREFS_KEY,
+            {
+                "execution_mode": None,
+                "model": "gemini-2.5-flash",
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": None,
+            },
         )
 
     async def test_sets_both(self, ctx):
         ctx.get_state.return_value = None
         await set_preferences(execution_mode="yolo", model="gemini-2.5-flash", ctx=ctx)
         ctx.set_state.assert_awaited_once_with(
-            _PREFS_KEY, {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
+            _PREFS_KEY,
+            {
+                "execution_mode": "yolo",
+                "model": "gemini-2.5-flash",
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": None,
+            },
         )
 
     async def test_merges_with_existing_prefs(self, ctx):
@@ -147,7 +204,14 @@ class TestSetPreferences:
         ctx.get_state.return_value = {"execution_mode": "yolo", "model": None}
         await set_preferences(model="gemini-2.5-flash", ctx=ctx)
         ctx.set_state.assert_awaited_once_with(
-            _PREFS_KEY, {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
+            _PREFS_KEY,
+            {
+                "execution_mode": "yolo",
+                "model": "gemini-2.5-flash",
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": None,
+            },
         )
 
     async def test_all_none_params_preserves_existing(self, ctx):
@@ -155,7 +219,14 @@ class TestSetPreferences:
         ctx.get_state.return_value = {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
         await set_preferences(ctx=ctx)
         ctx.set_state.assert_awaited_once_with(
-            _PREFS_KEY, {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
+            _PREFS_KEY,
+            {
+                "execution_mode": "yolo",
+                "model": "gemini-2.5-flash",
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": None,
+            },
         )
 
     async def test_returns_json_formatted_confirmation(self, ctx):
@@ -175,7 +246,14 @@ class TestSetPreferences:
         ctx.get_state.return_value = {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
         await set_preferences(clear_execution_mode=True, ctx=ctx)
         ctx.set_state.assert_awaited_once_with(
-            _PREFS_KEY, {"execution_mode": None, "model": "gemini-2.5-flash"}
+            _PREFS_KEY,
+            {
+                "execution_mode": None,
+                "model": "gemini-2.5-flash",
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": None,
+            },
         )
 
     async def test_clear_model_resets_to_none(self, ctx):
@@ -183,14 +261,138 @@ class TestSetPreferences:
         ctx.get_state.return_value = {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
         await set_preferences(clear_model=True, ctx=ctx)
         ctx.set_state.assert_awaited_once_with(
-            _PREFS_KEY, {"execution_mode": "yolo", "model": None}
+            _PREFS_KEY,
+            {
+                "execution_mode": "yolo",
+                "model": None,
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": None,
+            },
         )
 
     async def test_clear_flag_takes_precedence_over_value(self, ctx):
         """clear_execution_mode=True ignores any passed execution_mode value."""
         ctx.get_state.return_value = None
         await set_preferences(execution_mode="yolo", clear_execution_mode=True, ctx=ctx)
-        ctx.set_state.assert_awaited_once_with(_PREFS_KEY, {"execution_mode": None, "model": None})
+        ctx.set_state.assert_awaited_once_with(
+            _PREFS_KEY,
+            {
+                "execution_mode": None,
+                "model": None,
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": None,
+            },
+        )
+
+    async def test_sets_max_retries(self, ctx):
+        """set_preferences(max_retries=5) stores max_retries."""
+        ctx.get_state.return_value = None
+        await set_preferences(max_retries=5, ctx=ctx)
+        ctx.set_state.assert_awaited_once_with(
+            _PREFS_KEY,
+            {
+                "execution_mode": None,
+                "model": None,
+                "max_retries": 5,
+                "output_limit": None,
+                "timeout": None,
+            },
+        )
+
+    async def test_sets_output_limit(self, ctx):
+        """set_preferences(output_limit=4096) stores output_limit."""
+        ctx.get_state.return_value = None
+        await set_preferences(output_limit=4096, ctx=ctx)
+        ctx.set_state.assert_awaited_once_with(
+            _PREFS_KEY,
+            {
+                "execution_mode": None,
+                "model": None,
+                "max_retries": None,
+                "output_limit": 4096,
+                "timeout": None,
+            },
+        )
+
+    async def test_sets_timeout(self, ctx):
+        """set_preferences(timeout=30) stores timeout."""
+        ctx.get_state.return_value = None
+        await set_preferences(timeout=30, ctx=ctx)
+        ctx.set_state.assert_awaited_once_with(
+            _PREFS_KEY,
+            {
+                "execution_mode": None,
+                "model": None,
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": 30,
+            },
+        )
+
+    async def test_clear_max_retries(self, ctx):
+        """clear_max_retries=True resets max_retries to None."""
+        ctx.get_state.return_value = {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": 5,
+            "output_limit": None,
+            "timeout": None,
+        }
+        await set_preferences(clear_max_retries=True, ctx=ctx)
+        ctx.set_state.assert_awaited_once_with(
+            _PREFS_KEY,
+            {
+                "execution_mode": None,
+                "model": None,
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": None,
+            },
+        )
+
+    async def test_clear_output_limit(self, ctx):
+        """clear_output_limit=True resets output_limit to None."""
+        ctx.get_state.return_value = {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": None,
+            "output_limit": 4096,
+            "timeout": None,
+        }
+        await set_preferences(clear_output_limit=True, ctx=ctx)
+        ctx.set_state.assert_awaited_once_with(
+            _PREFS_KEY,
+            {
+                "execution_mode": None,
+                "model": None,
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": None,
+            },
+        )
+
+    async def test_clear_timeout(self, ctx):
+        """clear_timeout=True resets timeout to None."""
+        ctx.get_state.return_value = {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": None,
+            "output_limit": None,
+            "timeout": 30,
+        }
+        await set_preferences(clear_timeout=True, ctx=ctx)
+        ctx.set_state.assert_awaited_once_with(
+            _PREFS_KEY,
+            {
+                "execution_mode": None,
+                "model": None,
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": None,
+            },
+        )
 
     async def test_returns_confirmation_string(self, ctx):
         ctx.get_state.return_value = None
@@ -212,12 +414,24 @@ class TestGetPreferences:
     async def test_returns_prefs_dict(self, ctx):
         ctx.get_state.return_value = {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
         result = await get_preferences(ctx=ctx)
-        assert result == {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
+        assert result == {
+            "execution_mode": "yolo",
+            "model": "gemini-2.5-flash",
+            "max_retries": None,
+            "output_limit": None,
+            "timeout": None,
+        }
 
     async def test_returns_empty_defaults_when_no_prefs(self, ctx):
         ctx.get_state.return_value = None
         result = await get_preferences(ctx=ctx)
-        assert result == {"execution_mode": None, "model": None}
+        assert result == {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": None,
+            "output_limit": None,
+            "timeout": None,
+        }
 
     async def test_returns_dict_not_pydantic(self, ctx):
         ctx.get_state.return_value = None
@@ -315,6 +529,74 @@ class TestPromptPreferenceFallback:
         result = await prompt(cli="gemini", prompt="test", ctx=None)
         assert result == "ok"
 
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_session_max_retries_used_when_no_explicit(self, mock_factory, ctx):
+        """Session max_retries is used when prompt() called without explicit max_retries."""
+        mock_runner = _setup_mock_runner(mock_factory, output="ok")
+        ctx.get_state.return_value = {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": 5,
+            "output_limit": None,
+            "timeout": None,
+        }
+
+        await prompt(cli="gemini", prompt="test", ctx=ctx)
+
+        call_args = mock_runner.run.call_args.args[0]
+        assert call_args.max_retries == 5
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_explicit_max_retries_overrides_session(self, mock_factory, ctx):
+        """Explicit max_retries overrides session max_retries."""
+        mock_runner = _setup_mock_runner(mock_factory, output="ok")
+        ctx.get_state.return_value = {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": 5,
+            "output_limit": None,
+            "timeout": None,
+        }
+
+        await prompt(cli="gemini", prompt="test", max_retries=2, ctx=ctx)
+
+        call_args = mock_runner.run.call_args.args[0]
+        assert call_args.max_retries == 2
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_session_output_limit_used_when_no_explicit(self, mock_factory, ctx):
+        """Session output_limit is used when prompt() called without explicit output_limit."""
+        mock_runner = _setup_mock_runner(mock_factory, output="ok")
+        ctx.get_state.return_value = {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": None,
+            "output_limit": 4096,
+            "timeout": None,
+        }
+
+        await prompt(cli="gemini", prompt="test", ctx=ctx)
+
+        call_args = mock_runner.run.call_args.args[0]
+        assert call_args.output_limit == 4096
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_session_timeout_used_when_no_explicit(self, mock_factory, ctx):
+        """Session timeout is used when prompt() called without explicit timeout."""
+        mock_runner = _setup_mock_runner(mock_factory, output="ok")
+        ctx.get_state.return_value = {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": None,
+            "output_limit": None,
+            "timeout": 30,
+        }
+
+        await prompt(cli="gemini", prompt="test", ctx=ctx)
+
+        call_args = mock_runner.run.call_args.args[0]
+        assert call_args.timeout == 30
+
 
 # ---------------------------------------------------------------------------
 # TestBatchPromptPreferenceFallback
@@ -368,6 +650,60 @@ class TestBatchPromptPreferenceFallback:
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.execution_mode == "default"
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_session_max_retries_applied_to_tasks(self, mock_factory, ctx):
+        """Session max_retries is applied to tasks with max_retries=None."""
+        mock_runner = _setup_mock_runner(mock_factory, output="ok")
+        ctx.get_state.return_value = {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": 5,
+            "output_limit": None,
+            "timeout": None,
+        }
+
+        tasks = [AgentTask(cli="gemini", prompt="test")]
+        await batch_prompt(tasks=tasks, ctx=ctx)
+
+        call_args = mock_runner.run.call_args.args[0]
+        assert call_args.max_retries == 5
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_session_output_limit_applied_to_tasks(self, mock_factory, ctx):
+        """Session output_limit is applied to tasks with output_limit=None."""
+        mock_runner = _setup_mock_runner(mock_factory, output="ok")
+        ctx.get_state.return_value = {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": None,
+            "output_limit": 4096,
+            "timeout": None,
+        }
+
+        tasks = [AgentTask(cli="gemini", prompt="test")]
+        await batch_prompt(tasks=tasks, ctx=ctx)
+
+        call_args = mock_runner.run.call_args.args[0]
+        assert call_args.output_limit == 4096
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_session_timeout_applied_to_tasks(self, mock_factory, ctx):
+        """Session timeout is applied to tasks with timeout=None."""
+        mock_runner = _setup_mock_runner(mock_factory, output="ok")
+        ctx.get_state.return_value = {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": None,
+            "output_limit": None,
+            "timeout": 30,
+        }
+
+        tasks = [AgentTask(cli="gemini", prompt="test")]
+        await batch_prompt(tasks=tasks, ctx=ctx)
+
+        call_args = mock_runner.run.call_args.args[0]
+        assert call_args.timeout == 30
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_mixed_tasks_selective_apply(self, mock_factory, ctx):

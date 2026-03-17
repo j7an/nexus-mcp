@@ -37,7 +37,7 @@ parallel rather than sequentially:
   spillover for outputs exceeding 50 KB
 - **Execution modes** — `default` (safe, no auto-approve), `yolo` (full auto-approve)
 - **CLI detection** — auto-detects binary path, version, and JSON output capability at startup
-- **Session preferences** — set defaults for execution mode and model once per session; subsequent calls inherit them without repeating parameters
+- **Session preferences** — set defaults for execution mode, model, max retries, output limit, and timeout once per session; subsequent calls inherit them without repeating parameters
 - **Tool timeouts** — configurable safety timeout (default 15 min) cancels long-running tool calls to prevent the server from blocking indefinitely
 - **Extensible** — implement `build_command` + `parse_output`, register in `RunnerFactory`
 
@@ -125,13 +125,14 @@ Runner discovery happens once per session; subsequent examples skip the `list_ru
 ```json
 {
   "execution_mode": "yolo",
-  "model": "gemini-2.5-flash"
+  "model": "gemini-2.5-flash",
+  "max_retries": 5
 }
 ```
 
 **Response:**
 ```
-Preferences set: {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
+Preferences set: {"execution_mode": "yolo", "model": "gemini-2.5-flash", "max_retries": 5, "output_limit": null, "timeout": null}
 ```
 
 **Subsequent `prompt` and `batch_prompt` calls omit those fields — they inherit from the session:**
@@ -145,16 +146,16 @@ Preferences set: {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
 
 The fallback chain is: **explicit parameter → session preference → system default**.
 To override for one call, pass the parameter directly — it takes precedence without changing the session.
-To clear a single preference, use `set_preferences` with the corresponding `clear_*` flag (e.g. `clear_model: true`).
+To clear a single preference, use `set_preferences` with the corresponding `clear_*` flag (e.g. `clear_execution_mode: true`, `clear_model: true`, `clear_max_retries: true`, `clear_output_limit: true`, `clear_timeout: true`).
 
 ### Managing Session Preferences
 
 | Operation | Tool | Notes |
 |-----------|------|-------|
-| Set one or both fields | `set_preferences` | Pass only the fields you want to change |
-| Read current values | `get_preferences` | Returns `{execution_mode, model}` with `null` for unset fields |
+| Set one or more fields | `set_preferences` | Pass only the fields you want to change |
+| Read current values | `get_preferences` | Returns `{execution_mode, model, max_retries, output_limit, timeout}` with `null` for unset fields |
 | Clear all fields | `clear_preferences` | Reverts to per-call defaults |
-| Clear one preference | `set_preferences` with `clear_model: true` or `clear_execution_mode: true` | Other preference is preserved |
+| Clear one preference | `set_preferences` with `clear_model: true`, `clear_execution_mode: true`, `clear_max_retries: true`, `clear_output_limit: true`, or `clear_timeout: true` | Other preferences are preserved |
 
 ### Parameter Reference
 
@@ -175,7 +176,9 @@ To clear a single preference, use `set_preferences` with the corresponding `clea
 | `context` | No | `{}` | Optional context metadata dict |
 | `execution_mode` | No | session pref or `"default"` | `"default"` or `"yolo"` |
 | `model` | No | session pref or CLI default | Model name override |
-| `max_retries` | No | env default | Max retry attempts for transient errors |
+| `max_retries` | No | session pref or env default | Max retry attempts for transient errors |
+| `output_limit` | No | session pref or env default | Max output bytes before temp-file spillover |
+| `timeout` | No | session pref or env default | Subprocess timeout in seconds |
 
 #### `prompt`
 
@@ -186,7 +189,9 @@ To clear a single preference, use `set_preferences` with the corresponding `clea
 | `context` | No | `{}` | Optional context metadata dict |
 | `execution_mode` | No | session pref or `"default"` | `"default"` or `"yolo"` |
 | `model` | No | session pref or CLI default | Model name override |
-| `max_retries` | No | env default | Max retry attempts for transient errors |
+| `max_retries` | No | session pref or env default | Max retry attempts for transient errors |
+| `output_limit` | No | session pref or env default | Max output bytes before temp-file spillover |
+| `timeout` | No | session pref or env default | Subprocess timeout in seconds |
 
 #### `list_runners`
 
@@ -198,12 +203,18 @@ No parameters. Returns a list of `RunnerInfo` objects with fields: `name`, `type
 |-----------|----------|---------|-------------|
 | `execution_mode` | No | — | `"default"` or `"yolo"` |
 | `model` | No | — | Model name (e.g. `"gemini-2.5-flash"`) |
+| `max_retries` | No | — | Max total attempts including the first (≥1; 1 means run once, no retries) |
+| `output_limit` | No | — | Max output bytes before temp-file spillover (≥1) |
+| `timeout` | No | — | Subprocess timeout in seconds (≥1) |
 | `clear_execution_mode` | No | `false` | Clear execution mode (takes precedence if `execution_mode` is also provided) |
 | `clear_model` | No | `false` | Clear model (takes precedence if `model` is also provided) |
+| `clear_max_retries` | No | `false` | Clear max retries (takes precedence if `max_retries` is also provided) |
+| `clear_output_limit` | No | `false` | Clear output limit (takes precedence if `output_limit` is also provided) |
+| `clear_timeout` | No | `false` | Clear timeout (takes precedence if `timeout` is also provided) |
 
 #### `get_preferences`
 
-No parameters. Returns a dict with `execution_mode` and `model` keys (`null` when unset).
+No parameters. Returns a dict with `execution_mode`, `model`, `max_retries`, `output_limit`, and `timeout` keys (`null` when unset).
 
 #### `clear_preferences`
 
@@ -219,7 +230,7 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 | `batch_prompt` | Yes | Fan out prompts to multiple runners in parallel; returns `MultiPromptResponse` |
 | `prompt` | Yes | Single-runner convenience wrapper; routes to `batch_prompt` |
 | `list_runners` | No | Returns structured metadata for each runner (provider, models, available, execution_modes, default_model) |
-| `set_preferences` | No | Set or selectively clear session defaults for execution mode and model |
+| `set_preferences` | No | Set or selectively clear session defaults for execution mode, model, max retries, output limit, and timeout |
 | `get_preferences` | No | Retrieve current session preferences |
 | `clear_preferences` | No | Reset all session preferences |
 
@@ -333,6 +344,7 @@ uv run python -m nexus_mcp
 | `NEXUS_RETRY_MAX_ATTEMPTS` | `3` | Max attempts including the first (set to 1 to disable retries) |
 | `NEXUS_RETRY_BASE_DELAY` | `2.0` | Base seconds for exponential backoff |
 | `NEXUS_RETRY_MAX_DELAY` | `60.0` | Maximum seconds to wait between retries |
+| `NEXUS_CLI_DETECTION_TIMEOUT` | `30` | Timeout in seconds for CLI binary version detection at startup |
 
 ### Agent-Specific Environment Variables
 
