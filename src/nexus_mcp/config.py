@@ -244,7 +244,7 @@ def _load_config() -> NexusConfig:
     """Assemble NexusConfig: HARDCODED_DEFAULTS ← env vars ← TOML [defaults]."""
     env_defaults = _read_env_defaults()
     toml_defaults, runners = _load_toml_config()
-    merged = _merge_defaults(HARDCODED_DEFAULTS, env_defaults, toml_defaults)
+    merged = _merge_defaults(HARDCODED_DEFAULTS, toml_defaults, env_defaults)
     return NexusConfig(defaults=merged, runners=runners)
 
 

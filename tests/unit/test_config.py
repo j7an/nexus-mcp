@@ -626,13 +626,13 @@ class TestGetConfig:
         monkeypatch.delenv("NEXUS_TIMEOUT_SECONDS", raising=False)
         assert get_config().defaults.timeout == 999
 
-    def test_toml_defaults_wins_over_env(self, tmp_path, monkeypatch):
-        """TOML [defaults] has higher priority than env var."""
+    def test_env_wins_over_toml_defaults(self, tmp_path, monkeypatch):
+        """Env vars have higher priority than TOML [defaults]."""
         toml_file = tmp_path / "nexus-mcp.toml"
         toml_file.write_text("[defaults]\ntimeout = 777\n")
         monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
         monkeypatch.setenv("NEXUS_TIMEOUT_SECONDS", "400")
-        assert get_config().defaults.timeout == 777
+        assert get_config().defaults.timeout == 400
 
     def test_per_runner_operational_overrides_in_toml(self, tmp_path, monkeypatch):
         """Per-runner operational fields in TOML are accessible via get_config().runners."""
