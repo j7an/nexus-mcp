@@ -20,7 +20,7 @@
 # retry_max_delay    = 60.0   # Backoff ceiling (seconds, ge=0)
 # tool_timeout       = 900.0  # MCP tool call timeout (seconds, ge=0)
 # execution_mode     = "default"  # "default" or "yolo"
-# model              = ""     # Default model passed to --model flag
+# model              = "gemini-2.5-flash"  # Default model passed to --model flag (min 1 char)
 # ─────────────────────────────────────────────────────────────
 #
 # [runner.<name>]  —  Provider metadata + per-runner operational overrides.

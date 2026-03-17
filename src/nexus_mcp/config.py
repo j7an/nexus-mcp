@@ -11,7 +11,7 @@ Provides a unified, tiered configuration system:
 - Backward-compatible getter functions delegating to the singleton.
 
 Resolution order (highest → lowest priority):
-  per-request → session prefs → TOML [runner.X] → TOML [defaults] → env vars → hardcoded
+  per-request → session prefs → TOML [runner.X] → env vars → TOML [defaults] → hardcoded
 """
 
 import math
@@ -241,7 +241,7 @@ _config: NexusConfig | None = None
 
 
 def _load_config() -> NexusConfig:
-    """Assemble NexusConfig: HARDCODED_DEFAULTS ← env vars ← TOML [defaults]."""
+    """Assemble NexusConfig: HARDCODED_DEFAULTS ← TOML [defaults] ← env vars."""
     env_defaults = _read_env_defaults()
     toml_defaults, runners = _load_toml_config()
     merged = _merge_defaults(HARDCODED_DEFAULTS, toml_defaults, env_defaults)
