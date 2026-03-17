@@ -175,7 +175,8 @@ class AbstractRunner(ABC):
         command = self.build_command(request)
 
         # Step 2: Execute subprocess
-        result = await run_subprocess(command, timeout=self.timeout)
+        effective_timeout = request.timeout if request.timeout is not None else self.timeout
+        result = await run_subprocess(command, timeout=effective_timeout)
 
         # Step 3: Error check with recovery attempt
         if result.returncode != 0:
@@ -183,7 +184,7 @@ class AbstractRunner(ABC):
                 result.stdout, result.stderr, result.returncode, command
             )
             if recovered:
-                return self._apply_output_limit(recovered)
+                return self._apply_output_limit(recovered, request)
             raise SubprocessError(
                 f"CLI command failed with exit code {result.returncode}",
                 stderr=result.stderr,
@@ -196,7 +197,7 @@ class AbstractRunner(ABC):
         response = self.parse_output(result.stdout, result.stderr)
 
         # Step 5: Apply output limiting
-        return self._apply_output_limit(response)
+        return self._apply_output_limit(response, request)
 
     def _compute_backoff(self, attempt: int, retry_after: float | None) -> float:
         """Compute exponential backoff delay with full jitter.
@@ -220,16 +221,19 @@ class AbstractRunner(ABC):
             return max(computed, retry_after)
         return computed
 
-    def _apply_output_limit(self, response: AgentResponse) -> AgentResponse:
+    def _apply_output_limit(self, response: AgentResponse, request: PromptRequest) -> AgentResponse:
         """Truncate output if it exceeds the configured byte limit.
 
         Args:
             response: Original response from parse_output()
+            request: Prompt request, checked for per-request output_limit override.
 
         Returns:
             Response with truncated output if needed; metadata includes original/truncated sizes.
         """
-        limit = get_global_output_limit()
+        limit = (
+            request.output_limit if request.output_limit is not None else get_global_output_limit()
+        )
         output_bytes = response.output.encode("utf-8")
         output_size = len(output_bytes)
 

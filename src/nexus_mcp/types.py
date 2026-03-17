@@ -12,6 +12,9 @@ class SessionPreferences(BaseModel):
 
     execution_mode: ExecutionMode | None = None
     model: str | None = Field(default=None, min_length=1)
+    max_retries: int | None = Field(default=None, ge=1)
+    output_limit: int | None = Field(default=None, ge=1)
+    timeout: int | None = Field(default=None, ge=1)
 
 
 DEFAULT_MAX_CONCURRENCY = 3
@@ -50,6 +53,16 @@ class PromptRequest(BaseModel):
         default=None,
         ge=1,
         description="Max retry attempts for transient errors (None uses NEXUS_RETRY_MAX_ATTEMPTS)",
+    )
+    output_limit: int | None = Field(
+        default=None,
+        ge=1,
+        description="Max output bytes (None uses NEXUS_OUTPUT_LIMIT_BYTES)",
+    )
+    timeout: int | None = Field(
+        default=None,
+        ge=1,
+        description="Subprocess timeout seconds (None uses NEXUS_TIMEOUT_SECONDS)",
     )
 
 
@@ -98,6 +111,8 @@ class AgentTask(BaseModel):
     execution_mode: ExecutionMode | None = None  # None = use session preference or "default"
     model: str | None = None
     max_retries: int | None = Field(default=None, ge=1)
+    output_limit: int | None = Field(default=None, ge=1)
+    timeout: int | None = Field(default=None, ge=1)
 
     def to_request(self) -> "PromptRequest":
         """Convert this task to a PromptRequest for runner execution."""
@@ -108,6 +123,8 @@ class AgentTask(BaseModel):
             execution_mode=self.execution_mode or "default",  # safety net: None → "default"
             model=self.model,
             max_retries=self.max_retries,
+            output_limit=self.output_limit,
+            timeout=self.timeout,
         )
 
 

@@ -69,6 +69,12 @@ def _apply_preferences(task: AgentTask, prefs: SessionPreferences) -> AgentTask:
         updates["execution_mode"] = prefs.execution_mode or "default"
     if task.model is None and prefs.model is not None:
         updates["model"] = prefs.model
+    if task.max_retries is None and prefs.max_retries is not None:
+        updates["max_retries"] = prefs.max_retries
+    if task.output_limit is None and prefs.output_limit is not None:
+        updates["output_limit"] = prefs.output_limit
+    if task.timeout is None and prefs.timeout is not None:
+        updates["timeout"] = prefs.timeout
     if updates:
         return task.model_copy(update=updates)
     return task
@@ -195,6 +201,8 @@ async def prompt(
     execution_mode: ExecutionMode | None = None,
     model: str | None = None,
     max_retries: int | None = None,
+    output_limit: int | None = None,
+    timeout: int | None = None,
     ctx: Context | None = None,
 ) -> str:
     """Send a prompt to a CLI runner as a background task.
@@ -208,7 +216,9 @@ async def prompt(
         context: Optional context metadata
         execution_mode: 'default' (safe) or 'yolo'. None inherits session preference.
         model: Optional model name. None inherits session preference or uses CLI default.
-        max_retries: Max retry attempts for transient errors (None uses env default)
+        max_retries: Max retry attempts for transient errors (None inherits session preference).
+        output_limit: Max output bytes (None inherits session preference or uses env default).
+        timeout: Subprocess timeout seconds (None inherits session preference or uses env default).
         ctx: MCP context (auto-injected by FastMCP). None when called directly in tests.
 
     Returns:
@@ -219,6 +229,9 @@ async def prompt(
     session_mode = prefs.execution_mode or "default"
     resolved_mode = execution_mode if execution_mode is not None else session_mode
     resolved_model = model if model is not None else prefs.model
+    resolved_max_retries = max_retries if max_retries is not None else prefs.max_retries
+    resolved_output_limit = output_limit if output_limit is not None else prefs.output_limit
+    resolved_timeout = timeout if timeout is not None else prefs.timeout
 
     task = AgentTask(
         cli=cli,
@@ -226,7 +239,9 @@ async def prompt(
         context=context or {},
         execution_mode=resolved_mode,
         model=resolved_model,
-        max_retries=max_retries,
+        max_retries=resolved_max_retries,
+        output_limit=resolved_output_limit,
+        timeout=resolved_timeout,
     )
     result = await batch_prompt(tasks=[task], ctx=ctx)
     task_result = result.results[0]
@@ -277,8 +292,14 @@ def list_runners() -> list[RunnerInfo]:
 async def set_preferences(
     execution_mode: ExecutionMode | None = None,
     model: str | None = None,
+    max_retries: int | None = None,
+    output_limit: int | None = None,
+    timeout: int | None = None,
     clear_execution_mode: bool = False,
     clear_model: bool = False,
+    clear_max_retries: bool = False,
+    clear_output_limit: bool = False,
+    clear_timeout: bool = False,
     ctx: Context | None = None,
 ) -> str:
     """Set session-scoped preferences that apply to subsequent prompt/batch_prompt calls.
@@ -294,9 +315,18 @@ async def set_preferences(
             None retains the current session value (use clear_execution_mode=True to reset).
         model: Default model name for this session (e.g. 'gemini-2.5-flash').
             None retains the current session value (use clear_model=True to reset).
+        max_retries: Default max retry attempts for transient errors.
+            None retains the current session value (use clear_max_retries=True to reset).
+        output_limit: Default max output bytes per response.
+            None retains the current session value (use clear_output_limit=True to reset).
+        timeout: Default subprocess timeout in seconds.
+            None retains the current session value (use clear_timeout=True to reset).
         clear_execution_mode: If True, resets execution_mode to None regardless of the
             execution_mode argument.
         clear_model: If True, resets model to None regardless of the model argument.
+        clear_max_retries: If True, resets max_retries to None regardless of the argument.
+        clear_output_limit: If True, resets output_limit to None regardless of the argument.
+        clear_timeout: If True, resets timeout to None regardless of the argument.
         ctx: MCP context (auto-injected by FastMCP).
 
     Returns:
@@ -322,7 +352,37 @@ async def set_preferences(
     else:
         new_model = existing.model
 
-    merged = SessionPreferences(execution_mode=new_execution_mode, model=new_model)
+    new_max_retries: int | None
+    if clear_max_retries:
+        new_max_retries = None
+    elif max_retries is not None:
+        new_max_retries = max_retries
+    else:
+        new_max_retries = existing.max_retries
+
+    new_output_limit: int | None
+    if clear_output_limit:
+        new_output_limit = None
+    elif output_limit is not None:
+        new_output_limit = output_limit
+    else:
+        new_output_limit = existing.output_limit
+
+    new_timeout: int | None
+    if clear_timeout:
+        new_timeout = None
+    elif timeout is not None:
+        new_timeout = timeout
+    else:
+        new_timeout = existing.timeout
+
+    merged = SessionPreferences(
+        execution_mode=new_execution_mode,
+        model=new_model,
+        max_retries=new_max_retries,
+        output_limit=new_output_limit,
+        timeout=new_timeout,
+    )
     await ctx.set_state(_PREFERENCES_KEY, merged.model_dump())
     return f"Preferences set: {json.dumps(merged.model_dump())}"
 
@@ -331,7 +391,8 @@ async def get_preferences(ctx: Context | None = None) -> dict[str, Any]:
     """Return the current session preferences.
 
     Returns:
-        Dict with 'execution_mode' and 'model' keys (None when unset).
+        Dict with 'execution_mode', 'model', 'max_retries', 'output_limit', and 'timeout'
+        keys (None when unset).
     """
     if ctx is None:
         raise ToolError("get_preferences requires an active session context")

@@ -30,7 +30,13 @@ class TestPreferencesRoundTrip:
         """get_preferences before any set_preferences returns None values."""
         result = await mcp_client.call_tool("get_preferences", {})
         assert result.is_error is False
-        assert result.data == {"execution_mode": None, "model": None}
+        assert result.data == {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": None,
+            "output_limit": None,
+            "timeout": None,
+        }
 
     async def test_set_model_preference(self, mcp_client):
         """set_preferences(model=...) is returned by get_preferences."""
@@ -51,7 +57,39 @@ class TestPreferencesRoundTrip:
         await mcp_client.call_tool("set_preferences", {"execution_mode": "yolo"})
         await mcp_client.call_tool("clear_preferences", {})
         result = await mcp_client.call_tool("get_preferences", {})
-        assert result.data == {"execution_mode": None, "model": None}
+        assert result.data == {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": None,
+            "output_limit": None,
+            "timeout": None,
+        }
+
+    async def test_set_max_retries_preference(self, mcp_client):
+        """set_preferences(max_retries=5) is returned by get_preferences."""
+        await mcp_client.call_tool("set_preferences", {"max_retries": 5})
+        result = await mcp_client.call_tool("get_preferences", {})
+        assert result.data["max_retries"] == 5
+
+    async def test_set_output_limit_preference(self, mcp_client):
+        """set_preferences(output_limit=4096) is returned by get_preferences."""
+        await mcp_client.call_tool("set_preferences", {"output_limit": 4096})
+        result = await mcp_client.call_tool("get_preferences", {})
+        assert result.data["output_limit"] == 4096
+
+    async def test_set_timeout_preference(self, mcp_client):
+        """set_preferences(timeout=30) is returned by get_preferences."""
+        await mcp_client.call_tool("set_preferences", {"timeout": 30})
+        result = await mcp_client.call_tool("get_preferences", {})
+        assert result.data["timeout"] == 30
+
+    async def test_clear_individual_new_fields(self, mcp_client):
+        """clear_max_retries=True clears max_retries while preserving other fields."""
+        await mcp_client.call_tool("set_preferences", {"max_retries": 5, "timeout": 30})
+        await mcp_client.call_tool("set_preferences", {"clear_max_retries": True})
+        result = await mcp_client.call_tool("get_preferences", {})
+        assert result.data["max_retries"] is None
+        assert result.data["timeout"] == 30  # preserved
 
     async def test_set_preferences_returns_confirmation(self, mcp_client):
         """set_preferences returns a non-empty confirmation string."""

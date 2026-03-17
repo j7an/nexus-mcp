@@ -331,6 +331,8 @@ def test_agent_task_to_request_maps_all_fields():
         execution_mode="yolo",
         model="gemini-2.5-flash",
         max_retries=2,
+        output_limit=1024,
+        timeout=30,
     )
     req = task.to_request()
     assert isinstance(req, PromptRequest)
@@ -339,6 +341,8 @@ def test_agent_task_to_request_maps_all_fields():
     assert req.execution_mode == "yolo"
     assert req.model == "gemini-2.5-flash"
     assert req.max_retries == 2
+    assert req.output_limit == 1024
+    assert req.timeout == 30
 
 
 def test_agent_task_to_request_defaults():
@@ -348,7 +352,57 @@ def test_agent_task_to_request_defaults():
     assert req.execution_mode == "default"
     assert req.model is None
     assert req.max_retries is None
+    assert req.output_limit is None
+    assert req.timeout is None
     assert req.context == {}
+
+
+def test_prompt_request_output_limit_defaults_to_none():
+    """PromptRequest.output_limit defaults to None (falls back to env default)."""
+    req = PromptRequest(cli="gemini", prompt="Hello")
+    assert req.output_limit is None
+
+
+def test_prompt_request_output_limit_accepts_positive():
+    """PromptRequest.output_limit accepts a positive integer."""
+    req = PromptRequest(cli="gemini", prompt="Hello", output_limit=4096)
+    assert req.output_limit == 4096
+
+
+def test_prompt_request_output_limit_rejects_zero():
+    """PromptRequest.output_limit=0 is rejected by ge=1."""
+    with pytest.raises(ValidationError):
+        PromptRequest(cli="gemini", prompt="Hello", output_limit=0)
+
+
+def test_prompt_request_timeout_defaults_to_none():
+    """PromptRequest.timeout defaults to None (falls back to env default)."""
+    req = PromptRequest(cli="gemini", prompt="Hello")
+    assert req.timeout is None
+
+
+def test_prompt_request_timeout_accepts_positive():
+    """PromptRequest.timeout accepts a positive integer."""
+    req = PromptRequest(cli="gemini", prompt="Hello", timeout=60)
+    assert req.timeout == 60
+
+
+def test_prompt_request_timeout_rejects_zero():
+    """PromptRequest.timeout=0 is rejected by ge=1."""
+    with pytest.raises(ValidationError):
+        PromptRequest(cli="gemini", prompt="Hello", timeout=0)
+
+
+def test_agent_task_output_limit_defaults_to_none():
+    """AgentTask.output_limit defaults to None."""
+    task = AgentTask(cli="gemini", prompt="Hello")
+    assert task.output_limit is None
+
+
+def test_agent_task_timeout_defaults_to_none():
+    """AgentTask.timeout defaults to None."""
+    task = AgentTask(cli="gemini", prompt="Hello")
+    assert task.timeout is None
 
 
 # ---------------------------------------------------------------------------
@@ -375,10 +429,13 @@ def test_agent_task_result_formatted_error_without_type():
 
 class TestSessionPreferences:
     def test_default_values_are_none(self):
-        """SessionPreferences defaults: both execution_mode and model are None."""
+        """SessionPreferences defaults: all fields are None."""
         prefs = SessionPreferences()
         assert prefs.execution_mode is None
         assert prefs.model is None
+        assert prefs.max_retries is None
+        assert prefs.output_limit is None
+        assert prefs.timeout is None
 
     def test_accepts_valid_execution_modes(self):
         """All ExecutionMode values are accepted."""
@@ -408,11 +465,60 @@ class TestSessionPreferences:
 
     def test_model_dump_round_trip(self):
         """model_dump() → SessionPreferences(**d) round-trip preserves values."""
-        prefs = SessionPreferences(execution_mode="yolo", model="gemini-2.5-flash")
+        prefs = SessionPreferences(
+            execution_mode="yolo",
+            model="gemini-2.5-flash",
+            max_retries=3,
+            output_limit=1024,
+            timeout=30,
+        )
         d = prefs.model_dump()
         reconstructed = SessionPreferences(**d)
         assert reconstructed.execution_mode == "yolo"
         assert reconstructed.model == "gemini-2.5-flash"
+        assert reconstructed.max_retries == 3
+        assert reconstructed.output_limit == 1024
+        assert reconstructed.timeout == 30
+
+    def test_max_retries_accepts_positive(self):
+        """max_retries accepts a positive integer."""
+        prefs = SessionPreferences(max_retries=5)
+        assert prefs.max_retries == 5
+
+    def test_max_retries_rejects_zero(self):
+        """max_retries=0 is rejected by ge=1."""
+        with pytest.raises(ValidationError):
+            SessionPreferences(max_retries=0)
+
+    def test_max_retries_rejects_negative(self):
+        """Negative max_retries is rejected by ge=1."""
+        with pytest.raises(ValidationError):
+            SessionPreferences(max_retries=-1)
+
+    def test_output_limit_accepts_positive(self):
+        """output_limit accepts a positive integer."""
+        prefs = SessionPreferences(output_limit=4096)
+        assert prefs.output_limit == 4096
+
+    def test_output_limit_rejects_zero(self):
+        """output_limit=0 is rejected by ge=1."""
+        with pytest.raises(ValidationError):
+            SessionPreferences(output_limit=0)
+
+    def test_timeout_accepts_positive(self):
+        """timeout accepts a positive integer."""
+        prefs = SessionPreferences(timeout=60)
+        assert prefs.timeout == 60
+
+    def test_timeout_rejects_zero(self):
+        """timeout=0 is rejected by ge=1."""
+        with pytest.raises(ValidationError):
+            SessionPreferences(timeout=0)
+
+    def test_timeout_rejects_negative(self):
+        """Negative timeout is rejected by ge=1."""
+        with pytest.raises(ValidationError):
+            SessionPreferences(timeout=-10)
 
     def test_frozen(self):
         """SessionPreferences is immutable (frozen=True)."""
