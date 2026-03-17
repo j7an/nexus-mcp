@@ -31,14 +31,7 @@ from nexus_mcp.cli_detector import (
     get_cli_capabilities,
     get_cli_version,
 )
-from nexus_mcp.config import (
-    get_agent_env,
-    get_global_output_limit,
-    get_global_timeout,
-    get_retry_base_delay,
-    get_retry_max_attempts,
-    get_retry_max_delay,
-)
+from nexus_mcp.config import get_agent_env, get_runner_defaults
 from nexus_mcp.exceptions import CLINotFoundError, ParseError, RetryableError, SubprocessError
 from nexus_mcp.process import run_subprocess
 from nexus_mcp.types import AgentResponse, ExecutionMode, PromptRequest
@@ -92,7 +85,7 @@ class AbstractRunner(ABC):
     _RETRYABLE_CODES: ClassVar[frozenset[int]] = frozenset({429, 503})
 
     def __init__(self) -> None:
-        """Initialize runner with CLI detection and global configuration.
+        """Initialize runner with CLI detection and per-runner configuration.
 
         Raises:
             CLINotFoundError: If the CLI binary is not found in PATH.
@@ -102,14 +95,18 @@ class AbstractRunner(ABC):
             raise CLINotFoundError(self.AGENT_NAME)
         version = get_cli_version(self.AGENT_NAME)
         self.capabilities: CLICapabilities = get_cli_capabilities(self.AGENT_NAME, version)
-        self.timeout = get_global_timeout()
-        self.base_delay = get_retry_base_delay()
-        self.max_delay = get_retry_max_delay()
-        self.default_max_attempts = get_retry_max_attempts()
+        defaults = get_runner_defaults(self.AGENT_NAME)
+        self.timeout: int = defaults.timeout  # type: ignore[assignment]
+        self.base_delay: float = defaults.retry_base_delay  # type: ignore[assignment]
+        self.max_delay: float = defaults.retry_max_delay  # type: ignore[assignment]
+        self.default_max_attempts: int = defaults.max_retries  # type: ignore[assignment]
+        self.output_limit: int = defaults.output_limit  # type: ignore[assignment]
+        self.default_model: str | None = defaults.model
+        # cli_path not in OperationalDefaults (security-sensitive); double-fallback guards
+        # against empty-string env vars (get_agent_env default= prevents None, or= prevents "")
         self.cli_path: str = (
             get_agent_env(self.AGENT_NAME, "PATH", default=self.AGENT_NAME) or self.AGENT_NAME
         )
-        self.default_model: str | None = get_agent_env(self.AGENT_NAME, "MODEL")
 
     async def run(self, request: PromptRequest) -> AgentResponse:
         """Execute CLI agent with retry on transient errors.
@@ -132,13 +129,24 @@ class AbstractRunner(ABC):
         max_attempts = (
             request.max_retries if request.max_retries is not None else self.default_max_attempts
         )
+        # Resolve per-request delay overrides once before the loop (concurrency-safe: avoids
+        # mutating self.base_delay/max_delay which are shared across concurrent requests).
+        # IMPORTANT: use `is not None`, NOT `or` — 0.0 is a valid value (instant backoff).
+        effective_base_delay = (
+            request.retry_base_delay if request.retry_base_delay is not None else self.base_delay
+        )
+        effective_max_delay = (
+            request.retry_max_delay if request.retry_max_delay is not None else self.max_delay
+        )
         for attempt in range(max_attempts):
             try:
                 return await self._execute(request)
             except RetryableError as e:
                 if attempt == max_attempts - 1:
                     raise
-                delay = self._compute_backoff(attempt, e.retry_after)
+                delay = self._compute_backoff(
+                    attempt, e.retry_after, effective_base_delay, effective_max_delay
+                )
                 logger.warning(
                     "Retryable error (attempt %d/%d), retrying in %.1fs: %s",
                     attempt + 1,
@@ -199,7 +207,13 @@ class AbstractRunner(ABC):
         # Step 5: Apply output limiting
         return self._apply_output_limit(response, request)
 
-    def _compute_backoff(self, attempt: int, retry_after: float | None) -> float:
+    def _compute_backoff(
+        self,
+        attempt: int,
+        retry_after: float | None,
+        base_delay: float | None = None,
+        max_delay: float | None = None,
+    ) -> float:
         """Compute exponential backoff delay with full jitter.
 
         Uses AWS-recommended full jitter formula:
@@ -211,11 +225,15 @@ class AbstractRunner(ABC):
         Args:
             attempt: Zero-based attempt index (0 = first retry after first failure).
             retry_after: Optional server-suggested wait time in seconds.
+            base_delay: Override base delay (None falls back to self.base_delay).
+            max_delay: Override max delay cap (None falls back to self.max_delay).
 
         Returns:
             Delay in seconds to wait before the next attempt.
         """
-        cap = min(self.max_delay, self.base_delay * (2**attempt))
+        bd = base_delay if base_delay is not None else self.base_delay
+        md = max_delay if max_delay is not None else self.max_delay
+        cap = min(md, bd * (2**attempt))
         computed = random.uniform(0, cap)
         if retry_after is not None:
             return max(computed, retry_after)
@@ -231,9 +249,7 @@ class AbstractRunner(ABC):
         Returns:
             Response with truncated output if needed; metadata includes original/truncated sizes.
         """
-        limit = (
-            request.output_limit if request.output_limit is not None else get_global_output_limit()
-        )
+        limit = request.output_limit if request.output_limit is not None else self.output_limit
         output_bytes = response.output.encode("utf-8")
         output_size = len(output_bytes)
 

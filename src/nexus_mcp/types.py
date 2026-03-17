@@ -15,6 +15,8 @@ class SessionPreferences(BaseModel):
     max_retries: int | None = Field(default=None, ge=1)
     output_limit: int | None = Field(default=None, ge=1)
     timeout: int | None = Field(default=None, ge=1)
+    retry_base_delay: float | None = Field(default=None, ge=0)
+    retry_max_delay: float | None = Field(default=None, ge=0)
 
 
 DEFAULT_MAX_CONCURRENCY = 3
@@ -63,6 +65,16 @@ class PromptRequest(BaseModel):
         default=None,
         ge=1,
         description="Subprocess timeout seconds (None uses NEXUS_TIMEOUT_SECONDS)",
+    )
+    retry_base_delay: float | None = Field(
+        default=None,
+        ge=0,
+        description="Base delay seconds for exponential backoff (None uses NEXUS_RETRY_BASE_DELAY)",
+    )
+    retry_max_delay: float | None = Field(
+        default=None,
+        ge=0,
+        description="Max delay cap for backoff in seconds (None uses NEXUS_RETRY_MAX_DELAY)",
     )
 
 
@@ -113,6 +125,8 @@ class AgentTask(BaseModel):
     max_retries: int | None = Field(default=None, ge=1)
     output_limit: int | None = Field(default=None, ge=1)
     timeout: int | None = Field(default=None, ge=1)
+    retry_base_delay: float | None = Field(default=None, ge=0)
+    retry_max_delay: float | None = Field(default=None, ge=0)
 
     def to_request(self) -> "PromptRequest":
         """Convert this task to a PromptRequest for runner execution."""
@@ -125,6 +139,8 @@ class AgentTask(BaseModel):
             max_retries=self.max_retries,
             output_limit=self.output_limit,
             timeout=self.timeout,
+            retry_base_delay=self.retry_base_delay,
+            retry_max_delay=self.retry_max_delay,
         )
 
 

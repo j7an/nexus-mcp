@@ -73,8 +73,10 @@ class TestOpenCodeRunnerInit:
 
     def test_default_model_from_env(self):
         """default_model is taken from NEXUS_OPENCODE_MODEL env var."""
+        # Must patch nexus_mcp.config.get_agent_env (where get_runner_defaults calls it),
+        # not nexus_mcp.runners.base.get_agent_env (which is only used for cli_path).
         with patch(
-            "nexus_mcp.runners.base.get_agent_env",
+            "nexus_mcp.config.get_agent_env",
             side_effect=lambda _agent, key, **_kw: "gpt-4o" if key == "MODEL" else None,
         ):
             runner = make_opencode_runner()

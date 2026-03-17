@@ -25,7 +25,7 @@ from fastmcp.exceptions import ToolError
 from pydantic import ValidationError
 
 from nexus_mcp.cli_detector import CLIInfo, detect_cli
-from nexus_mcp.config import RunnerConfig, get_agent_env, get_tool_timeout, load_runner_config
+from nexus_mcp.config import RunnerConfig, get_agent_env, get_config, get_tool_timeout
 from nexus_mcp.exceptions import CLINotFoundError
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import (
@@ -42,7 +42,7 @@ mcp = FastMCP("nexus-mcp")
 logger = logging.getLogger(__name__)
 
 _PREFERENCES_KEY = "nexus:preferences"
-_runner_config: dict[str, RunnerConfig] = load_runner_config()
+_runner_config: dict[str, RunnerConfig] = get_config().runners
 
 
 async def _get_session_preferences(ctx: Context | None) -> SessionPreferences:
@@ -75,6 +75,10 @@ def _apply_preferences(task: AgentTask, prefs: SessionPreferences) -> AgentTask:
         updates["output_limit"] = prefs.output_limit
     if task.timeout is None and prefs.timeout is not None:
         updates["timeout"] = prefs.timeout
+    if task.retry_base_delay is None and prefs.retry_base_delay is not None:
+        updates["retry_base_delay"] = prefs.retry_base_delay
+    if task.retry_max_delay is None and prefs.retry_max_delay is not None:
+        updates["retry_max_delay"] = prefs.retry_max_delay
     if updates:
         return task.model_copy(update=updates)
     return task
@@ -203,6 +207,8 @@ async def prompt(
     max_retries: int | None = None,
     output_limit: int | None = None,
     timeout: int | None = None,
+    retry_base_delay: float | None = None,
+    retry_max_delay: float | None = None,
     ctx: Context | None = None,
 ) -> str:
     """Send a prompt to a CLI runner as a background task.
@@ -219,6 +225,8 @@ async def prompt(
         max_retries: Max retry attempts for transient errors (None inherits session preference).
         output_limit: Max output bytes (None inherits session preference or uses env default).
         timeout: Subprocess timeout seconds (None inherits session preference or uses env default).
+        retry_base_delay: Base delay seconds for exponential backoff (None inherits session/config).
+        retry_max_delay: Backoff ceiling in seconds (None inherits session preference or config).
         ctx: MCP context (auto-injected by FastMCP). None when called directly in tests.
 
     Returns:
@@ -232,6 +240,13 @@ async def prompt(
     resolved_max_retries = max_retries if max_retries is not None else prefs.max_retries
     resolved_output_limit = output_limit if output_limit is not None else prefs.output_limit
     resolved_timeout = timeout if timeout is not None else prefs.timeout
+    # IMPORTANT: use `is not None`, NOT `or` — 0.0 is a valid value (instant backoff).
+    resolved_retry_base_delay = (
+        retry_base_delay if retry_base_delay is not None else prefs.retry_base_delay
+    )
+    resolved_retry_max_delay = (
+        retry_max_delay if retry_max_delay is not None else prefs.retry_max_delay
+    )
 
     task = AgentTask(
         cli=cli,
@@ -242,6 +257,8 @@ async def prompt(
         max_retries=resolved_max_retries,
         output_limit=resolved_output_limit,
         timeout=resolved_timeout,
+        retry_base_delay=resolved_retry_base_delay,
+        retry_max_delay=resolved_retry_max_delay,
     )
     result = await batch_prompt(tasks=[task], ctx=ctx)
     task_result = result.results[0]
@@ -295,11 +312,15 @@ async def set_preferences(
     max_retries: int | None = None,
     output_limit: int | None = None,
     timeout: int | None = None,
+    retry_base_delay: float | None = None,
+    retry_max_delay: float | None = None,
     clear_execution_mode: bool = False,
     clear_model: bool = False,
     clear_max_retries: bool = False,
     clear_output_limit: bool = False,
     clear_timeout: bool = False,
+    clear_retry_base_delay: bool = False,
+    clear_retry_max_delay: bool = False,
     ctx: Context | None = None,
 ) -> str:
     """Set session-scoped preferences that apply to subsequent prompt/batch_prompt calls.
@@ -321,12 +342,18 @@ async def set_preferences(
             None retains the current session value (use clear_output_limit=True to reset).
         timeout: Default subprocess timeout in seconds.
             None retains the current session value (use clear_timeout=True to reset).
+        retry_base_delay: Default base delay seconds for exponential backoff.
+            None retains the current session value (use clear_retry_base_delay=True to reset).
+        retry_max_delay: Default max delay cap seconds for exponential backoff.
+            None retains the current session value (use clear_retry_max_delay=True to reset).
         clear_execution_mode: If True, resets execution_mode to None regardless of the
             execution_mode argument.
         clear_model: If True, resets model to None regardless of the model argument.
         clear_max_retries: If True, resets max_retries to None regardless of the argument.
         clear_output_limit: If True, resets output_limit to None regardless of the argument.
         clear_timeout: If True, resets timeout to None regardless of the argument.
+        clear_retry_base_delay: If True, resets retry_base_delay to None.
+        clear_retry_max_delay: If True, resets retry_max_delay to None.
         ctx: MCP context (auto-injected by FastMCP).
 
     Returns:
@@ -376,12 +403,30 @@ async def set_preferences(
     else:
         new_timeout = existing.timeout
 
+    new_retry_base_delay: float | None
+    if clear_retry_base_delay:
+        new_retry_base_delay = None
+    elif retry_base_delay is not None:
+        new_retry_base_delay = retry_base_delay
+    else:
+        new_retry_base_delay = existing.retry_base_delay
+
+    new_retry_max_delay: float | None
+    if clear_retry_max_delay:
+        new_retry_max_delay = None
+    elif retry_max_delay is not None:
+        new_retry_max_delay = retry_max_delay
+    else:
+        new_retry_max_delay = existing.retry_max_delay
+
     merged = SessionPreferences(
         execution_mode=new_execution_mode,
         model=new_model,
         max_retries=new_max_retries,
         output_limit=new_output_limit,
         timeout=new_timeout,
+        retry_base_delay=new_retry_base_delay,
+        retry_max_delay=new_retry_max_delay,
     )
     await ctx.set_state(_PREFERENCES_KEY, merged.model_dump())
     return f"Preferences set: {json.dumps(merged.model_dump())}"

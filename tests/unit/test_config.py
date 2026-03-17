@@ -7,16 +7,24 @@ import pytest
 from pydantic import ValidationError
 
 from nexus_mcp.config import (
+    HARDCODED_DEFAULTS,
+    NexusConfig,
+    OperationalDefaults,
     RunnerConfig,
+    _merge_defaults,
+    _read_env_defaults,
     get_agent_env,
     get_cli_detection_timeout,
+    get_config,
     get_global_output_limit,
     get_global_timeout,
     get_retry_base_delay,
     get_retry_max_attempts,
     get_retry_max_delay,
+    get_runner_defaults,
     get_tool_timeout,
     load_runner_config,
+    reset_config,
 )
 from nexus_mcp.exceptions import ConfigurationError
 
@@ -428,3 +436,287 @@ class TestLoadRunnerConfig:
         with pytest.raises(ConfigurationError) as exc_info:
             load_runner_config()
         assert exc_info.value.config_key == "runner.gemini"
+
+
+# ---------------------------------------------------------------------------
+# New tests: unified config models, singleton, and per-runner defaults
+# ---------------------------------------------------------------------------
+
+
+class TestOperationalDefaults:
+    """Test OperationalDefaults Pydantic model validation."""
+
+    def test_all_none_is_valid(self):
+        od = OperationalDefaults()
+        assert od.timeout is None
+        assert od.retry_base_delay is None
+        assert od.execution_mode is None
+
+    def test_ge1_fields_reject_zero(self):
+        """timeout, output_limit, max_retries, cli_detection_timeout require ge=1."""
+        for field in ("timeout", "output_limit", "max_retries", "cli_detection_timeout"):
+            with pytest.raises(ValidationError):
+                OperationalDefaults(**{field: 0})  # type: ignore[arg-type]
+
+    def test_ge0_fields_allow_zero(self):
+        """retry_base_delay, retry_max_delay, tool_timeout allow 0.0."""
+        od = OperationalDefaults(retry_base_delay=0.0, retry_max_delay=0.0, tool_timeout=0.0)
+        assert od.retry_base_delay == 0.0
+        assert od.retry_max_delay == 0.0
+        assert od.tool_timeout == 0.0
+
+    def test_ge0_fields_reject_negative(self):
+        for field in ("retry_base_delay", "retry_max_delay", "tool_timeout"):
+            with pytest.raises(ValidationError):
+                OperationalDefaults(**{field: -0.1})  # type: ignore[arg-type]
+
+    def test_float_fields_reject_inf(self):
+        with pytest.raises(ValidationError, match="must be a finite number"):
+            OperationalDefaults(retry_base_delay=float("inf"))
+
+    def test_float_fields_reject_nan(self):
+        # ge=0 catches nan before the custom validator (nan >= 0 is False in Python),
+        # so the error message is Pydantic's built-in ge constraint message, not ours.
+        with pytest.raises(ValidationError):
+            OperationalDefaults(retry_max_delay=float("nan"))
+
+    def test_frozen(self):
+        od = OperationalDefaults(timeout=10)
+        with pytest.raises(ValidationError):
+            od.timeout = 20  # type: ignore[misc]
+
+
+class TestHardcodedDefaults:
+    """HARDCODED_DEFAULTS provides expected baseline values."""
+
+    def test_timeout(self):
+        assert HARDCODED_DEFAULTS.timeout == 600
+
+    def test_output_limit(self):
+        assert HARDCODED_DEFAULTS.output_limit == 50000
+
+    def test_max_retries(self):
+        assert HARDCODED_DEFAULTS.max_retries == 3
+
+    def test_retry_base_delay(self):
+        assert HARDCODED_DEFAULTS.retry_base_delay == 2.0
+
+    def test_retry_max_delay(self):
+        assert HARDCODED_DEFAULTS.retry_max_delay == 60.0
+
+    def test_tool_timeout(self):
+        assert HARDCODED_DEFAULTS.tool_timeout == 900.0
+
+    def test_cli_detection_timeout(self):
+        assert HARDCODED_DEFAULTS.cli_detection_timeout == 30
+
+    def test_execution_mode(self):
+        assert HARDCODED_DEFAULTS.execution_mode == "default"
+
+
+class TestMergeDefaults:
+    """Test _merge_defaults overlay logic."""
+
+    def test_base_preserved_when_overlay_is_none(self):
+        base = OperationalDefaults(timeout=600)
+        result = _merge_defaults(base, OperationalDefaults())
+        assert result.timeout == 600
+
+    def test_overlay_wins_over_base(self):
+        base = OperationalDefaults(timeout=600)
+        result = _merge_defaults(base, OperationalDefaults(timeout=300))
+        assert result.timeout == 300
+
+    def test_none_overlay_does_not_clear_base(self):
+        base = OperationalDefaults(timeout=600)
+        result = _merge_defaults(base, OperationalDefaults(timeout=None))
+        assert result.timeout == 600
+
+    def test_multiple_overlays_last_wins(self):
+        base = OperationalDefaults(timeout=600)
+        result = _merge_defaults(
+            base, OperationalDefaults(timeout=300), OperationalDefaults(timeout=100)
+        )
+        assert result.timeout == 100
+
+    def test_zero_float_wins_over_base(self):
+        """0.0 is a valid non-None value — not filtered by truthiness."""
+        base = OperationalDefaults(retry_base_delay=2.0)
+        result = _merge_defaults(base, OperationalDefaults(retry_base_delay=0.0))
+        assert result.retry_base_delay == 0.0
+
+
+class TestReadEnvDefaults:
+    """Test _read_env_defaults env var parsing (set vs unset distinction)."""
+
+    def test_no_env_vars_returns_all_none(self, monkeypatch):
+        for var in (
+            "NEXUS_TIMEOUT_SECONDS",
+            "NEXUS_OUTPUT_LIMIT_BYTES",
+            "NEXUS_RETRY_MAX_ATTEMPTS",
+            "NEXUS_CLI_DETECTION_TIMEOUT",
+            "NEXUS_RETRY_BASE_DELAY",
+            "NEXUS_RETRY_MAX_DELAY",
+            "NEXUS_TOOL_TIMEOUT_SECONDS",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        result = _read_env_defaults()
+        assert result.timeout is None
+        assert result.retry_base_delay is None
+        assert result.max_retries is None
+
+    def test_only_set_vars_are_populated(self, monkeypatch):
+        monkeypatch.setenv("NEXUS_TIMEOUT_SECONDS", "300")
+        monkeypatch.delenv("NEXUS_OUTPUT_LIMIT_BYTES", raising=False)
+        result = _read_env_defaults()
+        assert result.timeout == 300
+        assert result.output_limit is None  # not set → stays None
+
+    @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "0.0"})
+    def test_zero_float_populated_not_filtered(self):
+        """0.0 is valid — not treated as falsy."""
+        result = _read_env_defaults()
+        assert result.retry_base_delay == 0.0
+
+    @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "bad"})
+    def test_invalid_int_raises(self):
+        with pytest.raises(ConfigurationError) as exc_info:
+            _read_env_defaults()
+        assert exc_info.value.config_key == "NEXUS_TIMEOUT_SECONDS"
+
+    @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "nan"})
+    def test_nan_raises_finite_error(self):
+        with pytest.raises(ConfigurationError, match="must be a finite number"):
+            _read_env_defaults()
+
+
+class TestGetConfig:
+    """Test get_config() singleton behavior."""
+
+    def test_returns_nexus_config(self):
+        assert isinstance(get_config(), NexusConfig)
+
+    def test_singleton_same_object(self):
+        assert get_config() is get_config()
+
+    def test_reset_config_clears_singleton(self):
+        first = get_config()
+        reset_config()
+        second = get_config()
+        assert first is not second
+
+    def test_required_defaults_non_none(self):
+        config = get_config()
+        assert config.defaults.timeout is not None
+        assert config.defaults.output_limit is not None
+        assert config.defaults.max_retries is not None
+        assert config.defaults.retry_base_delay is not None
+        assert config.defaults.retry_max_delay is not None
+
+    @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "123"})
+    def test_env_var_reflected_after_reset(self):
+        config = get_config()
+        assert config.defaults.timeout == 123
+
+    def test_toml_defaults_section_parsed(self, tmp_path, monkeypatch):
+        """[defaults] section in TOML is loaded into config.defaults."""
+        toml_file = tmp_path / "nexus-mcp.toml"
+        toml_file.write_text("[defaults]\ntimeout = 999\n")
+        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
+        monkeypatch.delenv("NEXUS_TIMEOUT_SECONDS", raising=False)
+        assert get_config().defaults.timeout == 999
+
+    def test_toml_defaults_wins_over_env(self, tmp_path, monkeypatch):
+        """TOML [defaults] has higher priority than env var."""
+        toml_file = tmp_path / "nexus-mcp.toml"
+        toml_file.write_text("[defaults]\ntimeout = 777\n")
+        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
+        monkeypatch.setenv("NEXUS_TIMEOUT_SECONDS", "400")
+        assert get_config().defaults.timeout == 777
+
+    def test_per_runner_operational_overrides_in_toml(self, tmp_path, monkeypatch):
+        """Per-runner operational fields in TOML are accessible via get_config().runners."""
+        toml_file = tmp_path / "nexus-mcp.toml"
+        toml_file.write_text("[runner.gemini]\ntimeout = 900\nmax_retries = 5\n")
+        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
+        config = get_config()
+        assert config.runners["gemini"].timeout == 900
+        assert config.runners["gemini"].max_retries == 5
+
+
+class TestGetRunnerDefaults:
+    """Test get_runner_defaults() per-runner merge chain."""
+
+    def test_unknown_runner_returns_global_defaults(self):
+        result = get_runner_defaults("nonexistent")
+        assert result.timeout == get_config().defaults.timeout
+
+    def test_toml_runner_timeout_overrides_global(self, tmp_path, monkeypatch):
+        toml_file = tmp_path / "nexus-mcp.toml"
+        toml_file.write_text("[runner.gemini]\ntimeout = 900\n")
+        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
+        assert get_runner_defaults("gemini").timeout == 900
+
+    def test_agent_model_env_wins_over_toml(self, tmp_path, monkeypatch):
+        toml_file = tmp_path / "nexus-mcp.toml"
+        toml_file.write_text('[runner.gemini]\nmodel = "gemini-2.5-pro"\n')
+        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
+        monkeypatch.setenv("NEXUS_GEMINI_MODEL", "gemini-2.0-flash")
+        assert get_runner_defaults("gemini").model == "gemini-2.0-flash"
+
+    def test_global_defaults_unchanged_by_runner_override(self, tmp_path, monkeypatch):
+        """get_runner_defaults() does not mutate global config.defaults."""
+        toml_file = tmp_path / "nexus-mcp.toml"
+        toml_file.write_text("[runner.gemini]\ntimeout = 900\n")
+        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
+        get_runner_defaults("gemini")
+        assert get_config().defaults.timeout == 600  # hardcoded default, not 900
+
+
+class TestBackwardCompatGetters:
+    """Backward-compat getter functions return correct values via singleton."""
+
+    def test_all_getters_return_non_none(self):
+        assert get_global_timeout() == get_config().defaults.timeout
+        assert get_global_output_limit() == get_config().defaults.output_limit
+        assert get_retry_max_attempts() == get_config().defaults.max_retries
+        assert get_retry_base_delay() == get_config().defaults.retry_base_delay
+        assert get_retry_max_delay() == get_config().defaults.retry_max_delay
+        assert get_cli_detection_timeout() == get_config().defaults.cli_detection_timeout
+
+    def test_get_tool_timeout_zero_coercion(self, monkeypatch):
+        monkeypatch.setenv("NEXUS_TOOL_TIMEOUT_SECONDS", "0")
+        assert get_tool_timeout() is None
+
+    @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "42"})
+    def test_env_override_reaches_getter(self):
+        assert get_global_timeout() == 42
+
+    @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "0.0"})
+    def test_zero_delay_preserved_by_getter(self):
+        """0.0 is a valid base delay — getter must not coerce to default."""
+        assert get_retry_base_delay() == 0.0
+
+
+class TestRunnerConfigExpandedFields:
+    """RunnerConfig now has operational override fields alongside metadata fields."""
+
+    def test_new_fields_default_none(self):
+        cfg = RunnerConfig()
+        assert cfg.timeout is None
+        assert cfg.output_limit is None
+        assert cfg.max_retries is None
+        assert cfg.retry_base_delay is None
+        assert cfg.retry_max_delay is None
+        assert cfg.execution_mode is None
+        assert cfg.model is None
+        assert cfg.cli_path is None
+
+    def test_operational_fields_parseable_from_toml_values(self):
+        cfg = RunnerConfig(
+            timeout=900, max_retries=5, retry_base_delay=0.5, cli_path="/usr/bin/gemini"
+        )
+        assert cfg.timeout == 900
+        assert cfg.max_retries == 5
+        assert cfg.retry_base_delay == 0.5
+        assert cfg.cli_path == "/usr/bin/gemini"

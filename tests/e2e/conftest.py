@@ -63,5 +63,5 @@ def fast_retry_sleep(monkeypatch):
     """
     monkeypatch.setattr(
         "nexus_mcp.runners.base.AbstractRunner._compute_backoff",
-        lambda self, attempt, retry_after: 0.0,
+        lambda self, attempt, retry_after, *_args, **_kwargs: 0.0,
     )

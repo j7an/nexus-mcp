@@ -36,6 +36,8 @@ class TestPreferencesRoundTrip:
             "max_retries": None,
             "output_limit": None,
             "timeout": None,
+            "retry_base_delay": None,
+            "retry_max_delay": None,
         }
 
     async def test_set_model_preference(self, mcp_client):
@@ -63,6 +65,8 @@ class TestPreferencesRoundTrip:
             "max_retries": None,
             "output_limit": None,
             "timeout": None,
+            "retry_base_delay": None,
+            "retry_max_delay": None,
         }
 
     async def test_set_max_retries_preference(self, mcp_client):
@@ -90,6 +94,22 @@ class TestPreferencesRoundTrip:
         result = await mcp_client.call_tool("get_preferences", {})
         assert result.data["max_retries"] is None
         assert result.data["timeout"] == 30  # preserved
+
+    async def test_set_retry_delay_preferences(self, mcp_client):
+        """set_preferences(retry_base_delay=1.5, retry_max_delay=60.0) stores both fields."""
+        await mcp_client.call_tool(
+            "set_preferences", {"retry_base_delay": 1.5, "retry_max_delay": 60.0}
+        )
+        result = await mcp_client.call_tool("get_preferences", {})
+        assert result.data["retry_base_delay"] == 1.5
+        assert result.data["retry_max_delay"] == 60.0
+
+    async def test_clear_retry_base_delay_preference(self, mcp_client):
+        """clear_retry_base_delay=True resets retry_base_delay to None."""
+        await mcp_client.call_tool("set_preferences", {"retry_base_delay": 1.5})
+        await mcp_client.call_tool("set_preferences", {"clear_retry_base_delay": True})
+        result = await mcp_client.call_tool("get_preferences", {})
+        assert result.data["retry_base_delay"] is None
 
     async def test_set_preferences_returns_confirmation(self, mcp_client):
         """set_preferences returns a non-empty confirmation string."""
