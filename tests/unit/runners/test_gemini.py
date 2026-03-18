@@ -771,16 +771,6 @@ class TestGeminiRunnerDualFieldRecovery:
 class TestGeminiRunnerEnvConfiguration:
     """Test GeminiRunner environment variable configuration."""
 
-    @patch.dict("os.environ", {"NEXUS_GEMINI_PATH": "/opt/custom/gemini"})
-    def test_gemini_runner_uses_custom_path_from_env(self):
-        """GeminiRunner uses NEXUS_GEMINI_PATH if set."""
-        runner = make_gemini_runner()
-        request = make_prompt_request(prompt="test")
-
-        # Build command and verify custom path used
-        cmd = runner.build_command(request)
-        assert cmd[0] == "/opt/custom/gemini"
-
     @patch.dict("os.environ", {"NEXUS_GEMINI_MODEL": "gemini-2.5-flash"})
     def test_gemini_runner_uses_default_model_from_env(self):
         """GeminiRunner uses NEXUS_GEMINI_MODEL as default if request.model is None."""

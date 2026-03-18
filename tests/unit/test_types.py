@@ -538,16 +538,12 @@ class TestRunnerInfo:
     def test_runner_info_structure(self):
         info = RunnerInfo(
             name="gemini",
-            type="cli",
-            provider="google",
             models=("gemini-2.5-flash",),
             available=True,
             default_model="gemini-2.5-flash",
             execution_modes=("default", "yolo"),
         )
         assert info.name == "gemini"
-        assert info.type == "cli"
-        assert info.provider == "google"
         assert info.available is True
         assert info.models == ("gemini-2.5-flash",)
         assert info.execution_modes == ("default", "yolo")
@@ -555,8 +551,6 @@ class TestRunnerInfo:
     def test_runner_info_frozen(self):
         info = RunnerInfo(
             name="gemini",
-            type="cli",
-            provider=None,
             models=(),
             available=False,
             default_model=None,
@@ -568,12 +562,9 @@ class TestRunnerInfo:
     def test_runner_info_nullable_fields(self):
         info = RunnerInfo(
             name="test",
-            type="cli",
-            provider=None,
             models=(),
             available=False,
             default_model=None,
             execution_modes=("default",),
         )
-        assert info.provider is None
         assert info.default_model is None

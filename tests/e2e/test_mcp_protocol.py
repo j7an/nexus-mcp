@@ -103,7 +103,6 @@ class TestListRunnersProtocol:
         result = await mcp_client.call_tool("list_runners", {})
         runners = {r.name: r for r in result.data}
         gemini = runners["gemini"]
-        assert gemini.type == "cli"
         assert isinstance(gemini.available, bool)
         assert isinstance(gemini.execution_modes, (list, tuple))
         assert "default" in gemini.execution_modes

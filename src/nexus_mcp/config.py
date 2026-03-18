@@ -1,26 +1,22 @@
 """Configuration module for nexus-mcp.
 
-Provides a unified, tiered configuration system:
+Provides a stateless, tiered configuration system:
 - OperationalDefaults: Pydantic model for the shape of all operational settings.
-- NexusConfig: Top-level config with merged defaults + runner configs.
 - HARDCODED_DEFAULTS: Lowest-priority baseline values.
-- get_config(): Lazy singleton — reads env vars + TOML once on first access.
-- reset_config(): Clear cached config for test isolation.
 - get_runner_defaults(name): Per-runner merged OperationalDefaults.
-- load_runner_config(): Backward-compatible TOML runner config accessor.
-- Backward-compatible getter functions delegating to the singleton.
+- get_runner_models(name): Per-runner model list from env var.
+- Backward-compatible getter functions reading env vars fresh each call.
 
 Resolution order (highest → lowest priority):
-  per-request → session prefs → TOML [runner.X] → env vars → TOML [defaults] → hardcoded
+  per-request → session prefs → per-runner env → global env → hardcoded
 """
 
+import contextlib
 import math
 import os
-import tomllib
-from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from nexus_mcp.exceptions import ConfigurationError
 from nexus_mcp.types import ExecutionMode
@@ -50,8 +46,8 @@ class OperationalDefaults(BaseModel, frozen=True):
     @field_validator("retry_base_delay", "retry_max_delay", "tool_timeout", mode="after")
     @classmethod
     def reject_non_finite(cls, v: float | None) -> float | None:
-        """Safety net for programmatic construction. TOML rejects inf/nan at parse time.
-        Env vars are validated manually in _read_env_defaults() with ConfigurationError."""
+        """Safety net for programmatic construction.
+        Env vars are validated manually in _read_global_env_defaults() with ConfigurationError."""
         if v is not None and not math.isfinite(v):
             raise ValueError(f"must be a finite number, got {v}")
         return v
@@ -82,48 +78,12 @@ def _merge_defaults(
 
 
 # ---------------------------------------------------------------------------
-# Runner config
+# Environment variable parsing — global
 # ---------------------------------------------------------------------------
 
 
-class RunnerConfig(BaseModel, frozen=True):
-    """Configuration for a runner from nexus-mcp.toml."""
-
-    # Metadata fields
-    type: Literal["cli", "server"] = "cli"
-    provider: str | None = None
-    models: tuple[str, ...] = ()
-    url: str | None = None
-    # Operational override fields (new — all optional, None means "use global default")
-    timeout: int | None = None
-    output_limit: int | None = None
-    max_retries: int | None = None
-    retry_base_delay: float | None = None
-    retry_max_delay: float | None = None
-    execution_mode: ExecutionMode | None = None
-    model: str | None = None
-    cli_path: str | None = None
-
-
-# ---------------------------------------------------------------------------
-# Top-level config
-# ---------------------------------------------------------------------------
-
-
-class NexusConfig(BaseModel, frozen=True):
-    """Top-level config: merged global defaults + per-runner configs."""
-
-    defaults: OperationalDefaults
-    runners: dict[str, RunnerConfig]
-
-
-# ---------------------------------------------------------------------------
-# Environment variable parsing
-# ---------------------------------------------------------------------------
-
-
-def _read_env_defaults() -> OperationalDefaults:
-    """Read operational defaults from environment variables.
+def _read_global_env_defaults() -> OperationalDefaults:
+    """Read operational defaults from global environment variables.
 
     Only populates fields where the corresponding env var is set.
     Preserves exact error messages and config_key values expected by existing tests.
@@ -175,139 +135,102 @@ def _read_env_defaults() -> OperationalDefaults:
             )
         kwargs[field] = fv
 
+    # NEXUS_EXECUTION_MODE: global execution mode override
+    raw_mode = os.getenv("NEXUS_EXECUTION_MODE")
+    if raw_mode is not None:
+        if raw_mode not in ("default", "yolo"):
+            raise ConfigurationError(
+                f"Invalid execution mode: {raw_mode!r} (must be 'default' or 'yolo')",
+                config_key="NEXUS_EXECUTION_MODE",
+            )
+        kwargs["execution_mode"] = raw_mode
+
     return OperationalDefaults(**kwargs)
 
 
 # ---------------------------------------------------------------------------
-# TOML loading
+# Environment variable parsing — per-runner
 # ---------------------------------------------------------------------------
 
 
-def _load_toml_config() -> tuple[OperationalDefaults, dict[str, RunnerConfig]]:
-    """Load config from TOML file. Returns (toml_defaults, runners).
+def _read_runner_env_defaults(runner_name: str) -> OperationalDefaults:
+    """Read per-runner operational defaults from NEXUS_{RUNNER}_{KEY} env vars.
 
-    Resolution order:
-        1. NEXUS_CONFIG_PATH env var (absolute path)
-        2. nexus-mcp.toml in current working directory
-
-    Raises:
-        ConfigurationError: If TOML is invalid or field types don't match.
+    Only populates fields where the corresponding env var is set.
+    E.g., for runner_name="gemini": NEXUS_GEMINI_TIMEOUT, NEXUS_GEMINI_MODEL, etc.
     """
-    config_path_env = os.getenv("NEXUS_CONFIG_PATH")
-    path = Path(config_path_env if config_path_env is not None else "nexus-mcp.toml")
+    kwargs: dict[str, Any] = {}
+    prefix = runner_name.upper()
 
-    if not path.is_file():
-        return OperationalDefaults(), {}
+    for key, field, parse in (
+        ("TIMEOUT", "timeout", int),
+        ("OUTPUT_LIMIT", "output_limit", int),
+        ("MAX_RETRIES", "max_retries", int),
+    ):
+        raw = os.getenv(f"NEXUS_{prefix}_{key}")
+        if raw is not None:
+            with contextlib.suppress(ValueError):
+                kwargs[field] = parse(raw)
 
-    try:
-        with path.open("rb") as f:
-            data = tomllib.load(f)
-    except tomllib.TOMLDecodeError as e:
-        msg = f"Invalid TOML in {path}: {e}"
-        raise ConfigurationError(msg, config_key=str(path)) from e
+    for key, field in (
+        ("RETRY_BASE_DELAY", "retry_base_delay"),
+        ("RETRY_MAX_DELAY", "retry_max_delay"),
+    ):
+        raw = os.getenv(f"NEXUS_{prefix}_{key}")
+        if raw is not None:
+            try:
+                fv = float(raw)
+                if math.isfinite(fv) and fv >= 0:
+                    kwargs[field] = fv
+            except ValueError:
+                pass  # silently skip invalid per-runner overrides
 
-    # Parse [defaults] section
-    toml_defaults = OperationalDefaults()
-    raw_defaults = data.get("defaults", {})
-    if raw_defaults:
-        try:
-            toml_defaults = OperationalDefaults(**raw_defaults)
-        except ValidationError as e:
-            raise ConfigurationError(
-                f"Invalid defaults config in {path}: {e}", config_key="defaults"
-            ) from e
+    # Per-runner model: NEXUS_{RUNNER}_MODEL
+    model = os.getenv(f"NEXUS_{prefix}_MODEL")
+    if model:
+        kwargs["model"] = model
 
-    # Parse [runner.*] sections
-    runners_data = data.get("runner", {})
-    runners: dict[str, RunnerConfig] = {}
-    for name, cfg in runners_data.items():
-        if not isinstance(cfg, dict):
-            msg = f"Runner '{name}' must be a TOML table, got {type(cfg).__name__}"
-            raise ConfigurationError(msg, config_key=f"runner.{name}")
-        try:
-            runners[name] = RunnerConfig(**cfg)
-        except ValidationError as e:
-            msg = f"Invalid runner config for '{name}' in {path}: {e}"
-            raise ConfigurationError(msg, config_key=f"runner.{name}") from e
+    # Per-runner execution mode: NEXUS_{RUNNER}_EXECUTION_MODE
+    mode = os.getenv(f"NEXUS_{prefix}_EXECUTION_MODE")
+    if mode in ("default", "yolo"):
+        kwargs["execution_mode"] = mode
 
-    return toml_defaults, runners
+    return OperationalDefaults(**kwargs)
 
 
 # ---------------------------------------------------------------------------
-# Config singleton
+# Per-runner models
 # ---------------------------------------------------------------------------
 
-_config: NexusConfig | None = None
 
+def get_runner_models(runner_name: str) -> tuple[str, ...]:
+    """Get model list for a runner from NEXUS_{RUNNER}_MODELS env var.
 
-def _load_config() -> NexusConfig:
-    """Assemble NexusConfig: HARDCODED_DEFAULTS ← TOML [defaults] ← env vars."""
-    env_defaults = _read_env_defaults()
-    toml_defaults, runners = _load_toml_config()
-    merged = _merge_defaults(HARDCODED_DEFAULTS, toml_defaults, env_defaults)
-    return NexusConfig(defaults=merged, runners=runners)
+    The env var is comma-separated. Whitespace around each model name is stripped.
+    Empty strings are filtered out.
 
-
-def get_config() -> NexusConfig:
-    """Lazy singleton. Reads env vars + TOML once on first access.
-
-    For test isolation: call reset_config() before each test that patches env vars,
-    then access the singleton within the test body.
+    Returns:
+        Tuple of model name strings, or empty tuple if env var not set.
     """
-    global _config
-    if _config is None:
-        _config = _load_config()
-    return _config
-
-
-def reset_config() -> None:
-    """Clear cached config. For test isolation — pair with RunnerFactory.clear_cache()."""
-    global _config
-    _config = None
+    raw = os.getenv(f"NEXUS_{runner_name.upper()}_MODELS")
+    if not raw:
+        return ()
+    return tuple(m.strip() for m in raw.split(",") if m.strip())
 
 
 # ---------------------------------------------------------------------------
-# Per-runner defaults
+# Per-runner defaults (3-tier merge)
 # ---------------------------------------------------------------------------
 
 
 def get_runner_defaults(runner_name: str) -> OperationalDefaults:
     """Get merged operational defaults for a specific runner.
 
-    Merge chain: global config.defaults ← TOML [runner.X] fields ← per-agent env vars.
-
-    Note: cli_path is NOT in OperationalDefaults (security-sensitive). Callers that need
-    it must use get_agent_env(name, "PATH", default=name) or name directly.
+    Merge chain: hardcoded → global env → per-runner env.
     """
-    config = get_config()
-    runner_cfg = config.runners.get(runner_name)
-
-    # Extract operational fields from RunnerConfig (exclude metadata-only fields)
-    runner_overrides = OperationalDefaults()
-    if runner_cfg is not None:
-        runner_kwargs: dict[str, Any] = {}
-        for field in (
-            "timeout",
-            "output_limit",
-            "max_retries",
-            "retry_base_delay",
-            "retry_max_delay",
-            "execution_mode",
-            "model",
-        ):
-            value = getattr(runner_cfg, field)
-            if value is not None:
-                runner_kwargs[field] = value
-        if runner_kwargs:
-            runner_overrides = OperationalDefaults(**runner_kwargs)
-
-    # Per-agent model env var is the highest-priority override for model
-    agent_model = get_agent_env(runner_name, "MODEL")
-    agent_overrides = (
-        OperationalDefaults(model=agent_model) if agent_model is not None else OperationalDefaults()
-    )
-
-    return _merge_defaults(config.defaults, runner_overrides, agent_overrides)
+    global_env = _read_global_env_defaults()
+    runner_env = _read_runner_env_defaults(runner_name)
+    return _merge_defaults(HARDCODED_DEFAULTS, global_env, runner_env)
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +261,20 @@ def get_agent_env(agent: str, key: str, default: str | None = None) -> str | Non
 
 
 # ---------------------------------------------------------------------------
-# Backward-compatible getter functions (delegate to singleton)
+# Merged global defaults (stateless — reads env fresh each call)
+# ---------------------------------------------------------------------------
+
+
+def _get_merged_defaults() -> OperationalDefaults:
+    """Return HARDCODED_DEFAULTS merged with global env var overrides.
+
+    Used by backward-compatible getter functions. Reads env vars fresh each call.
+    """
+    return _merge_defaults(HARDCODED_DEFAULTS, _read_global_env_defaults())
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible getter functions
 # ---------------------------------------------------------------------------
 
 
@@ -354,7 +290,7 @@ def get_global_output_limit() -> int:
     Environment Variable:
         NEXUS_OUTPUT_LIMIT_BYTES: Max output size in bytes
     """
-    return get_config().defaults.output_limit  # type: ignore[return-value]
+    return _get_merged_defaults().output_limit  # type: ignore[return-value]
 
 
 def get_global_timeout() -> int:
@@ -369,7 +305,7 @@ def get_global_timeout() -> int:
     Environment Variable:
         NEXUS_TIMEOUT_SECONDS: Subprocess timeout in seconds
     """
-    return get_config().defaults.timeout  # type: ignore[return-value]
+    return _get_merged_defaults().timeout  # type: ignore[return-value]
 
 
 def get_retry_max_attempts() -> int:
@@ -384,7 +320,7 @@ def get_retry_max_attempts() -> int:
     Environment Variable:
         NEXUS_RETRY_MAX_ATTEMPTS: Max number of attempts (including the first)
     """
-    return get_config().defaults.max_retries  # type: ignore[return-value]
+    return _get_merged_defaults().max_retries  # type: ignore[return-value]
 
 
 def get_retry_base_delay() -> float:
@@ -399,7 +335,7 @@ def get_retry_base_delay() -> float:
     Environment Variable:
         NEXUS_RETRY_BASE_DELAY: Base seconds for exponential backoff
     """
-    return get_config().defaults.retry_base_delay  # type: ignore[return-value]
+    return _get_merged_defaults().retry_base_delay  # type: ignore[return-value]
 
 
 def get_retry_max_delay() -> float:
@@ -414,7 +350,7 @@ def get_retry_max_delay() -> float:
     Environment Variable:
         NEXUS_RETRY_MAX_DELAY: Maximum seconds to wait between retries
     """
-    return get_config().defaults.retry_max_delay  # type: ignore[return-value]
+    return _get_merged_defaults().retry_max_delay  # type: ignore[return-value]
 
 
 def get_tool_timeout() -> float | None:
@@ -432,7 +368,7 @@ def get_tool_timeout() -> float | None:
         NEXUS_TOOL_TIMEOUT_SECONDS: Seconds before FastMCP cancels a hung tool call.
             Set to 0 to disable. Must be finite and non-negative.
     """
-    value = get_config().defaults.tool_timeout
+    value = _get_merged_defaults().tool_timeout
     return value if value and value > 0 else None
 
 
@@ -448,24 +384,4 @@ def get_cli_detection_timeout() -> int:
     Environment Variable:
         NEXUS_CLI_DETECTION_TIMEOUT: Seconds to wait for '<cli> --version'
     """
-    return get_config().defaults.cli_detection_timeout  # type: ignore[return-value]
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible TOML runner config accessor
-# ---------------------------------------------------------------------------
-
-
-def load_runner_config() -> dict[str, RunnerConfig]:
-    """Load runner configuration from nexus-mcp.toml.
-
-    Delegates to get_config().runners. For test isolation, reset_config() before
-    accessing with a custom NEXUS_CONFIG_PATH.
-
-    Returns:
-        Mapping of runner name to RunnerConfig. Empty dict if file not found.
-
-    Raises:
-        ConfigurationError: If TOML is invalid or field types don't match.
-    """
-    return get_config().runners
+    return _get_merged_defaults().cli_detection_timeout  # type: ignore[return-value]

@@ -10,23 +10,21 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastmcp import Context
 
-from nexus_mcp.config import reset_config
 from nexus_mcp.runners.factory import RunnerFactory
 from tests.fixtures import cli_detection_mocks
 
 
 @pytest.fixture(autouse=True)
-def _reset_config_isolation():
-    """Reset config singleton before and after each test for env-var isolation.
+def _clean_runner_cache():
+    """Clear RunnerFactory cache before and after each test.
 
-    Before: ensures a clean slate even if module-level code (server.py import)
-    populated the singleton during test collection.
-    After: ensures patched env vars from one test don't bleed into the next.
-    Pairs with RunnerFactory.clear_cache() in mock_cli_detection teardown.
+    Config is now stateless (reads env vars fresh each call), so there is no
+    singleton to reset. We still need to clear the runner cache to prevent
+    runner instances from leaking between tests.
     """
-    reset_config()
+    RunnerFactory.clear_cache()
     yield
-    reset_config()
+    RunnerFactory.clear_cache()
 
 
 @pytest.fixture

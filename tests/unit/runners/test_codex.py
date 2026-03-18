@@ -57,18 +57,9 @@ class TestCodexRunnerInit:
         assert exc_info.value.cli_name == "codex"
 
     def test_default_cli_path(self):
-        """Default cli_path is 'codex' when NEXUS_CODEX_PATH is not set."""
+        """cli_path is always the agent name."""
         runner = make_codex_runner()
         assert runner.cli_path == "codex"
-
-    def test_custom_cli_path_from_env(self):
-        """cli_path is taken from NEXUS_CODEX_PATH env var."""
-        with patch(
-            "nexus_mcp.runners.base.get_agent_env",
-            side_effect=lambda _agent, key, **_kw: "/custom/codex" if key == "PATH" else None,
-        ):
-            runner = make_codex_runner()
-        assert runner.cli_path == "/custom/codex"
 
 
 # ---------------------------------------------------------------------------
@@ -566,13 +557,6 @@ class TestCodexRunnerDualFieldRecovery:
 
 class TestCodexRunnerEnvConfiguration:
     """Test CodexRunner environment variable configuration."""
-
-    @patch.dict("os.environ", {"NEXUS_CODEX_PATH": "/opt/custom/codex"})
-    def test_codex_runner_uses_custom_path_from_env(self):
-        """CodexRunner uses NEXUS_CODEX_PATH if set."""
-        runner = make_codex_runner()
-        cmd = runner.build_command(make_prompt_request(cli="codex", prompt="test"))
-        assert cmd[0] == "/opt/custom/codex"
 
     @patch.dict("os.environ", {"NEXUS_CODEX_MODEL": "o3"})
     def test_codex_runner_uses_default_model_from_env(self):

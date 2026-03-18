@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastmcp.exceptions import ToolError
 
-from nexus_mcp.config import RunnerConfig, get_tool_timeout
+from nexus_mcp.config import get_tool_timeout
 from nexus_mcp.exceptions import (
     CLINotFoundError,
     ParseError,
@@ -234,23 +234,20 @@ class TestListRunners:
         opencode = next(r for r in result if r.name == "opencode")
         assert opencode.execution_modes == ("default",)
 
-    @patch(
-        "nexus_mcp.server._runner_config",
-        {"gemini": RunnerConfig(provider="google", models=("gemini-2.5-flash",))},
-    )
-    def test_list_runners_with_config(self):
+    def test_list_runners_with_models_env(self, monkeypatch):
+        """Models are read from NEXUS_{RUNNER}_MODELS env var."""
+        monkeypatch.setenv("NEXUS_GEMINI_MODELS", "gemini-2.5-flash,gemini-2.5-pro")
         result = list_runners()
         gemini = next(r for r in result if r.name == "gemini")
-        assert gemini.provider == "google"
-        assert gemini.models == ("gemini-2.5-flash",)
+        assert gemini.models == ("gemini-2.5-flash", "gemini-2.5-pro")
 
-    def test_list_runners_without_config(self):
+    def test_list_runners_no_models_env(self):
+        """Without NEXUS_{RUNNER}_MODELS, models is empty tuple."""
         result = list_runners()
         for r in result:
-            assert r.type == "cli"
+            assert r.models == ()
 
     @patch("nexus_mcp.server.detect_cli")
-    @patch("nexus_mcp.server._runner_config", {})
     def test_list_runners_unavailable_cli(self, mock_detect_cli, monkeypatch):
         """Unavailable CLI sets available=False and reads default_model from env var."""
         from nexus_mcp.cli_detector import CLIInfo
@@ -262,18 +259,8 @@ class TestListRunners:
         assert gemini.available is False
         assert gemini.default_model == "gemini-test-model"
 
-    @patch("nexus_mcp.server._runner_config", {})
-    def test_list_runners_without_config_defaults(self):
-        """Without config, provider is None and models is empty for all runners."""
-        result = list_runners()
-        for r in result:
-            assert r.type == "cli"
-            assert r.provider is None
-            assert r.models == ()
-
     @patch("nexus_mcp.server.RunnerFactory.create")
     @patch("nexus_mcp.server.detect_cli")
-    @patch("nexus_mcp.server._runner_config", {})
     def test_list_runners_toctou_cli_disappears(self, mock_detect_cli, mock_create, monkeypatch):
         """CLI found by detect_cli but disappears before RunnerFactory.create() runs.
 

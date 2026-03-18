@@ -31,7 +31,7 @@ from nexus_mcp.cli_detector import (
     get_cli_capabilities,
     get_cli_version,
 )
-from nexus_mcp.config import get_agent_env, get_runner_defaults
+from nexus_mcp.config import get_runner_defaults
 from nexus_mcp.exceptions import CLINotFoundError, ParseError, RetryableError, SubprocessError
 from nexus_mcp.process import run_subprocess
 from nexus_mcp.types import AgentResponse, ExecutionMode, PromptRequest
@@ -102,11 +102,7 @@ class AbstractRunner(ABC):
         self.default_max_attempts: int = defaults.max_retries  # type: ignore[assignment]
         self.output_limit: int = defaults.output_limit  # type: ignore[assignment]
         self.default_model: str | None = defaults.model
-        # cli_path not in OperationalDefaults (security-sensitive); double-fallback guards
-        # against empty-string env vars (get_agent_env default= prevents None, or= prevents "")
-        self.cli_path: str = (
-            get_agent_env(self.AGENT_NAME, "PATH", default=self.AGENT_NAME) or self.AGENT_NAME
-        )
+        self.cli_path: str = self.AGENT_NAME
 
     async def run(self, request: PromptRequest) -> AgentResponse:
         """Execute CLI agent with retry on transient errors.

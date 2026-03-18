@@ -25,7 +25,7 @@ from fastmcp.exceptions import ToolError
 from pydantic import ValidationError
 
 from nexus_mcp.cli_detector import CLIInfo, detect_cli
-from nexus_mcp.config import RunnerConfig, get_agent_env, get_config, get_tool_timeout
+from nexus_mcp.config import get_agent_env, get_runner_models, get_tool_timeout
 from nexus_mcp.exceptions import CLINotFoundError
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import (
@@ -42,7 +42,6 @@ mcp = FastMCP("nexus-mcp")
 logger = logging.getLogger(__name__)
 
 _PREFERENCES_KEY = "nexus:preferences"
-_runner_config: dict[str, RunnerConfig] = get_config().runners
 
 
 async def _get_session_preferences(ctx: Context | None) -> SessionPreferences:
@@ -272,14 +271,14 @@ def list_runners() -> list[RunnerInfo]:
     """Return metadata for all registered CLI runners.
 
     Returns:
-        Sorted list of RunnerInfo with provider, models, availability,
+        Sorted list of RunnerInfo with models (from env), availability,
         default model, and supported execution modes per runner.
     """
     result: list[RunnerInfo] = []
     for name in RunnerFactory.list_clis():
         cli_info = detect_cli(name)
-        config = _runner_config.get(name)
         runner_cls = RunnerFactory.get_runner_class(name)
+        models = get_runner_models(name)
 
         if cli_info.found:
             try:
@@ -295,9 +294,7 @@ def list_runners() -> list[RunnerInfo]:
         result.append(
             RunnerInfo(
                 name=name,
-                type=config.type if config else "cli",
-                provider=config.provider if config else None,
-                models=config.models if config else (),
+                models=models,
                 available=cli_info.found,
                 default_model=default_model,
                 execution_modes=runner_cls._SUPPORTED_MODES,

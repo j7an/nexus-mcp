@@ -8,23 +8,20 @@ from pydantic import ValidationError
 
 from nexus_mcp.config import (
     HARDCODED_DEFAULTS,
-    NexusConfig,
     OperationalDefaults,
-    RunnerConfig,
     _merge_defaults,
-    _read_env_defaults,
+    _read_global_env_defaults,
+    _read_runner_env_defaults,
     get_agent_env,
     get_cli_detection_timeout,
-    get_config,
     get_global_output_limit,
     get_global_timeout,
     get_retry_base_delay,
     get_retry_max_attempts,
     get_retry_max_delay,
     get_runner_defaults,
+    get_runner_models,
     get_tool_timeout,
-    load_runner_config,
-    reset_config,
 )
 from nexus_mcp.exceptions import ConfigurationError
 
@@ -341,105 +338,8 @@ class TestGetAgentEnv:
         assert model == "gemini-2.5-flash"
 
 
-class TestRunnerConfig:
-    def test_defaults(self):
-        cfg = RunnerConfig()
-        assert cfg.type == "cli"
-        assert cfg.provider is None
-        assert cfg.models == ()
-        assert cfg.url is None
-
-    def test_frozen(self):
-        cfg = RunnerConfig()
-        with pytest.raises(ValidationError):
-            cfg.type = "server"
-
-    def test_full_config(self):
-        cfg = RunnerConfig(
-            type="server",
-            provider="google",
-            models=["gemini-2.5-flash"],
-            url="http://localhost:4000",
-        )
-        assert cfg.type == "server"
-        assert cfg.provider == "google"
-        assert cfg.models == ("gemini-2.5-flash",)
-        assert cfg.url == "http://localhost:4000"
-
-
-class TestLoadRunnerConfig:
-    def test_missing_file_returns_empty_dict(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(tmp_path / "nonexistent.toml"))
-        assert load_runner_config() == {}
-
-    def test_valid_toml(self, tmp_path, monkeypatch):
-        toml_file = tmp_path / "nexus-mcp.toml"
-        toml_file.write_text(
-            '[runner.gemini]\nprovider = "google"\nmodels = ["gemini-2.5-flash"]\n'
-        )
-        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
-        result = load_runner_config()
-        assert "gemini" in result
-        assert result["gemini"].provider == "google"
-        assert result["gemini"].models == ("gemini-2.5-flash",)
-        assert result["gemini"].type == "cli"
-
-    def test_invalid_toml_raises_config_error(self, tmp_path, monkeypatch):
-        toml_file = tmp_path / "bad.toml"
-        toml_file.write_text("not valid [[[ toml")
-        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
-        with pytest.raises(ConfigurationError):
-            load_runner_config()
-
-    def test_invalid_field_type_raises_config_error(self, tmp_path, monkeypatch):
-        toml_file = tmp_path / "bad-type.toml"
-        toml_file.write_text("[runner.gemini]\nprovider = 123\n")
-        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
-        with pytest.raises(ConfigurationError):
-            load_runner_config()
-
-    def test_env_var_overrides_cwd(self, tmp_path, monkeypatch):
-        toml_file = tmp_path / "custom.toml"
-        toml_file.write_text('[runner.test]\nprovider = "custom"\n')
-        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
-        result = load_runner_config()
-        assert "test" in result
-        assert result["test"].provider == "custom"
-
-    def test_cwd_fallback(self, tmp_path, monkeypatch):
-        toml_file = tmp_path / "nexus-mcp.toml"
-        toml_file.write_text('[runner.gemini]\nprovider = "google"\n')
-        monkeypatch.delenv("NEXUS_CONFIG_PATH", raising=False)
-        monkeypatch.chdir(tmp_path)
-        result = load_runner_config()
-        assert "gemini" in result
-
-    def test_server_type_config(self, tmp_path, monkeypatch):
-        toml_file = tmp_path / "server.toml"
-        toml_file.write_text(
-            "[runner.opencode]\n"
-            'type = "server"\n'
-            'url = "http://localhost:4000"\n'
-            'provider = "multi"\n'
-        )
-        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
-        result = load_runner_config()
-        assert result["opencode"].type == "server"
-        assert result["opencode"].url == "http://localhost:4000"
-
-    def test_non_table_runner_config_raises_config_error(self, tmp_path, monkeypatch):
-        """Runner section that is a scalar (not a TOML table) raises ConfigurationError."""
-        toml_file = tmp_path / "bad-runner.toml"
-        # TOML: runner.gemini = "string" makes gemini a string, not a table
-        toml_file.write_text('runner.gemini = "not-a-table"\n')
-        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
-        with pytest.raises(ConfigurationError) as exc_info:
-            load_runner_config()
-        assert exc_info.value.config_key == "runner.gemini"
-
-
 # ---------------------------------------------------------------------------
-# New tests: unified config models, singleton, and per-runner defaults
+# Operational defaults model, hardcoded defaults, merge logic
 # ---------------------------------------------------------------------------
 
 
@@ -546,8 +446,8 @@ class TestMergeDefaults:
         assert result.retry_base_delay == 0.0
 
 
-class TestReadEnvDefaults:
-    """Test _read_env_defaults env var parsing (set vs unset distinction)."""
+class TestReadGlobalEnvDefaults:
+    """Test _read_global_env_defaults env var parsing (set vs unset distinction)."""
 
     def test_no_env_vars_returns_all_none(self, monkeypatch):
         for var in (
@@ -558,131 +458,201 @@ class TestReadEnvDefaults:
             "NEXUS_RETRY_BASE_DELAY",
             "NEXUS_RETRY_MAX_DELAY",
             "NEXUS_TOOL_TIMEOUT_SECONDS",
+            "NEXUS_EXECUTION_MODE",
         ):
             monkeypatch.delenv(var, raising=False)
-        result = _read_env_defaults()
+        result = _read_global_env_defaults()
         assert result.timeout is None
         assert result.retry_base_delay is None
         assert result.max_retries is None
+        assert result.execution_mode is None
 
     def test_only_set_vars_are_populated(self, monkeypatch):
         monkeypatch.setenv("NEXUS_TIMEOUT_SECONDS", "300")
         monkeypatch.delenv("NEXUS_OUTPUT_LIMIT_BYTES", raising=False)
-        result = _read_env_defaults()
+        result = _read_global_env_defaults()
         assert result.timeout == 300
         assert result.output_limit is None  # not set → stays None
 
     @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "0.0"})
     def test_zero_float_populated_not_filtered(self):
         """0.0 is valid — not treated as falsy."""
-        result = _read_env_defaults()
+        result = _read_global_env_defaults()
         assert result.retry_base_delay == 0.0
 
     @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "bad"})
     def test_invalid_int_raises(self):
         with pytest.raises(ConfigurationError) as exc_info:
-            _read_env_defaults()
+            _read_global_env_defaults()
         assert exc_info.value.config_key == "NEXUS_TIMEOUT_SECONDS"
 
     @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "nan"})
     def test_nan_raises_finite_error(self):
         with pytest.raises(ConfigurationError, match="must be a finite number"):
-            _read_env_defaults()
+            _read_global_env_defaults()
+
+    @patch.dict(os.environ, {"NEXUS_EXECUTION_MODE": "yolo"})
+    def test_execution_mode_yolo(self):
+        result = _read_global_env_defaults()
+        assert result.execution_mode == "yolo"
+
+    @patch.dict(os.environ, {"NEXUS_EXECUTION_MODE": "default"})
+    def test_execution_mode_default(self):
+        result = _read_global_env_defaults()
+        assert result.execution_mode == "default"
+
+    @patch.dict(os.environ, {"NEXUS_EXECUTION_MODE": "invalid"})
+    def test_execution_mode_invalid_raises(self):
+        with pytest.raises(ConfigurationError) as exc_info:
+            _read_global_env_defaults()
+        assert exc_info.value.config_key == "NEXUS_EXECUTION_MODE"
+        assert "must be 'default' or 'yolo'" in str(exc_info.value)
 
 
-class TestGetConfig:
-    """Test get_config() singleton behavior."""
+# ---------------------------------------------------------------------------
+# Per-runner env var defaults
+# ---------------------------------------------------------------------------
 
-    def test_returns_nexus_config(self):
-        assert isinstance(get_config(), NexusConfig)
 
-    def test_singleton_same_object(self):
-        assert get_config() is get_config()
+class TestReadRunnerEnvDefaults:
+    """Test _read_runner_env_defaults per-runner env var parsing."""
 
-    def test_reset_config_clears_singleton(self):
-        first = get_config()
-        reset_config()
-        second = get_config()
-        assert first is not second
+    def test_no_env_vars_returns_all_none(self, monkeypatch):
+        for key in ("TIMEOUT", "OUTPUT_LIMIT", "MAX_RETRIES", "MODEL", "EXECUTION_MODE"):
+            monkeypatch.delenv(f"NEXUS_GEMINI_{key}", raising=False)
+        for key in ("RETRY_BASE_DELAY", "RETRY_MAX_DELAY"):
+            monkeypatch.delenv(f"NEXUS_GEMINI_{key}", raising=False)
+        result = _read_runner_env_defaults("gemini")
+        assert result.timeout is None
+        assert result.model is None
 
-    def test_required_defaults_non_none(self):
-        config = get_config()
-        assert config.defaults.timeout is not None
-        assert config.defaults.output_limit is not None
-        assert config.defaults.max_retries is not None
-        assert config.defaults.retry_base_delay is not None
-        assert config.defaults.retry_max_delay is not None
+    def test_timeout_from_env(self, monkeypatch):
+        monkeypatch.setenv("NEXUS_GEMINI_TIMEOUT", "900")
+        result = _read_runner_env_defaults("gemini")
+        assert result.timeout == 900
 
-    @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "123"})
-    def test_env_var_reflected_after_reset(self):
-        config = get_config()
-        assert config.defaults.timeout == 123
+    def test_model_from_env(self, monkeypatch):
+        monkeypatch.setenv("NEXUS_GEMINI_MODEL", "gemini-2.5-flash")
+        result = _read_runner_env_defaults("gemini")
+        assert result.model == "gemini-2.5-flash"
 
-    def test_toml_defaults_section_parsed(self, tmp_path, monkeypatch):
-        """[defaults] section in TOML is loaded into config.defaults."""
-        toml_file = tmp_path / "nexus-mcp.toml"
-        toml_file.write_text("[defaults]\ntimeout = 999\n")
-        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
-        monkeypatch.delenv("NEXUS_TIMEOUT_SECONDS", raising=False)
-        assert get_config().defaults.timeout == 999
+    def test_execution_mode_from_env(self, monkeypatch):
+        monkeypatch.setenv("NEXUS_GEMINI_EXECUTION_MODE", "yolo")
+        result = _read_runner_env_defaults("gemini")
+        assert result.execution_mode == "yolo"
 
-    def test_env_wins_over_toml_defaults(self, tmp_path, monkeypatch):
-        """Env vars have higher priority than TOML [defaults]."""
-        toml_file = tmp_path / "nexus-mcp.toml"
-        toml_file.write_text("[defaults]\ntimeout = 777\n")
-        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
-        monkeypatch.setenv("NEXUS_TIMEOUT_SECONDS", "400")
-        assert get_config().defaults.timeout == 400
+    def test_invalid_timeout_silently_skipped(self, monkeypatch):
+        monkeypatch.setenv("NEXUS_GEMINI_TIMEOUT", "not-a-number")
+        result = _read_runner_env_defaults("gemini")
+        assert result.timeout is None  # silently skipped
 
-    def test_per_runner_operational_overrides_in_toml(self, tmp_path, monkeypatch):
-        """Per-runner operational fields in TOML are accessible via get_config().runners."""
-        toml_file = tmp_path / "nexus-mcp.toml"
-        toml_file.write_text("[runner.gemini]\ntimeout = 900\nmax_retries = 5\n")
-        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
-        config = get_config()
-        assert config.runners["gemini"].timeout == 900
-        assert config.runners["gemini"].max_retries == 5
+    def test_invalid_execution_mode_silently_skipped(self, monkeypatch):
+        monkeypatch.setenv("NEXUS_GEMINI_EXECUTION_MODE", "turbo")
+        result = _read_runner_env_defaults("gemini")
+        assert result.execution_mode is None  # silently skipped
+
+    def test_retry_base_delay_from_env(self, monkeypatch):
+        monkeypatch.setenv("NEXUS_CODEX_RETRY_BASE_DELAY", "0.5")
+        result = _read_runner_env_defaults("codex")
+        assert result.retry_base_delay == 0.5
+
+    def test_negative_retry_delay_silently_skipped(self, monkeypatch):
+        monkeypatch.setenv("NEXUS_CODEX_RETRY_BASE_DELAY", "-1.0")
+        result = _read_runner_env_defaults("codex")
+        assert result.retry_base_delay is None  # negative → skipped
+
+
+# ---------------------------------------------------------------------------
+# Per-runner models
+# ---------------------------------------------------------------------------
+
+
+class TestGetRunnerModels:
+    """Test get_runner_models() env var parsing."""
+
+    def test_not_set_returns_empty(self, monkeypatch):
+        monkeypatch.delenv("NEXUS_GEMINI_MODELS", raising=False)
+        assert get_runner_models("gemini") == ()
+
+    def test_single_model(self, monkeypatch):
+        monkeypatch.setenv("NEXUS_GEMINI_MODELS", "gemini-2.5-flash")
+        assert get_runner_models("gemini") == ("gemini-2.5-flash",)
+
+    def test_multiple_models(self, monkeypatch):
+        monkeypatch.setenv("NEXUS_GEMINI_MODELS", "gemini-2.5-flash,gemini-2.5-pro")
+        assert get_runner_models("gemini") == ("gemini-2.5-flash", "gemini-2.5-pro")
+
+    def test_whitespace_stripped(self, monkeypatch):
+        monkeypatch.setenv("NEXUS_GEMINI_MODELS", " flash , pro ")
+        assert get_runner_models("gemini") == ("flash", "pro")
+
+    def test_empty_entries_filtered(self, monkeypatch):
+        monkeypatch.setenv("NEXUS_GEMINI_MODELS", "flash,,pro,")
+        assert get_runner_models("gemini") == ("flash", "pro")
+
+    def test_empty_string_returns_empty(self, monkeypatch):
+        monkeypatch.setenv("NEXUS_GEMINI_MODELS", "")
+        assert get_runner_models("gemini") == ()
+
+
+# ---------------------------------------------------------------------------
+# Per-runner defaults (3-tier merge)
+# ---------------------------------------------------------------------------
 
 
 class TestGetRunnerDefaults:
-    """Test get_runner_defaults() per-runner merge chain."""
+    """Test get_runner_defaults() 3-tier merge: hardcoded → global env → per-runner env."""
 
-    def test_unknown_runner_returns_global_defaults(self):
+    def test_unknown_runner_returns_hardcoded_defaults(self):
         result = get_runner_defaults("nonexistent")
-        assert result.timeout == get_config().defaults.timeout
+        assert result.timeout == HARDCODED_DEFAULTS.timeout
 
-    def test_toml_runner_timeout_overrides_global(self, tmp_path, monkeypatch):
-        toml_file = tmp_path / "nexus-mcp.toml"
-        toml_file.write_text("[runner.gemini]\ntimeout = 900\n")
-        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
-        assert get_runner_defaults("gemini").timeout == 900
+    @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "300"})
+    def test_global_env_overrides_hardcoded(self):
+        result = get_runner_defaults("gemini")
+        assert result.timeout == 300
 
-    def test_agent_model_env_wins_over_toml(self, tmp_path, monkeypatch):
-        toml_file = tmp_path / "nexus-mcp.toml"
-        toml_file.write_text('[runner.gemini]\nmodel = "gemini-2.5-pro"\n')
-        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
-        monkeypatch.setenv("NEXUS_GEMINI_MODEL", "gemini-2.0-flash")
-        assert get_runner_defaults("gemini").model == "gemini-2.0-flash"
+    @patch.dict(os.environ, {"NEXUS_GEMINI_TIMEOUT": "900"})
+    def test_runner_env_overrides_global(self):
+        result = get_runner_defaults("gemini")
+        assert result.timeout == 900
 
-    def test_global_defaults_unchanged_by_runner_override(self, tmp_path, monkeypatch):
-        """get_runner_defaults() does not mutate global config.defaults."""
-        toml_file = tmp_path / "nexus-mcp.toml"
-        toml_file.write_text("[runner.gemini]\ntimeout = 900\n")
-        monkeypatch.setenv("NEXUS_CONFIG_PATH", str(toml_file))
-        get_runner_defaults("gemini")
-        assert get_config().defaults.timeout == 600  # hardcoded default, not 900
+    @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "300", "NEXUS_GEMINI_TIMEOUT": "900"})
+    def test_runner_env_wins_over_global_env(self):
+        """Per-runner env has higher priority than global env."""
+        result = get_runner_defaults("gemini")
+        assert result.timeout == 900
+
+    @patch.dict(os.environ, {"NEXUS_GEMINI_MODEL": "gemini-2.0-flash"})
+    def test_runner_model_from_env(self):
+        result = get_runner_defaults("gemini")
+        assert result.model == "gemini-2.0-flash"
+
+    def test_defaults_are_non_none_for_required_fields(self):
+        """All required fields are non-None after merge with hardcoded defaults."""
+        result = get_runner_defaults("gemini")
+        assert result.timeout is not None
+        assert result.output_limit is not None
+        assert result.max_retries is not None
+        assert result.retry_base_delay is not None
+        assert result.retry_max_delay is not None
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible getter functions
+# ---------------------------------------------------------------------------
 
 
 class TestBackwardCompatGetters:
-    """Backward-compat getter functions return correct values via singleton."""
+    """Backward-compat getters read env vars fresh (no singleton)."""
 
-    def test_all_getters_return_non_none(self):
-        assert get_global_timeout() == get_config().defaults.timeout
-        assert get_global_output_limit() == get_config().defaults.output_limit
-        assert get_retry_max_attempts() == get_config().defaults.max_retries
-        assert get_retry_base_delay() == get_config().defaults.retry_base_delay
-        assert get_retry_max_delay() == get_config().defaults.retry_max_delay
-        assert get_cli_detection_timeout() == get_config().defaults.cli_detection_timeout
+    def test_all_getters_return_hardcoded_defaults(self):
+        assert get_global_timeout() == HARDCODED_DEFAULTS.timeout
+        assert get_global_output_limit() == HARDCODED_DEFAULTS.output_limit
+        assert get_retry_max_attempts() == HARDCODED_DEFAULTS.max_retries
+        assert get_retry_base_delay() == HARDCODED_DEFAULTS.retry_base_delay
+        assert get_retry_max_delay() == HARDCODED_DEFAULTS.retry_max_delay
+        assert get_cli_detection_timeout() == HARDCODED_DEFAULTS.cli_detection_timeout
 
     def test_get_tool_timeout_zero_coercion(self, monkeypatch):
         monkeypatch.setenv("NEXUS_TOOL_TIMEOUT_SECONDS", "0")
@@ -696,27 +666,3 @@ class TestBackwardCompatGetters:
     def test_zero_delay_preserved_by_getter(self):
         """0.0 is a valid base delay — getter must not coerce to default."""
         assert get_retry_base_delay() == 0.0
-
-
-class TestRunnerConfigExpandedFields:
-    """RunnerConfig now has operational override fields alongside metadata fields."""
-
-    def test_new_fields_default_none(self):
-        cfg = RunnerConfig()
-        assert cfg.timeout is None
-        assert cfg.output_limit is None
-        assert cfg.max_retries is None
-        assert cfg.retry_base_delay is None
-        assert cfg.retry_max_delay is None
-        assert cfg.execution_mode is None
-        assert cfg.model is None
-        assert cfg.cli_path is None
-
-    def test_operational_fields_parseable_from_toml_values(self):
-        cfg = RunnerConfig(
-            timeout=900, max_retries=5, retry_base_delay=0.5, cli_path="/usr/bin/gemini"
-        )
-        assert cfg.timeout == 900
-        assert cfg.max_retries == 5
-        assert cfg.retry_base_delay == 0.5
-        assert cfg.cli_path == "/usr/bin/gemini"
