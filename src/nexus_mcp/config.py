@@ -351,3 +351,44 @@ def get_cli_detection_timeout() -> int:
         NEXUS_CLI_DETECTION_TIMEOUT: Seconds to wait for '<cli> --version'
     """
     return _get_merged_defaults().cli_detection_timeout  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
+# OpenCode server connection settings
+# ---------------------------------------------------------------------------
+
+
+def get_opencode_server_url() -> str:
+    """Get OpenCode server base URL.
+
+    Returns:
+        Server URL (default: http://127.0.0.1:4096)
+
+    Environment Variable:
+        NEXUS_OPENCODE_SERVER_URL: Full base URL for the OpenCode server.
+    """
+    return os.getenv("NEXUS_OPENCODE_SERVER_URL", "http://127.0.0.1:4096")
+
+
+def get_opencode_server_username() -> str:
+    """Get OpenCode server HTTP Basic Auth username.
+
+    Returns:
+        Username string (default: "opencode")
+
+    Environment Variable:
+        NEXUS_OPENCODE_SERVER_USERNAME: HTTP Basic Auth username.
+    """
+    return os.getenv("NEXUS_OPENCODE_SERVER_USERNAME", "opencode")
+
+
+def get_opencode_server_password() -> str | None:
+    """Get OpenCode server HTTP Basic Auth password.
+
+    Returns:
+        Password string, or None if not set (no auth).
+
+    Environment Variable:
+        NEXUS_OPENCODE_SERVER_PASSWORD: HTTP Basic Auth password. Unset = no auth.
+    """
+    return os.getenv("NEXUS_OPENCODE_SERVER_PASSWORD")
