@@ -28,8 +28,18 @@ class CLIInfo:
     version: str | None = None
 
 
+# Server-mode runners that communicate via HTTP, not a CLI binary.
+_SERVER_MODE_RUNNERS = frozenset({"opencode_server"})
+
+
 def detect_cli(cli_name: str) -> CLIInfo:
-    """Detect if CLI binary exists in PATH."""
+    """Detect if CLI binary exists in PATH.
+
+    Server-mode runners (opencode_server) are always constructable —
+    they communicate via HTTP, not a CLI binary.
+    """
+    if cli_name in _SERVER_MODE_RUNNERS:
+        return CLIInfo(found=True, path=None)
     path = shutil.which(cli_name)
     if path:
         return CLIInfo(found=True, path=path)
@@ -39,8 +49,11 @@ def detect_cli(cli_name: str) -> CLIInfo:
 def get_cli_version(cli_name: str) -> str | None:
     """Run '<cli> --version' and parse the version string.
 
+    Server-mode runners return None immediately (no binary to version-check).
     Sync — uses subprocess.run(). Acceptable at runner construction time (<1s).
     """
+    if cli_name in _SERVER_MODE_RUNNERS:
+        return None
     try:
         result = subprocess.run(
             [cli_name, "--version"],
