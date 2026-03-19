@@ -1,8 +1,44 @@
-from typing import Any, Literal, Self
+import math
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 type ExecutionMode = Literal["default", "yolo"]
+
+# Shared Annotated type aliases — single source of truth for field constraints.
+# Used across OperationalDefaults, SessionPreferences, PromptRequest, AgentTask.
+Timeout = Annotated[int | None, Field(ge=1)]
+OutputLimit = Annotated[int | None, Field(ge=1)]
+MaxRetries = Annotated[int | None, Field(ge=1)]
+ModelName = Annotated[str | None, Field(min_length=1)]
+Delay = Annotated[float | None, Field(ge=0)]
+
+
+class OperationalDefaults(BaseModel, frozen=True):
+    """Shape of operational settings at any tier.
+
+    All fields are None-able — None means "not set at this tier".
+    After merging all tiers, HARDCODED_DEFAULTS guarantees non-None for required fields.
+    """
+
+    timeout: int | None = Field(default=None, ge=1)
+    output_limit: int | None = Field(default=None, ge=1)
+    max_retries: int | None = Field(default=None, ge=1)
+    retry_base_delay: Annotated[float, Field(ge=0)] | None = None
+    retry_max_delay: Annotated[float, Field(ge=0)] | None = None
+    tool_timeout: Annotated[float, Field(ge=0)] | None = None  # raw value; 0 → None in getter
+    cli_detection_timeout: int | None = Field(default=None, ge=1)
+    execution_mode: ExecutionMode | None = None
+    model: str | None = Field(default=None, min_length=1)
+
+    @field_validator("retry_base_delay", "retry_max_delay", "tool_timeout", mode="after")
+    @classmethod
+    def reject_non_finite(cls, v: float | None) -> float | None:
+        """Safety net for programmatic construction.
+        Env vars are validated manually in _read_global_env_defaults() with ConfigurationError."""
+        if v is not None and not math.isfinite(v):
+            raise ValueError(f"must be a finite number, got {v}")
+        return v
 
 
 class SessionPreferences(BaseModel):
@@ -11,10 +47,12 @@ class SessionPreferences(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     execution_mode: ExecutionMode | None = None
-    model: str | None = Field(default=None, min_length=1)
-    max_retries: int | None = Field(default=None, ge=1)
-    output_limit: int | None = Field(default=None, ge=1)
-    timeout: int | None = Field(default=None, ge=1)
+    model: ModelName = None
+    max_retries: MaxRetries = None
+    output_limit: OutputLimit = None
+    timeout: Timeout = None
+    retry_base_delay: Delay = None
+    retry_max_delay: Delay = None
 
 
 DEFAULT_MAX_CONCURRENCY = 3
@@ -49,20 +87,25 @@ class PromptRequest(BaseModel):
                 )
         return v
 
-    max_retries: int | None = Field(
+    max_retries: MaxRetries = Field(
         default=None,
-        ge=1,
         description="Max retry attempts for transient errors (None uses NEXUS_RETRY_MAX_ATTEMPTS)",
     )
-    output_limit: int | None = Field(
+    output_limit: OutputLimit = Field(
         default=None,
-        ge=1,
         description="Max output bytes (None uses NEXUS_OUTPUT_LIMIT_BYTES)",
     )
-    timeout: int | None = Field(
+    timeout: Timeout = Field(
         default=None,
-        ge=1,
         description="Subprocess timeout seconds (None uses NEXUS_TIMEOUT_SECONDS)",
+    )
+    retry_base_delay: Delay = Field(
+        default=None,
+        description="Base delay seconds for exponential backoff (None uses NEXUS_RETRY_BASE_DELAY)",
+    )
+    retry_max_delay: Delay = Field(
+        default=None,
+        description="Max delay cap for backoff in seconds (None uses NEXUS_RETRY_MAX_DELAY)",
     )
 
 
@@ -85,11 +128,9 @@ class RunnerInfo(BaseModel, frozen=True):
     """Metadata about a registered runner, returned by list_runners tool."""
 
     name: str
-    type: Literal["cli", "server"]
-    provider: str | None
     models: tuple[str, ...]
     available: bool
-    default_model: str | None
+    defaults: OperationalDefaults
     execution_modes: tuple[ExecutionMode, ...]
 
 
@@ -109,10 +150,12 @@ class AgentTask(BaseModel):
     label: str | None = None
     context: dict[str, Any] = Field(default_factory=dict)
     execution_mode: ExecutionMode | None = None  # None = use session preference or "default"
-    model: str | None = None
-    max_retries: int | None = Field(default=None, ge=1)
-    output_limit: int | None = Field(default=None, ge=1)
-    timeout: int | None = Field(default=None, ge=1)
+    model: ModelName = None
+    max_retries: MaxRetries = None
+    output_limit: OutputLimit = None
+    timeout: Timeout = None
+    retry_base_delay: Delay = None
+    retry_max_delay: Delay = None
 
     def to_request(self) -> "PromptRequest":
         """Convert this task to a PromptRequest for runner execution."""
@@ -125,6 +168,8 @@ class AgentTask(BaseModel):
             max_retries=self.max_retries,
             output_limit=self.output_limit,
             timeout=self.timeout,
+            retry_base_delay=self.retry_base_delay,
+            retry_max_delay=self.retry_max_delay,
         )
 
 

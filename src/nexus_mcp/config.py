@@ -1,192 +1,207 @@
-"""Configuration module for environment variable settings (Tier 2).
+"""Configuration module for nexus-mcp.
 
-Provides functions to read global and agent-specific configuration from
-environment variables:
-- Global: timeouts, output limits
-- Agent-specific: CLI paths, default models
+Provides a stateless, tiered configuration system:
+- OperationalDefaults: Pydantic model for the shape of all operational settings.
+- HARDCODED_DEFAULTS: Lowest-priority baseline values.
+- get_runner_defaults(name): Per-runner merged OperationalDefaults.
+- get_runner_models(name): Per-runner model list from env var.
+- Backward-compatible getter functions reading env vars fresh each call.
+
+Resolution order (highest → lowest priority):
+  per-request → session prefs → per-runner env → global env → hardcoded
 """
 
+import contextlib
 import math
 import os
-import tomllib
-from pathlib import Path
-from typing import Literal
-
-from pydantic import BaseModel, ValidationError
+from typing import Any
 
 from nexus_mcp.exceptions import ConfigurationError
+from nexus_mcp.types import OperationalDefaults
+
+HARDCODED_DEFAULTS = OperationalDefaults(
+    timeout=600,
+    output_limit=50000,
+    max_retries=3,
+    retry_base_delay=2.0,
+    retry_max_delay=60.0,
+    tool_timeout=900.0,
+    cli_detection_timeout=30,
+    execution_mode="default",
+)
 
 
-def _get_int_env(env_var: str, default: str, label: str) -> int:
-    raw = os.getenv(env_var, default)
-    try:
-        return int(raw)
-    except ValueError:
-        raise ConfigurationError(f"Invalid {label} value: {raw!r}", config_key=env_var) from None
+def _merge_defaults(
+    base: OperationalDefaults, *overlays: OperationalDefaults
+) -> OperationalDefaults:
+    """Merge operational defaults: non-None values from later overlays win."""
+    result = base.model_dump()
+    for overlay in overlays:
+        for field, value in overlay.model_dump().items():
+            if value is not None:
+                result[field] = value
+    return OperationalDefaults(**result)
 
 
-def _get_float_env(env_var: str, default: str, label: str) -> float:
-    raw = os.getenv(env_var, default)
-    try:
-        value = float(raw)
-    except ValueError:
-        raise ConfigurationError(f"Invalid {label} value: {raw!r}", config_key=env_var) from None
-    if not math.isfinite(value):
-        raise ConfigurationError(
-            f"{label.capitalize()} must be a finite number, got {value}",
-            config_key=env_var,
-        )
-    return value
+# ---------------------------------------------------------------------------
+# Environment variable parsing — global
+# ---------------------------------------------------------------------------
 
 
-def get_global_output_limit() -> int:
-    """Get maximum output size in bytes from env var.
+def _read_global_env_defaults() -> OperationalDefaults:
+    """Read operational defaults from global environment variables.
+
+    Only populates fields where the corresponding env var is set.
+    Preserves exact error messages and config_key values expected by existing tests.
+    """
+    kwargs: dict[str, Any] = {}
+
+    for env_var, field, label in (
+        ("NEXUS_TIMEOUT_SECONDS", "timeout", "timeout"),
+        ("NEXUS_OUTPUT_LIMIT_BYTES", "output_limit", "output limit"),
+        ("NEXUS_RETRY_MAX_ATTEMPTS", "max_retries", "retry max attempts"),
+        ("NEXUS_CLI_DETECTION_TIMEOUT", "cli_detection_timeout", "CLI detection timeout"),
+    ):
+        raw = os.getenv(env_var)
+        if raw is None:
+            continue
+        try:
+            v = int(raw)
+        except ValueError:
+            raise ConfigurationError(
+                f"Invalid {label} value: {raw!r}", config_key=env_var
+            ) from None
+        if v <= 0:
+            raise ConfigurationError(
+                f"{label.capitalize()} must be positive, got {v}", config_key=env_var
+            )
+        kwargs[field] = v
+
+    for env_var, field, label in (
+        ("NEXUS_RETRY_BASE_DELAY", "retry_base_delay", "retry base delay"),
+        ("NEXUS_RETRY_MAX_DELAY", "retry_max_delay", "retry max delay"),
+        ("NEXUS_TOOL_TIMEOUT_SECONDS", "tool_timeout", "tool timeout"),
+    ):
+        raw = os.getenv(env_var)
+        if raw is None:
+            continue
+        try:
+            fv = float(raw)
+        except ValueError:
+            raise ConfigurationError(
+                f"Invalid {label} value: {raw!r}", config_key=env_var
+            ) from None
+        if not math.isfinite(fv):
+            raise ConfigurationError(
+                f"{label.capitalize()} must be a finite number, got {fv}", config_key=env_var
+            )
+        if fv < 0:
+            raise ConfigurationError(
+                f"{label.capitalize()} must be non-negative, got {fv}", config_key=env_var
+            )
+        kwargs[field] = fv
+
+    # NEXUS_EXECUTION_MODE: global execution mode override
+    raw_mode = os.getenv("NEXUS_EXECUTION_MODE")
+    if raw_mode is not None:
+        if raw_mode not in ("default", "yolo"):
+            raise ConfigurationError(
+                f"Invalid execution mode: {raw_mode!r} (must be 'default' or 'yolo')",
+                config_key="NEXUS_EXECUTION_MODE",
+            )
+        kwargs["execution_mode"] = raw_mode
+
+    return OperationalDefaults(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Environment variable parsing — per-runner
+# ---------------------------------------------------------------------------
+
+
+def _read_runner_env_defaults(runner_name: str) -> OperationalDefaults:
+    """Read per-runner operational defaults from NEXUS_{RUNNER}_{KEY} env vars.
+
+    Only populates fields where the corresponding env var is set.
+    E.g., for runner_name="gemini": NEXUS_GEMINI_TIMEOUT, NEXUS_GEMINI_MODEL, etc.
+    """
+    kwargs: dict[str, Any] = {}
+    prefix = runner_name.upper()
+
+    for key, field, parse in (
+        ("TIMEOUT", "timeout", int),
+        ("OUTPUT_LIMIT", "output_limit", int),
+        ("MAX_RETRIES", "max_retries", int),
+    ):
+        raw = os.getenv(f"NEXUS_{prefix}_{key}")
+        if raw is not None:
+            with contextlib.suppress(ValueError):
+                kwargs[field] = parse(raw)
+
+    for key, field in (
+        ("RETRY_BASE_DELAY", "retry_base_delay"),
+        ("RETRY_MAX_DELAY", "retry_max_delay"),
+    ):
+        raw = os.getenv(f"NEXUS_{prefix}_{key}")
+        if raw is not None:
+            try:
+                fv = float(raw)
+                if math.isfinite(fv) and fv >= 0:
+                    kwargs[field] = fv
+            except ValueError:
+                pass  # silently skip invalid per-runner overrides
+
+    # Per-runner model: NEXUS_{RUNNER}_MODEL
+    model = os.getenv(f"NEXUS_{prefix}_MODEL")
+    if model:
+        kwargs["model"] = model
+
+    # Per-runner execution mode: NEXUS_{RUNNER}_EXECUTION_MODE
+    mode = os.getenv(f"NEXUS_{prefix}_EXECUTION_MODE")
+    if mode in ("default", "yolo"):
+        kwargs["execution_mode"] = mode
+
+    return OperationalDefaults(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Per-runner models
+# ---------------------------------------------------------------------------
+
+
+def get_runner_models(runner_name: str) -> tuple[str, ...]:
+    """Get model list for a runner from NEXUS_{RUNNER}_MODELS env var.
+
+    The env var is comma-separated. Whitespace around each model name is stripped.
+    Empty strings are filtered out.
 
     Returns:
-        Output limit in bytes (default: 50KB)
-
-    Raises:
-        ConfigurationError: If env var value is not a valid integer or not positive
-
-    Environment Variable:
-        NEXUS_OUTPUT_LIMIT_BYTES: Max output size in bytes
+        Tuple of model name strings, or empty tuple if env var not set.
     """
-    value = _get_int_env("NEXUS_OUTPUT_LIMIT_BYTES", "50000", "output limit")
-    if value <= 0:
-        raise ConfigurationError(
-            f"Output limit must be positive, got {value}",
-            config_key="NEXUS_OUTPUT_LIMIT_BYTES",
-        )
-    return value
+    raw = os.getenv(f"NEXUS_{runner_name.upper()}_MODELS")
+    if not raw:
+        return ()
+    return tuple(m.strip() for m in raw.split(",") if m.strip())
 
 
-def get_global_timeout() -> int:
-    """Get subprocess timeout in seconds from env var.
+# ---------------------------------------------------------------------------
+# Per-runner defaults (3-tier merge)
+# ---------------------------------------------------------------------------
 
-    Returns:
-        Timeout in seconds (default: 600s = 10 minutes, matches process.py)
 
-    Raises:
-        ConfigurationError: If env var value is not a valid integer or not positive
+def get_runner_defaults(runner_name: str) -> OperationalDefaults:
+    """Get merged operational defaults for a specific runner.
 
-    Environment Variable:
-        NEXUS_TIMEOUT_SECONDS: Subprocess timeout in seconds
+    Merge chain: hardcoded → global env → per-runner env.
     """
-    value = _get_int_env("NEXUS_TIMEOUT_SECONDS", "600", "timeout")
-    if value <= 0:
-        raise ConfigurationError(
-            f"Timeout must be positive, got {value}",
-            config_key="NEXUS_TIMEOUT_SECONDS",
-        )
-    return value
+    global_env = _read_global_env_defaults()
+    runner_env = _read_runner_env_defaults(runner_name)
+    return _merge_defaults(HARDCODED_DEFAULTS, global_env, runner_env)
 
 
-def get_retry_max_attempts() -> int:
-    """Get maximum retry attempts from env var.
-
-    Returns:
-        Max retry attempts (default: 3)
-
-    Raises:
-        ConfigurationError: If env var value is not a valid integer or not positive
-
-    Environment Variable:
-        NEXUS_RETRY_MAX_ATTEMPTS: Max number of attempts (including the first)
-    """
-    value = _get_int_env("NEXUS_RETRY_MAX_ATTEMPTS", "3", "retry max attempts")
-    if value <= 0:
-        raise ConfigurationError(
-            f"Retry max attempts must be positive, got {value}",
-            config_key="NEXUS_RETRY_MAX_ATTEMPTS",
-        )
-    return value
-
-
-def get_retry_base_delay() -> float:
-    """Get retry base delay in seconds from env var.
-
-    Returns:
-        Base delay in seconds for exponential backoff (default: 2.0s)
-
-    Raises:
-        ConfigurationError: If env var value is not a valid float or is negative
-
-    Environment Variable:
-        NEXUS_RETRY_BASE_DELAY: Base seconds for exponential backoff
-    """
-    value = _get_float_env("NEXUS_RETRY_BASE_DELAY", "2.0", "retry base delay")
-    if value < 0:
-        raise ConfigurationError(
-            f"Retry base delay must be non-negative, got {value}",
-            config_key="NEXUS_RETRY_BASE_DELAY",
-        )
-    return value
-
-
-def get_retry_max_delay() -> float:
-    """Get retry max delay cap in seconds from env var.
-
-    Returns:
-        Maximum delay cap in seconds (default: 60.0s)
-
-    Raises:
-        ConfigurationError: If env var value is not a valid float or is negative
-
-    Environment Variable:
-        NEXUS_RETRY_MAX_DELAY: Maximum seconds to wait between retries
-    """
-    value = _get_float_env("NEXUS_RETRY_MAX_DELAY", "60.0", "retry max delay")
-    if value < 0:
-        raise ConfigurationError(
-            f"Retry max delay must be non-negative, got {value}",
-            config_key="NEXUS_RETRY_MAX_DELAY",
-        )
-    return value
-
-
-def get_tool_timeout() -> float | None:
-    """Get MCP tool-level timeout in seconds from env var.
-
-    Returns:
-        Timeout in seconds applied via anyio.fail_after() (default: 900s = 15 min),
-        or None to disable (0 → None). Set above the subprocess timeout (600s) to
-        catch runaway retry loops.
-
-    Raises:
-        ConfigurationError: If env var value is not a finite non-negative number
-
-    Environment Variable:
-        NEXUS_TOOL_TIMEOUT_SECONDS: Seconds before FastMCP cancels a hung tool call.
-            Set to 0 to disable. Must be finite and non-negative.
-    """
-    value = _get_float_env("NEXUS_TOOL_TIMEOUT_SECONDS", "900.0", "tool timeout")
-    if value < 0:
-        raise ConfigurationError(
-            f"Tool timeout must be non-negative, got {value}",
-            config_key="NEXUS_TOOL_TIMEOUT_SECONDS",
-        )
-    return value if value > 0 else None
-
-
-def get_cli_detection_timeout() -> int:
-    """Get CLI detection timeout in seconds from env var.
-
-    Returns:
-        Timeout in seconds (default: 30s)
-
-    Raises:
-        ConfigurationError: If env var value is not a valid integer or not positive
-
-    Environment Variable:
-        NEXUS_CLI_DETECTION_TIMEOUT: Seconds to wait for '<cli> --version'
-    """
-    value = _get_int_env("NEXUS_CLI_DETECTION_TIMEOUT", "30", "CLI detection timeout")
-    if value <= 0:
-        raise ConfigurationError(
-            f"CLI detection timeout must be positive, got {value}",
-            config_key="NEXUS_CLI_DETECTION_TIMEOUT",
-        )
-    return value
+# ---------------------------------------------------------------------------
+# Agent env var helper
+# ---------------------------------------------------------------------------
 
 
 def get_agent_env(agent: str, key: str, default: str | None = None) -> str | None:
@@ -211,53 +226,128 @@ def get_agent_env(agent: str, key: str, default: str | None = None) -> str | Non
     return os.getenv(env_var, default)
 
 
-class RunnerConfig(BaseModel, frozen=True):
-    """Configuration for a runner from nexus-mcp.toml."""
-
-    type: Literal["cli", "server"] = "cli"
-    provider: str | None = None
-    models: tuple[str, ...] = ()
-    url: str | None = None
+# ---------------------------------------------------------------------------
+# Merged global defaults (stateless — reads env fresh each call)
+# ---------------------------------------------------------------------------
 
 
-def load_runner_config() -> dict[str, RunnerConfig]:
-    """Load runner configuration from nexus-mcp.toml.
+def _get_merged_defaults() -> OperationalDefaults:
+    """Return HARDCODED_DEFAULTS merged with global env var overrides.
 
-    Resolution order:
-        1. NEXUS_CONFIG_PATH env var (absolute path)
-        2. nexus-mcp.toml in current working directory
+    Used by backward-compatible getter functions. Reads env vars fresh each call.
+    """
+    return _merge_defaults(HARDCODED_DEFAULTS, _read_global_env_defaults())
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible getter functions
+# ---------------------------------------------------------------------------
+
+
+def get_global_output_limit() -> int:
+    """Get maximum output size in bytes.
 
     Returns:
-        Mapping of runner name to RunnerConfig. Empty dict if file not found.
+        Output limit in bytes (default: 50KB)
 
     Raises:
-        ConfigurationError: If TOML is invalid or field types don't match.
+        ConfigurationError: If env var value is not a valid integer or not positive
+
+    Environment Variable:
+        NEXUS_OUTPUT_LIMIT_BYTES: Max output size in bytes
     """
-    config_path = os.getenv("NEXUS_CONFIG_PATH")
-    if config_path is None:
-        config_path = "nexus-mcp.toml"
+    return _get_merged_defaults().output_limit  # type: ignore[return-value]
 
-    path = Path(config_path)
-    if not path.is_file():
-        return {}
 
-    try:
-        with path.open("rb") as f:
-            data = tomllib.load(f)
-    except tomllib.TOMLDecodeError as e:
-        msg = f"Invalid TOML in {path}: {e}"
-        raise ConfigurationError(msg, config_key=str(path)) from e
+def get_global_timeout() -> int:
+    """Get subprocess timeout in seconds.
 
-    runners = data.get("runner", {})
-    result: dict[str, RunnerConfig] = {}
-    for name, cfg in runners.items():
-        if not isinstance(cfg, dict):
-            msg = f"Runner '{name}' must be a TOML table, got {type(cfg).__name__}"
-            raise ConfigurationError(msg, config_key=f"runner.{name}")
-        try:
-            result[name] = RunnerConfig(**cfg)
-        except ValidationError as e:
-            msg = f"Invalid runner config for '{name}' in {path}: {e}"
-            raise ConfigurationError(msg, config_key=f"runner.{name}") from e
+    Returns:
+        Timeout in seconds (default: 600s = 10 minutes)
 
-    return result
+    Raises:
+        ConfigurationError: If env var value is not a valid integer or not positive
+
+    Environment Variable:
+        NEXUS_TIMEOUT_SECONDS: Subprocess timeout in seconds
+    """
+    return _get_merged_defaults().timeout  # type: ignore[return-value]
+
+
+def get_retry_max_attempts() -> int:
+    """Get maximum retry attempts.
+
+    Returns:
+        Max retry attempts (default: 3)
+
+    Raises:
+        ConfigurationError: If env var value is not a valid integer or not positive
+
+    Environment Variable:
+        NEXUS_RETRY_MAX_ATTEMPTS: Max number of attempts (including the first)
+    """
+    return _get_merged_defaults().max_retries  # type: ignore[return-value]
+
+
+def get_retry_base_delay() -> float:
+    """Get retry base delay in seconds.
+
+    Returns:
+        Base delay in seconds for exponential backoff (default: 2.0s)
+
+    Raises:
+        ConfigurationError: If env var value is not a valid float or is negative
+
+    Environment Variable:
+        NEXUS_RETRY_BASE_DELAY: Base seconds for exponential backoff
+    """
+    return _get_merged_defaults().retry_base_delay  # type: ignore[return-value]
+
+
+def get_retry_max_delay() -> float:
+    """Get retry max delay cap in seconds.
+
+    Returns:
+        Maximum delay cap in seconds (default: 60.0s)
+
+    Raises:
+        ConfigurationError: If env var value is not a valid float or is negative
+
+    Environment Variable:
+        NEXUS_RETRY_MAX_DELAY: Maximum seconds to wait between retries
+    """
+    return _get_merged_defaults().retry_max_delay  # type: ignore[return-value]
+
+
+def get_tool_timeout() -> float | None:
+    """Get MCP tool-level timeout in seconds.
+
+    Returns:
+        Timeout in seconds applied via anyio.fail_after() (default: 900s = 15 min),
+        or None to disable (0 → None). Set above the subprocess timeout (600s) to
+        catch runaway retry loops.
+
+    Raises:
+        ConfigurationError: If env var value is not a finite non-negative number
+
+    Environment Variable:
+        NEXUS_TOOL_TIMEOUT_SECONDS: Seconds before FastMCP cancels a hung tool call.
+            Set to 0 to disable. Must be finite and non-negative.
+    """
+    value = _get_merged_defaults().tool_timeout
+    return value if value and value > 0 else None
+
+
+def get_cli_detection_timeout() -> int:
+    """Get CLI detection timeout in seconds.
+
+    Returns:
+        Timeout in seconds (default: 30s)
+
+    Raises:
+        ConfigurationError: If env var value is not a valid integer or not positive
+
+    Environment Variable:
+        NEXUS_CLI_DETECTION_TIMEOUT: Seconds to wait for '<cli> --version'
+    """
+    return _get_merged_defaults().cli_detection_timeout  # type: ignore[return-value]

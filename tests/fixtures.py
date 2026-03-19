@@ -323,5 +323,7 @@ def make_session_preferences(**overrides: Any) -> SessionPreferences:
         "max_retries": None,
         "output_limit": None,
         "timeout": None,
+        "retry_base_delay": None,
+        "retry_max_delay": None,
     }
     return SessionPreferences(**(defaults | overrides))

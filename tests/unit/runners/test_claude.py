@@ -59,18 +59,9 @@ class TestClaudeRunnerInit:
         assert exc_info.value.cli_name == "claude"
 
     def test_default_cli_path(self):
-        """Default cli_path is 'claude' when NEXUS_CLAUDE_PATH is not set."""
+        """cli_path is always the agent name."""
         runner = make_claude_runner()
         assert runner.cli_path == "claude"
-
-    def test_custom_cli_path_from_env(self):
-        """cli_path is taken from NEXUS_CLAUDE_PATH env var."""
-        with patch(
-            "nexus_mcp.runners.base.get_agent_env",
-            side_effect=lambda _agent, key, **_kw: "/custom/claude" if key == "PATH" else None,
-        ):
-            runner = make_claude_runner()
-        assert runner.cli_path == "/custom/claude"
 
 
 # ---------------------------------------------------------------------------
@@ -838,13 +829,6 @@ class TestClaudeRunnerDualFieldRecovery:
 
 class TestClaudeRunnerEnvConfiguration:
     """Test ClaudeRunner environment variable configuration."""
-
-    @patch.dict("os.environ", {"NEXUS_CLAUDE_PATH": "/opt/custom/claude"})
-    def test_claude_runner_uses_custom_path_from_env(self):
-        """ClaudeRunner uses NEXUS_CLAUDE_PATH if set."""
-        runner = make_claude_runner()
-        cmd = runner.build_command(make_prompt_request(cli="claude", prompt="test"))
-        assert cmd[0] == "/opt/custom/claude"
 
     @patch.dict("os.environ", {"NEXUS_CLAUDE_MODEL": "claude-haiku-4-5-20251001"})
     def test_claude_runner_uses_default_model_from_env(self):

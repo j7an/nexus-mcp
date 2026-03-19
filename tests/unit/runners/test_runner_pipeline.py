@@ -18,7 +18,6 @@ from tests.fixtures import create_mock_process, make_prompt_request
 @patch.dict(
     os.environ,
     {
-        "NEXUS_GEMINI_PATH": "/custom/gemini",
         "NEXUS_GEMINI_MODEL": "gemini-2.5-flash",
         "NEXUS_OUTPUT_LIMIT_BYTES": "1000",
     },
@@ -44,9 +43,9 @@ async def test_all_enhancements_together(mock_exec):
     response = await runner.run(request)
 
     # Verify all features active:
-    # 1. Custom CLI path used (env config)
+    # 1. CLI path is the agent name
     args = mock_exec.call_args[0]
-    assert args[0] == "/custom/gemini"
+    assert args[0] == "gemini"
 
     # 2. File refs appended to prompt
     assert "src/main.py" in args[2]

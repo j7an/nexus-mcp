@@ -145,6 +145,31 @@ class TestApplyPreferences:
         result = _apply_preferences(task, prefs)
         assert result.timeout == 10
 
+    def test_fills_none_retry_base_delay_from_prefs(self):
+        task = AgentTask(cli="gemini", prompt="hi")
+        prefs = make_session_preferences(retry_base_delay=1.5)
+        result = _apply_preferences(task, prefs)
+        assert result.retry_base_delay == 1.5
+
+    def test_does_not_override_explicit_retry_base_delay(self):
+        task = AgentTask(cli="gemini", prompt="hi", retry_base_delay=0.5)
+        prefs = make_session_preferences(retry_base_delay=1.5)
+        result = _apply_preferences(task, prefs)
+        assert result.retry_base_delay == 0.5
+
+    def test_zero_retry_base_delay_not_overridden(self):
+        """0.0 is a valid delay — must not be treated as falsy and replaced by prefs."""
+        task = AgentTask(cli="gemini", prompt="hi", retry_base_delay=0.0)
+        prefs = make_session_preferences(retry_base_delay=2.0)
+        result = _apply_preferences(task, prefs)
+        assert result.retry_base_delay == 0.0
+
+    def test_fills_none_retry_max_delay_from_prefs(self):
+        task = AgentTask(cli="gemini", prompt="hi")
+        prefs = make_session_preferences(retry_max_delay=60.0)
+        result = _apply_preferences(task, prefs)
+        assert result.retry_max_delay == 60.0
+
 
 # ---------------------------------------------------------------------------
 # TestSetPreferences
@@ -167,6 +192,8 @@ class TestSetPreferences:
                 "max_retries": None,
                 "output_limit": None,
                 "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
             },
         )
         assert "yolo" in result
@@ -182,6 +209,8 @@ class TestSetPreferences:
                 "max_retries": None,
                 "output_limit": None,
                 "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
             },
         )
 
@@ -196,6 +225,8 @@ class TestSetPreferences:
                 "max_retries": None,
                 "output_limit": None,
                 "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
             },
         )
 
@@ -211,6 +242,8 @@ class TestSetPreferences:
                 "max_retries": None,
                 "output_limit": None,
                 "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
             },
         )
 
@@ -226,6 +259,8 @@ class TestSetPreferences:
                 "max_retries": None,
                 "output_limit": None,
                 "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
             },
         )
 
@@ -253,6 +288,8 @@ class TestSetPreferences:
                 "max_retries": None,
                 "output_limit": None,
                 "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
             },
         )
 
@@ -268,6 +305,8 @@ class TestSetPreferences:
                 "max_retries": None,
                 "output_limit": None,
                 "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
             },
         )
 
@@ -283,6 +322,8 @@ class TestSetPreferences:
                 "max_retries": None,
                 "output_limit": None,
                 "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
             },
         )
 
@@ -298,6 +339,8 @@ class TestSetPreferences:
                 "max_retries": 5,
                 "output_limit": None,
                 "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
             },
         )
 
@@ -313,6 +356,8 @@ class TestSetPreferences:
                 "max_retries": None,
                 "output_limit": 4096,
                 "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
             },
         )
 
@@ -328,6 +373,8 @@ class TestSetPreferences:
                 "max_retries": None,
                 "output_limit": None,
                 "timeout": 30,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
             },
         )
 
@@ -349,6 +396,8 @@ class TestSetPreferences:
                 "max_retries": None,
                 "output_limit": None,
                 "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
             },
         )
 
@@ -370,6 +419,8 @@ class TestSetPreferences:
                 "max_retries": None,
                 "output_limit": None,
                 "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
             },
         )
 
@@ -391,6 +442,8 @@ class TestSetPreferences:
                 "max_retries": None,
                 "output_limit": None,
                 "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
             },
         )
 
@@ -399,6 +452,90 @@ class TestSetPreferences:
         result = await set_preferences(execution_mode="default", ctx=ctx)
         assert isinstance(result, str)
         assert len(result) > 0
+
+    async def test_sets_retry_base_delay(self, ctx):
+        """set_preferences(retry_base_delay=1.5) stores retry_base_delay."""
+        ctx.get_state.return_value = None
+        await set_preferences(retry_base_delay=1.5, ctx=ctx)
+        ctx.set_state.assert_awaited_once_with(
+            _PREFS_KEY,
+            {
+                "execution_mode": None,
+                "model": None,
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": None,
+                "retry_base_delay": 1.5,
+                "retry_max_delay": None,
+            },
+        )
+
+    async def test_sets_retry_max_delay(self, ctx):
+        """set_preferences(retry_max_delay=60.0) stores retry_max_delay."""
+        ctx.get_state.return_value = None
+        await set_preferences(retry_max_delay=60.0, ctx=ctx)
+        ctx.set_state.assert_awaited_once_with(
+            _PREFS_KEY,
+            {
+                "execution_mode": None,
+                "model": None,
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": 60.0,
+            },
+        )
+
+    async def test_clear_retry_base_delay(self, ctx):
+        """clear_retry_base_delay=True resets retry_base_delay to None."""
+        ctx.get_state.return_value = {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": None,
+            "output_limit": None,
+            "timeout": None,
+            "retry_base_delay": 1.5,
+            "retry_max_delay": None,
+        }
+        await set_preferences(clear_retry_base_delay=True, ctx=ctx)
+        ctx.set_state.assert_awaited_once_with(
+            _PREFS_KEY,
+            {
+                "execution_mode": None,
+                "model": None,
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
+            },
+        )
+
+    async def test_clear_retry_max_delay(self, ctx):
+        """clear_retry_max_delay=True resets retry_max_delay to None."""
+        ctx.get_state.return_value = {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": None,
+            "output_limit": None,
+            "timeout": None,
+            "retry_base_delay": None,
+            "retry_max_delay": 60.0,
+        }
+        await set_preferences(clear_retry_max_delay=True, ctx=ctx)
+        ctx.set_state.assert_awaited_once_with(
+            _PREFS_KEY,
+            {
+                "execution_mode": None,
+                "model": None,
+                "max_retries": None,
+                "output_limit": None,
+                "timeout": None,
+                "retry_base_delay": None,
+                "retry_max_delay": None,
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +557,8 @@ class TestGetPreferences:
             "max_retries": None,
             "output_limit": None,
             "timeout": None,
+            "retry_base_delay": None,
+            "retry_max_delay": None,
         }
 
     async def test_returns_empty_defaults_when_no_prefs(self, ctx):
@@ -431,6 +570,8 @@ class TestGetPreferences:
             "max_retries": None,
             "output_limit": None,
             "timeout": None,
+            "retry_base_delay": None,
+            "retry_max_delay": None,
         }
 
     async def test_returns_dict_not_pydantic(self, ctx):
@@ -596,6 +737,44 @@ class TestPromptPreferenceFallback:
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.timeout == 30
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_session_retry_base_delay_used_when_no_explicit(self, mock_factory, ctx):
+        """Session retry_base_delay is forwarded to the runner request."""
+        mock_runner = _setup_mock_runner(mock_factory, output="ok")
+        ctx.get_state.return_value = {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": None,
+            "output_limit": None,
+            "timeout": None,
+            "retry_base_delay": 1.5,
+            "retry_max_delay": None,
+        }
+
+        await prompt(cli="gemini", prompt="test", ctx=ctx)
+
+        call_args = mock_runner.run.call_args.args[0]
+        assert call_args.retry_base_delay == 1.5
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_session_retry_max_delay_used_when_no_explicit(self, mock_factory, ctx):
+        """Session retry_max_delay is forwarded to the runner request."""
+        mock_runner = _setup_mock_runner(mock_factory, output="ok")
+        ctx.get_state.return_value = {
+            "execution_mode": None,
+            "model": None,
+            "max_retries": None,
+            "output_limit": None,
+            "timeout": None,
+            "retry_base_delay": None,
+            "retry_max_delay": 120.0,
+        }
+
+        await prompt(cli="gemini", prompt="test", ctx=ctx)
+
+        call_args = mock_runner.run.call_args.args[0]
+        assert call_args.retry_max_delay == 120.0
 
 
 # ---------------------------------------------------------------------------

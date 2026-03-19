@@ -58,27 +58,9 @@ class TestOpenCodeRunnerInit:
         assert exc_info.value.cli_name == "opencode"
 
     def test_default_cli_path(self):
-        """Default cli_path is 'opencode' when NEXUS_OPENCODE_PATH is not set."""
+        """cli_path is always the agent name."""
         runner = make_opencode_runner()
         assert runner.cli_path == "opencode"
-
-    def test_custom_cli_path_from_env(self):
-        """cli_path is taken from NEXUS_OPENCODE_PATH env var."""
-        with patch(
-            "nexus_mcp.runners.base.get_agent_env",
-            side_effect=lambda _agent, key, **_kw: "/custom/opencode" if key == "PATH" else None,
-        ):
-            runner = make_opencode_runner()
-        assert runner.cli_path == "/custom/opencode"
-
-    def test_default_model_from_env(self):
-        """default_model is taken from NEXUS_OPENCODE_MODEL env var."""
-        with patch(
-            "nexus_mcp.runners.base.get_agent_env",
-            side_effect=lambda _agent, key, **_kw: "gpt-4o" if key == "MODEL" else None,
-        ):
-            runner = make_opencode_runner()
-        assert runner.default_model == "gpt-4o"
 
 
 # ---------------------------------------------------------------------------
@@ -697,13 +679,6 @@ class TestOpenCodeRunnerDualFieldRecovery:
 
 class TestOpenCodeRunnerEnvConfiguration:
     """Test OpenCodeRunner environment variable configuration."""
-
-    @patch.dict("os.environ", {"NEXUS_OPENCODE_PATH": "/opt/custom/opencode"})
-    def test_opencode_runner_uses_custom_path_from_env(self):
-        """OpenCodeRunner uses NEXUS_OPENCODE_PATH if set."""
-        runner = make_opencode_runner()
-        cmd = runner.build_command(make_prompt_request(cli="opencode", prompt="test"))
-        assert cmd[0] == "/opt/custom/opencode"
 
     @patch.dict("os.environ", {"NEXUS_OPENCODE_MODEL": "gpt-4o"})
     def test_opencode_runner_uses_default_model_from_env(self):

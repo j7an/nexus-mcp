@@ -103,10 +103,18 @@ class TestListRunnersProtocol:
         result = await mcp_client.call_tool("list_runners", {})
         runners = {r.name: r for r in result.data}
         gemini = runners["gemini"]
-        assert gemini.type == "cli"
         assert isinstance(gemini.available, bool)
         assert isinstance(gemini.execution_modes, (list, tuple))
         assert "default" in gemini.execution_modes
+
+    async def test_list_runners_defaults_survive_json_rpc(self, mcp_client):
+        """Nested defaults object survives JSON-RPC round-trip."""
+        result = await mcp_client.call_tool("list_runners", {})
+        runners = {r.name: r for r in result.data}
+        gemini = runners["gemini"]
+        assert hasattr(gemini, "defaults")
+        assert gemini.defaults.timeout is not None
+        assert gemini.defaults.max_retries is not None
 
 
 # ---------------------------------------------------------------------------
