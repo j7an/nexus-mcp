@@ -14,44 +14,10 @@ Resolution order (highest → lowest priority):
 import contextlib
 import math
 import os
-from typing import Annotated, Any
-
-from pydantic import BaseModel, Field, field_validator
+from typing import Any
 
 from nexus_mcp.exceptions import ConfigurationError
-from nexus_mcp.types import ExecutionMode
-
-# ---------------------------------------------------------------------------
-# Operational defaults shape
-# ---------------------------------------------------------------------------
-
-
-class OperationalDefaults(BaseModel, frozen=True):
-    """Shape of operational settings at any tier.
-
-    All fields are None-able — None means "not set at this tier".
-    After merging all tiers, HARDCODED_DEFAULTS guarantees non-None for required fields.
-    """
-
-    timeout: int | None = Field(default=None, ge=1)
-    output_limit: int | None = Field(default=None, ge=1)
-    max_retries: int | None = Field(default=None, ge=1)
-    retry_base_delay: Annotated[float, Field(ge=0)] | None = None
-    retry_max_delay: Annotated[float, Field(ge=0)] | None = None
-    tool_timeout: Annotated[float, Field(ge=0)] | None = None  # raw value; 0 → None in getter
-    cli_detection_timeout: int | None = Field(default=None, ge=1)
-    execution_mode: ExecutionMode | None = None
-    model: str | None = Field(default=None, min_length=1)
-
-    @field_validator("retry_base_delay", "retry_max_delay", "tool_timeout", mode="after")
-    @classmethod
-    def reject_non_finite(cls, v: float | None) -> float | None:
-        """Safety net for programmatic construction.
-        Env vars are validated manually in _read_global_env_defaults() with ConfigurationError."""
-        if v is not None and not math.isfinite(v):
-            raise ValueError(f"must be a finite number, got {v}")
-        return v
-
+from nexus_mcp.types import OperationalDefaults
 
 HARDCODED_DEFAULTS = OperationalDefaults(
     timeout=600,

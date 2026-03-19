@@ -13,7 +13,6 @@ from fastmcp.exceptions import ToolError
 
 from nexus_mcp.config import get_tool_timeout
 from nexus_mcp.exceptions import (
-    CLINotFoundError,
     ParseError,
     SubprocessError,
     UnsupportedAgentError,
@@ -249,7 +248,7 @@ class TestListRunners:
 
     @patch("nexus_mcp.server.detect_cli")
     def test_list_runners_unavailable_cli(self, mock_detect_cli, monkeypatch):
-        """Unavailable CLI sets available=False and reads default_model from env var."""
+        """Unavailable CLI sets available=False; defaults.model comes from env."""
         from nexus_mcp.cli_detector import CLIInfo
 
         mock_detect_cli.return_value = CLIInfo(found=False, path=None, version=None)
@@ -257,27 +256,13 @@ class TestListRunners:
         result = list_runners()
         gemini = next(r for r in result if r.name == "gemini")
         assert gemini.available is False
-        assert gemini.default_model == "gemini-test-model"
+        assert gemini.defaults.model == "gemini-test-model"
 
-    @patch("nexus_mcp.server.RunnerFactory.create")
-    @patch("nexus_mcp.server.detect_cli")
-    def test_list_runners_toctou_cli_disappears(self, mock_detect_cli, mock_create, monkeypatch):
-        """CLI found by detect_cli but disappears before RunnerFactory.create() runs.
-
-        Simulates the TOCTOU race: detect_cli returns found=True, but create()
-        raises CLINotFoundError. Runner should appear as unavailable with model
-        falling back to the environment variable.
-        """
-        from nexus_mcp.cli_detector import CLIInfo
-
-        mock_detect_cli.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
-        mock_create.side_effect = CLINotFoundError("gemini")
-        monkeypatch.setenv("NEXUS_GEMINI_MODEL", "gemini-fallback-model")
-
-        result = list_runners()
-        gemini = next(r for r in result if r.name == "gemini")
-        assert gemini.available is False
-        assert gemini.default_model == "gemini-fallback-model"
+    def test_list_runners_cache_returns_same_object(self):
+        """Second call returns the exact same list object (cache hit)."""
+        first = list_runners()
+        second = list_runners()
+        assert first is second
 
 
 class TestAssignLabels:

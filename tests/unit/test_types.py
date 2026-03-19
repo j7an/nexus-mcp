@@ -531,7 +531,7 @@ class TestSessionPreferences:
 # RunnerInfo tests
 # ---------------------------------------------------------------------------
 
-from nexus_mcp.types import RunnerInfo  # noqa: E402
+from nexus_mcp.types import OperationalDefaults, RunnerInfo  # noqa: E402
 
 
 class TestRunnerInfo:
@@ -540,31 +540,33 @@ class TestRunnerInfo:
             name="gemini",
             models=("gemini-2.5-flash",),
             available=True,
-            default_model="gemini-2.5-flash",
+            defaults=OperationalDefaults(model="gemini-2.5-flash"),
             execution_modes=("default", "yolo"),
         )
         assert info.name == "gemini"
         assert info.available is True
         assert info.models == ("gemini-2.5-flash",)
         assert info.execution_modes == ("default", "yolo")
+        assert info.defaults.model == "gemini-2.5-flash"
 
     def test_runner_info_frozen(self):
         info = RunnerInfo(
             name="gemini",
             models=(),
             available=False,
-            default_model=None,
+            defaults=OperationalDefaults(),
             execution_modes=("default",),
         )
         with pytest.raises(ValidationError):
             info.name = "other"  # type: ignore[misc]
 
-    def test_runner_info_nullable_fields(self):
+    def test_runner_info_defaults_fields(self):
         info = RunnerInfo(
             name="test",
             models=(),
             available=False,
-            default_model=None,
+            defaults=OperationalDefaults(timeout=300, model="test-model"),
             execution_modes=("default",),
         )
-        assert info.default_model is None
+        assert info.defaults.model == "test-model"
+        assert info.defaults.timeout == 300

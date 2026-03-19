@@ -8,7 +8,6 @@ from pydantic import ValidationError
 
 from nexus_mcp.config import (
     HARDCODED_DEFAULTS,
-    OperationalDefaults,
     _merge_defaults,
     _read_global_env_defaults,
     _read_runner_env_defaults,
@@ -24,6 +23,7 @@ from nexus_mcp.config import (
     get_tool_timeout,
 )
 from nexus_mcp.exceptions import ConfigurationError
+from nexus_mcp.types import OperationalDefaults
 
 
 class TestGetGlobalOutputLimit:

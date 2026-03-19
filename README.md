@@ -10,7 +10,7 @@
 
 A MCP server that enables AI models to invoke AI CLI agents (Gemini CLI, Codex, Claude Code, OpenCode) as
 tools. Provides parallel execution, automatic retries with exponential backoff, JSON-first response
-parsing, and structured output through three MCP tools.
+parsing, and structured output through six MCP tools.
 
 ## Use Cases
 
@@ -82,7 +82,11 @@ uvx --reinstall nexus-mcp
       "args": ["nexus-mcp"],
       "env": {
         "NEXUS_GEMINI_MODEL": "gemini-2.5-flash",
-        "NEXUS_GEMINI_MODELS": "gemini-2.5-pro,gemini-2.5-flash,gemini-2.0-flash"
+        "NEXUS_GEMINI_MODELS": "gemini-2.5-pro,gemini-2.5-flash,gemini-2.0-flash",
+        "NEXUS_CODEX_MODEL": "gpt-5.2",
+        "NEXUS_CODEX_MODELS": "gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.2-codex,gpt-5.2,gpt-5.1-codex-max,gpt-5.1-codex-mini",
+        "NEXUS_OPENCODE_MODEL": "ollama-cloud/kimi-k2.5",
+        "NEXUS_OPENCODE_MODELS": "ollama-cloud/glm-5,ollama-cloud/kimi-k2.5,ollama-cloud/qwen3-coder-next,ollama-cloud/minimax-m2.5,ollama/gemini-3-flash-preview"
       }
     }
   }
@@ -99,7 +103,11 @@ uvx --reinstall nexus-mcp
       "args": ["nexus-mcp"],
       "env": {
         "NEXUS_GEMINI_MODEL": "gemini-2.5-flash",
-        "NEXUS_GEMINI_MODELS": "gemini-2.5-pro,gemini-2.5-flash,gemini-2.0-flash"
+        "NEXUS_GEMINI_MODELS": "gemini-2.5-pro,gemini-2.5-flash,gemini-2.0-flash",
+        "NEXUS_CODEX_MODEL": "gpt-5.2",
+        "NEXUS_CODEX_MODELS": "gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.2-codex,gpt-5.2,gpt-5.1-codex-max,gpt-5.1-codex-mini",
+        "NEXUS_OPENCODE_MODEL": "ollama-cloud/kimi-k2.5",
+        "NEXUS_OPENCODE_MODELS": "ollama-cloud/glm-5,ollama-cloud/kimi-k2.5,ollama-cloud/qwen3-coder-next,ollama-cloud/minimax-m2.5,ollama/gemini-3-flash-preview"
       }
     }
   }
@@ -112,6 +120,10 @@ uvx --reinstall nexus-mcp
 claude mcp add nexus-mcp \
   -e NEXUS_GEMINI_MODEL=gemini-2.5-flash \
   -e NEXUS_GEMINI_MODELS=gemini-2.5-pro,gemini-2.5-flash,gemini-2.0-flash \
+  -e NEXUS_CODEX_MODEL=gpt-5.2 \
+  -e NEXUS_CODEX_MODELS=gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.2-codex,gpt-5.2,gpt-5.1-codex-max,gpt-5.1-codex-mini \
+  -e NEXUS_OPENCODE_MODEL=ollama-cloud/kimi-k2.5 \
+  -e NEXUS_OPENCODE_MODELS=ollama-cloud/glm-5,ollama-cloud/kimi-k2.5,ollama-cloud/qwen3-coder-next,ollama-cloud/minimax-m2.5,ollama/gemini-3-flash-preview \
   -- uvx nexus-mcp
 ```
 
@@ -123,7 +135,9 @@ claude mcp add nexus-mcp \
   "args": ["nexus-mcp"],
   "transport": "stdio",
   "env": {
-    "NEXUS_GEMINI_MODEL": "gemini-2.5-flash"
+    "NEXUS_GEMINI_MODEL": "gemini-2.5-flash",
+    "NEXUS_CODEX_MODEL": "gpt-5.2",
+    "NEXUS_OPENCODE_MODEL": "ollama-cloud/kimi-k2.5"
   }
 }
 ```
@@ -178,7 +192,7 @@ what's available, then fans out your request accordingly.
 ### Fan out a research question (batch_prompt)
 
 **You say to your AI assistant:**
-> "Get Gemini's perspective on transformer architectures — I want its summary of the Attention Is All You Need paper, its view on the main limitations, and its list of real-world applications beyond NLP."
+> "Get perspectives from Gemini, Codex, and OpenCode on transformer architectures — summary, limitations, and applications."
 
 **Your AI assistant first calls `list_runners` to discover available runners:**
 
@@ -186,16 +200,16 @@ what's available, then fans out your request accordingly.
 {}
 ```
 
-**Response:** structured metadata for each runner (models, available, execution_modes, default_model)
+**Response:** structured metadata for each runner (models, available, execution_modes, defaults)
 
-**Then calls `batch_prompt` with the discovered runner:**
+**Then calls `batch_prompt` with the discovered runners:**
 
 ```json
 {
   "tasks": [
-    { "cli": "gemini", "prompt": "Summarize the key findings of the Attention Is All You Need paper", "label": "summary" },
-    { "cli": "gemini", "prompt": "What are the main limitations of transformer architectures?", "label": "limitations" },
-    { "cli": "gemini", "prompt": "List 3 real-world applications of transformers beyond NLP", "label": "applications" }
+    { "cli": "gemini", "prompt": "Summarize the key findings of the Attention Is All You Need paper", "label": "gemini-summary" },
+    { "cli": "codex", "prompt": "What are the main limitations of transformer architectures?", "label": "codex-limitations" },
+    { "cli": "opencode", "prompt": "List 3 real-world applications of transformers beyond NLP", "label": "opencode-applications" }
   ]
 }
 ```
@@ -205,16 +219,16 @@ Runner discovery happens once per session; subsequent examples skip the `list_ru
 ### Code review from multiple angles (batch_prompt)
 
 **You say to your AI assistant:**
-> "Have Gemini review this diff from three angles in parallel: security vulnerabilities, logic errors, and style issues."
+> "Have Gemini, Codex, and OpenCode each review this diff in parallel — I want three independent perspectives."
 
 **Your AI assistant calls `batch_prompt`:**
 
 ```json
 {
   "tasks": [
-    { "cli": "gemini", "prompt": "Review this diff for security vulnerabilities:\n\n<paste diff>", "label": "security" },
-    { "cli": "gemini", "prompt": "Review this diff for correctness and logic errors:\n\n<paste diff>", "label": "correctness" },
-    { "cli": "gemini", "prompt": "Review this diff for style and maintainability:\n\n<paste diff>", "label": "style" }
+    { "cli": "gemini", "prompt": "Review this diff for security vulnerabilities and logic errors:\n\n<paste diff>", "label": "gemini-review" },
+    { "cli": "codex", "prompt": "Review this diff for correctness and edge cases:\n\n<paste diff>", "label": "codex-review" },
+    { "cli": "opencode", "prompt": "Review this diff for style and maintainability:\n\n<paste diff>", "label": "opencode-review" }
   ]
 }
 ```
@@ -231,6 +245,26 @@ Runner discovery happens once per session; subsequent examples skip the `list_ru
   "cli": "gemini",
   "prompt": "Explain the difference between TCP and UDP in simple terms",
   "model": "gemini-2.5-flash"
+}
+```
+
+**Or target Codex:**
+
+```json
+{
+  "cli": "codex",
+  "prompt": "Explain the difference between TCP and UDP in simple terms",
+  "model": "gpt-5.2"
+}
+```
+
+**Or OpenCode:**
+
+```json
+{
+  "cli": "opencode",
+  "prompt": "Explain the difference between TCP and UDP in simple terms",
+  "model": "ollama-cloud/kimi-k2.5"
 }
 ```
 
@@ -276,7 +310,7 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 |------|-------|-------------|
 | `batch_prompt` | Yes | Fan out prompts to multiple runners in parallel; returns `MultiPromptResponse` |
 | `prompt` | Yes | Single-runner convenience wrapper; routes to `batch_prompt` |
-| `list_runners` | No | Returns structured metadata for each runner (models, available, execution_modes, default_model) |
+| `list_runners` | No | Returns structured metadata for each runner (models, available, execution_modes, defaults) |
 | `set_preferences` | No | Set or selectively clear session defaults for execution mode, model, max retries, output limit, timeout, retry base delay, and retry max delay |
 | `get_preferences` | No | Retrieve current session preferences |
 | `clear_preferences` | No | Reset all session preferences |
@@ -321,7 +355,7 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 
 ### `list_runners`
 
-No parameters. Returns a list of `RunnerInfo` objects with fields: `name`, `models`, `available`, `execution_modes`, `default_model`.
+No parameters. Returns a list of `RunnerInfo` objects with fields: `name`, `models`, `available`, `execution_modes`, `defaults` (nested `OperationalDefaults` with `model`, `timeout`, `output_limit`, `max_retries`, etc.).
 
 ### `set_preferences`
 
@@ -377,6 +411,8 @@ No parameters. Resets all session preferences.
 ### Per-Runner Environment Variables
 
 Pattern: `NEXUS_{AGENT}_{KEY}` (agent name uppercased). Per-runner values override global values.
+
+Valid `{AGENT}` values: `CLAUDE`, `CODEX`, `GEMINI`, `OPENCODE`
 
 | Variable pattern | Example | Description |
 |----------|---------|-------------|

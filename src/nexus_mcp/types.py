@@ -1,3 +1,4 @@
+import math
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
@@ -11,6 +12,33 @@ OutputLimit = Annotated[int | None, Field(ge=1)]
 MaxRetries = Annotated[int | None, Field(ge=1)]
 ModelName = Annotated[str | None, Field(min_length=1)]
 Delay = Annotated[float | None, Field(ge=0)]
+
+
+class OperationalDefaults(BaseModel, frozen=True):
+    """Shape of operational settings at any tier.
+
+    All fields are None-able — None means "not set at this tier".
+    After merging all tiers, HARDCODED_DEFAULTS guarantees non-None for required fields.
+    """
+
+    timeout: int | None = Field(default=None, ge=1)
+    output_limit: int | None = Field(default=None, ge=1)
+    max_retries: int | None = Field(default=None, ge=1)
+    retry_base_delay: Annotated[float, Field(ge=0)] | None = None
+    retry_max_delay: Annotated[float, Field(ge=0)] | None = None
+    tool_timeout: Annotated[float, Field(ge=0)] | None = None  # raw value; 0 → None in getter
+    cli_detection_timeout: int | None = Field(default=None, ge=1)
+    execution_mode: ExecutionMode | None = None
+    model: str | None = Field(default=None, min_length=1)
+
+    @field_validator("retry_base_delay", "retry_max_delay", "tool_timeout", mode="after")
+    @classmethod
+    def reject_non_finite(cls, v: float | None) -> float | None:
+        """Safety net for programmatic construction.
+        Env vars are validated manually in _read_global_env_defaults() with ConfigurationError."""
+        if v is not None and not math.isfinite(v):
+            raise ValueError(f"must be a finite number, got {v}")
+        return v
 
 
 class SessionPreferences(BaseModel):
@@ -102,7 +130,7 @@ class RunnerInfo(BaseModel, frozen=True):
     name: str
     models: tuple[str, ...]
     available: bool
-    default_model: str | None
+    defaults: OperationalDefaults
     execution_modes: tuple[ExecutionMode, ...]
 
 

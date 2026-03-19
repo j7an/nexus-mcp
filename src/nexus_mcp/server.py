@@ -1,10 +1,13 @@
 # src/nexus_mcp/server.py
 """FastMCP server with CLI agent tools.
 
-Exposes three MCP tools:
+Exposes six MCP tools:
 - batch_prompt: Send multiple prompts to CLI agents in parallel (primary tool)
 - prompt: Send a single prompt to a CLI agent, routes to batch_prompt
 - list_runners: Return metadata for all registered CLI runners
+- set_preferences: Set session defaults (execution mode, model, retries, etc.)
+- get_preferences: Retrieve current session preferences
+- clear_preferences: Reset all session preferences
 
 Background task design: both prompt and batch_prompt use @mcp.tool(task=True) so they
 run asynchronously and return task IDs immediately. This prevents MCP timeouts for long
@@ -24,9 +27,8 @@ from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import ValidationError
 
-from nexus_mcp.cli_detector import CLIInfo, detect_cli
-from nexus_mcp.config import get_agent_env, get_runner_models, get_tool_timeout
-from nexus_mcp.exceptions import CLINotFoundError
+from nexus_mcp.cli_detector import detect_cli
+from nexus_mcp.config import get_runner_defaults, get_runner_models, get_tool_timeout
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import (
     DEFAULT_MAX_CONCURRENCY,
@@ -267,39 +269,46 @@ async def prompt(
     return task_result.output
 
 
+_runner_info_cache: list[RunnerInfo] | None = None
+
+
+def _clear_runner_info_cache() -> None:
+    """Reset the runner info cache. Called by test fixtures for isolation."""
+    global _runner_info_cache
+    _runner_info_cache = None
+
+
 def list_runners() -> list[RunnerInfo]:
     """Return metadata for all registered CLI runners.
 
+    Results are cached at module level since CLI availability doesn't change
+    during a process lifetime. Call _clear_runner_info_cache() in tests.
+
     Returns:
-        Sorted list of RunnerInfo with models (from env), availability,
-        default model, and supported execution modes per runner.
+        List of RunnerInfo with models, availability, defaults, and
+        supported execution modes per runner.
     """
+    global _runner_info_cache
+    if _runner_info_cache is not None:
+        return _runner_info_cache
+
     result: list[RunnerInfo] = []
     for name in RunnerFactory.list_clis():
+        defaults = get_runner_defaults(name)
         cli_info = detect_cli(name)
         runner_cls = RunnerFactory.get_runner_class(name)
         models = get_runner_models(name)
-
-        if cli_info.found:
-            try:
-                instance = RunnerFactory.create(name)
-                default_model = instance.default_model
-            except CLINotFoundError:
-                logger.warning("CLI '%s' disappeared between detection and creation", name)
-                cli_info = CLIInfo(found=False)
-                default_model = get_agent_env(name, "MODEL")
-        else:
-            default_model = get_agent_env(name, "MODEL")
-
         result.append(
             RunnerInfo(
                 name=name,
                 models=models,
                 available=cli_info.found,
-                default_model=default_model,
+                defaults=defaults,
                 execution_modes=runner_cls._SUPPORTED_MODES,
             )
         )
+
+    _runner_info_cache = result
     return result
 
 
