@@ -11,23 +11,15 @@ import pytest
 from fastmcp import Context
 
 from nexus_mcp.runners.factory import RunnerFactory
-from nexus_mcp.server import _clear_runner_info_cache
 from tests.fixtures import cli_detection_mocks
 
 
 @pytest.fixture(autouse=True)
 def _clean_runner_cache():
-    """Clear RunnerFactory and runner info caches before and after each test.
-
-    Config is now stateless (reads env vars fresh each call), so there is no
-    singleton to reset. We still need to clear caches to prevent state from
-    leaking between tests.
-    """
+    """Clear RunnerFactory cache before and after each test."""
     RunnerFactory.clear_cache()
-    _clear_runner_info_cache()
     yield
     RunnerFactory.clear_cache()
-    _clear_runner_info_cache()
 
 
 @pytest.fixture

@@ -1,9 +1,9 @@
 # tests/integration/test_server_pipeline.py
 """Integration tests for the full MCP server pipeline.
 
-Tests exercise prompt() and list_runners() from server.py using the
-real Gemini CLI. Only Context is mocked for progress assertions — all
-other components are real.
+Tests exercise prompt() from server.py using the real Gemini CLI, and
+verify server instructions are populated. Only Context is mocked for
+progress assertions — all other components are real.
 
 Imports the raw functions (not MCP-wrapped FunctionTool), matching the
 pattern established in tests/unit/test_server.py.
@@ -14,18 +14,19 @@ from unittest.mock import AsyncMock
 import pytest
 from fastmcp.exceptions import ToolError
 
-from nexus_mcp.server import list_runners, prompt
+from nexus_mcp.server import prompt
 from tests.fixtures import PING_PROMPT
 
 
-class TestServerListRunnersSmokeTest:
-    """Smoke tests for list_runners() that require no CLI."""
+class TestServerInstructionsSmokeTest:
+    """Smoke tests for server instructions (no CLI required)."""
 
-    def test_list_runners_includes_gemini(self) -> None:
-        """list_runners() should always include a runner named 'gemini' (no CLI required)."""
-        runners = list_runners()
+    def test_instructions_mention_gemini(self) -> None:
+        """Server instructions should always mention 'gemini' runner."""
+        from nexus_mcp.server import mcp
 
-        assert any(r.name == "gemini" for r in runners)
+        assert mcp.instructions is not None
+        assert "gemini" in mcp.instructions
 
 
 class TestServerPromptValidation:

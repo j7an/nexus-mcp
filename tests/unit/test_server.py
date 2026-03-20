@@ -17,8 +17,15 @@ from nexus_mcp.exceptions import (
     SubprocessError,
     UnsupportedAgentError,
 )
-from nexus_mcp.server import _assign_labels, batch_prompt, list_runners, mcp, prompt
-from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY, MultiPromptResponse
+from nexus_mcp.server import (
+    _assign_labels,
+    _inject_cli_enum,
+    batch_prompt,
+    build_server_instructions,
+    mcp,
+    prompt,
+)
+from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY, AgentTask, MultiPromptResponse
 from tests.fixtures import make_agent_response, make_agent_task
 
 
@@ -190,8 +197,7 @@ class TestToolTimeoutRegistration:
     """Verify that tool-level timeouts are set on registered FunctionTools.
 
     Timeout is baked in at module import time via get_tool_timeout().
-    These tests verify the default (900.0s) is applied to prompt/batch_prompt
-    and that list_runners has no timeout.
+    These tests verify the default (900.0s) is applied to prompt/batch_prompt.
     """
 
     async def test_prompt_has_timeout(self):
@@ -203,66 +209,6 @@ class TestToolTimeoutRegistration:
         """batch_prompt tool is registered with the default tool timeout."""
         tool = await mcp.get_tool("batch_prompt")
         assert tool.timeout == get_tool_timeout()
-
-    async def test_list_runners_no_timeout(self):
-        """list_runners tool has no timeout (instant operation)."""
-        tool = await mcp.get_tool("list_runners")
-        assert tool.timeout is None
-
-
-class TestListRunners:
-    """Tests for the list_runners tool function."""
-
-    def test_list_runners_returns_all_runners(self):
-        result = list_runners()
-        assert len(result) == 4
-        names = [r.name for r in result]
-        assert names == ["claude", "codex", "gemini", "opencode"]
-
-    def test_list_runners_returns_runner_info_type(self):
-        result = list_runners()
-        from nexus_mcp.types import RunnerInfo
-
-        for r in result:
-            assert isinstance(r, RunnerInfo)
-
-    def test_list_runners_includes_execution_modes(self):
-        result = list_runners()
-        gemini = next(r for r in result if r.name == "gemini")
-        assert gemini.execution_modes == ("default", "yolo")
-        opencode = next(r for r in result if r.name == "opencode")
-        assert opencode.execution_modes == ("default",)
-
-    def test_list_runners_with_models_env(self, monkeypatch):
-        """Models are read from NEXUS_{RUNNER}_MODELS env var."""
-        monkeypatch.setenv("NEXUS_GEMINI_MODELS", "gemini-2.5-flash,gemini-2.5-pro")
-        result = list_runners()
-        gemini = next(r for r in result if r.name == "gemini")
-        assert gemini.models == ("gemini-2.5-flash", "gemini-2.5-pro")
-
-    def test_list_runners_no_models_env(self):
-        """Without NEXUS_{RUNNER}_MODELS, models is empty tuple."""
-        result = list_runners()
-        for r in result:
-            assert r.models == ()
-
-    @patch("nexus_mcp.server.detect_cli")
-    def test_list_runners_unavailable_cli(self, mock_detect_cli, monkeypatch):
-        """Unavailable CLI sets available=False; defaults.model comes from env."""
-        from nexus_mcp.cli_detector import CLIInfo
-
-        mock_detect_cli.return_value = CLIInfo(found=False, path=None, version=None)
-        monkeypatch.setenv("NEXUS_GEMINI_MODEL", "gemini-test-model")
-        result = list_runners()
-        gemini = next(r for r in result if r.name == "gemini")
-        assert gemini.available is False
-        assert gemini.defaults.model == "gemini-test-model"
-
-    def test_list_runners_cache_returns_same_object(self):
-        """Second call returns the exact same list object (cache hit)."""
-        first = list_runners()
-        second = list_runners()
-        assert first is second
 
 
 class TestAssignLabels:
@@ -602,3 +548,107 @@ class TestBatchPrompt:
 
         # Task failed but progress was still reported
         assert ctx.report_progress.await_count == 1
+
+
+class TestServerInstructions:
+    """Tests for the build_server_instructions() function."""
+
+    def test_instructions_is_non_empty_string(self):
+        """build_server_instructions() returns a non-empty markdown string."""
+        result = build_server_instructions()
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_instructions_mention_all_runner_names(self):
+        """Instructions contain all registered runner names."""
+        result = build_server_instructions()
+        for name in ("claude", "codex", "gemini", "opencode"):
+            assert name in result
+
+    def test_instructions_include_availability_status(self):
+        """Instructions contain availability markers for each runner."""
+        result = build_server_instructions()
+        # At minimum, some runners should show installed/not found status
+        assert "installed" in result or "not found" in result
+
+    def test_instructions_include_execution_modes(self):
+        """Instructions mention execution modes for runners."""
+        result = build_server_instructions()
+        assert "default" in result
+        assert "yolo" in result
+
+    def test_instructions_include_models_when_set(self, monkeypatch):
+        """When NEXUS_GEMINI_MODELS is set, instructions list those models."""
+        monkeypatch.setenv("NEXUS_GEMINI_MODELS", "gemini-2.5-flash,gemini-2.5-pro")
+        result = build_server_instructions()
+        assert "gemini-2.5-flash" in result
+        assert "gemini-2.5-pro" in result
+
+    def test_instructions_include_default_model_when_configured(self, monkeypatch):
+        """When NEXUS_{RUNNER}_MODEL is set, instructions include the default model line."""
+        monkeypatch.setenv("NEXUS_GEMINI_MODEL", "gemini-2.5-pro")
+        result = build_server_instructions()
+        assert "- Default model: gemini-2.5-pro" in result
+
+
+class TestInjectCliEnumEdgeCases:
+    """Tests for _inject_cli_enum() defensive closure branches (lines 95-98)."""
+
+    def test_chains_existing_callable_json_schema_extra(self, monkeypatch, request):
+        """When AgentTask already has a callable json_schema_extra, it is invoked."""
+        extra_was_called = []
+
+        def existing_extra(schema: dict) -> None:
+            extra_was_called.append(True)
+
+        monkeypatch.setitem(AgentTask.model_config, "json_schema_extra", existing_extra)
+        request.addfinalizer(lambda: AgentTask.model_rebuild(force=True))
+
+        _inject_cli_enum()
+        schema = AgentTask.model_json_schema()
+
+        assert extra_was_called, "Pre-existing callable extra was not invoked"
+        assert "enum" in schema.get("properties", {}).get("cli", {})
+
+    def test_merges_existing_dict_json_schema_extra(self, monkeypatch, request):
+        """When AgentTask already has a dict json_schema_extra, it is merged."""
+        monkeypatch.setitem(AgentTask.model_config, "json_schema_extra", {"x-custom": "preserved"})
+        request.addfinalizer(lambda: AgentTask.model_rebuild(force=True))
+
+        _inject_cli_enum()
+        schema = AgentTask.model_json_schema()
+
+        assert schema.get("x-custom") == "preserved"
+        assert "enum" in schema.get("properties", {}).get("cli", {})
+
+
+class TestDynamicCliEnum:
+    """Tests for dynamic CLI enum injection into tool schemas."""
+
+    async def test_prompt_schema_has_cli_enum(self):
+        """prompt tool's cli parameter has an enum listing all runner names."""
+        tool = await mcp.get_tool("prompt")
+        cli_schema = tool.parameters["properties"]["cli"]
+        assert "enum" in cli_schema
+        assert set(cli_schema["enum"]) == {"claude", "codex", "gemini", "opencode"}
+
+    async def test_batch_prompt_task_cli_has_enum(self):
+        """batch_prompt's task schema has cli enum in the nested AgentTask definition."""
+        tool = await mcp.get_tool("batch_prompt")
+        # Navigate: properties → tasks → items → properties → cli
+        tasks_schema = tool.parameters["properties"]["tasks"]
+        # items may be under "items" directly or in "$defs"
+        items = tasks_schema.get("items", {})
+        # For Pydantic models, items may reference $defs — resolve if needed
+        if "$ref" in items:
+            ref_name = items["$ref"].split("/")[-1]
+            items = tool.parameters.get("$defs", {}).get(ref_name, {})
+        cli_field = items.get("properties", {}).get("cli", {})
+        assert "enum" in cli_field
+        assert set(cli_field["enum"]) == {"claude", "codex", "gemini", "opencode"}
+
+    async def test_instructions_are_set_on_mcp(self):
+        """FastMCP server has non-empty instructions after module load."""
+        assert mcp.instructions is not None
+        assert len(mcp.instructions) > 0
+        assert "nexus-mcp" in mcp.instructions

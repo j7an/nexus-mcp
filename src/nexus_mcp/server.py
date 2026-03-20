@@ -1,10 +1,9 @@
 # src/nexus_mcp/server.py
 """FastMCP server with CLI agent tools.
 
-Exposes six MCP tools:
+Exposes five MCP tools:
 - batch_prompt: Send multiple prompts to CLI agents in parallel (primary tool)
 - prompt: Send a single prompt to a CLI agent, routes to batch_prompt
-- list_runners: Return metadata for all registered CLI runners
 - set_preferences: Set session defaults (execution mode, model, retries, etc.)
 - get_preferences: Retrieve current session preferences
 - clear_preferences: Reset all session preferences
@@ -21,11 +20,11 @@ going through the FunctionTool wrapper.
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 
 from nexus_mcp.cli_detector import detect_cli
 from nexus_mcp.config import get_runner_defaults, get_runner_models, get_tool_timeout
@@ -36,11 +35,77 @@ from nexus_mcp.types import (
     AgentTaskResult,
     ExecutionMode,
     MultiPromptResponse,
-    RunnerInfo,
     SessionPreferences,
 )
 
-mcp = FastMCP("nexus-mcp")
+
+def build_server_instructions() -> str:
+    """Generate markdown instructions describing available CLI runners.
+
+    Called once at module load time. The instructions string is passed to
+    FastMCP's constructor so MCP clients receive runner metadata on connection
+    without needing a separate tool call.
+    """
+    lines = ["# nexus-mcp — CLI Agent Router", ""]
+    lines.append("## Available Runners")
+    lines.append("")
+
+    for name in RunnerFactory.list_clis():
+        cli_info = detect_cli(name)
+        defaults = get_runner_defaults(name)
+        runner_cls = RunnerFactory.get_runner_class(name)
+        models = get_runner_models(name)
+
+        status = "installed" if cli_info.found else "not found"
+        lines.append(f"### {name} ({status})")
+
+        if models:
+            lines.append(f"- Models: {', '.join(models)}")
+        if defaults.model:
+            lines.append(f"- Default model: {defaults.model}")
+
+        modes = ", ".join(runner_cls._SUPPORTED_MODES)
+        lines.append(f"- Execution modes: {modes}")
+        lines.append(f"- Default timeout: {defaults.timeout}s")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _inject_cli_enum() -> None:
+    """Inject runtime CLI names as JSON schema enum on cli parameters.
+
+    Patches:
+    1. prompt() function's ``cli`` parameter annotation — adds enum to schema
+    2. AgentTask model's ``cli`` field — via json_schema_extra callable + model_rebuild()
+
+    Called once before tool registration. The enum is schema-only — runtime
+    validation stays with RunnerFactory.create() raising UnsupportedAgentError.
+    """
+    cli_names: list[Any] = list(RunnerFactory.list_clis())
+
+    # 1. Patch prompt() cli parameter annotation
+    prompt.__annotations__["cli"] = Annotated[str, Field(json_schema_extra={"enum": cli_names})]
+
+    # 2. Patch AgentTask.cli field schema
+    original_extra = AgentTask.model_config.get("json_schema_extra")
+
+    def _add_cli_enum(schema: dict[str, Any]) -> None:
+        if original_extra is not None:
+            if callable(original_extra):
+                original_extra(schema)  # type: ignore[call-arg]
+            elif isinstance(original_extra, dict):
+                schema.update(original_extra)
+        # Inject enum into the cli property
+        props = schema.get("properties", {})
+        if "cli" in props:
+            props["cli"]["enum"] = cli_names
+
+    AgentTask.model_config["json_schema_extra"] = _add_cli_enum
+    AgentTask.model_rebuild(force=True)
+
+
+mcp = FastMCP("nexus-mcp", instructions=build_server_instructions())
 logger = logging.getLogger(__name__)
 
 _PREFERENCES_KEY = "nexus:preferences"
@@ -269,49 +334,6 @@ async def prompt(
     return task_result.output
 
 
-_runner_info_cache: list[RunnerInfo] | None = None
-
-
-def _clear_runner_info_cache() -> None:
-    """Reset the runner info cache. Called by test fixtures for isolation."""
-    global _runner_info_cache
-    _runner_info_cache = None
-
-
-def list_runners() -> list[RunnerInfo]:
-    """Return metadata for all registered CLI runners.
-
-    Results are cached at module level since CLI availability doesn't change
-    during a process lifetime. Call _clear_runner_info_cache() in tests.
-
-    Returns:
-        List of RunnerInfo with models, availability, defaults, and
-        supported execution modes per runner.
-    """
-    global _runner_info_cache
-    if _runner_info_cache is not None:
-        return _runner_info_cache
-
-    result: list[RunnerInfo] = []
-    for name in RunnerFactory.list_clis():
-        defaults = get_runner_defaults(name)
-        cli_info = detect_cli(name)
-        runner_cls = RunnerFactory.get_runner_class(name)
-        models = get_runner_models(name)
-        result.append(
-            RunnerInfo(
-                name=name,
-                models=models,
-                available=cli_info.found,
-                defaults=defaults,
-                execution_modes=runner_cls._SUPPORTED_MODES,
-            )
-        )
-
-    _runner_info_cache = result
-    return result
-
-
 async def set_preferences(
     execution_mode: ExecutionMode | None = None,
     model: str | None = None,
@@ -463,6 +485,9 @@ async def clear_preferences(ctx: Context | None = None) -> str:
     return "Preferences cleared"
 
 
+# Inject CLI names as enum into tool schemas before registration freezes them.
+_inject_cli_enum()
+
 # Register functions as MCP tools after definition so tests can import
 # and call the raw functions directly (not the FunctionTool wrappers).
 # timeout wraps synchronous calls with anyio.fail_after(); when a client
@@ -471,7 +496,6 @@ async def clear_preferences(ctx: Context | None = None) -> str:
 _tool_timeout = get_tool_timeout()
 mcp.tool(task=True, timeout=_tool_timeout)(batch_prompt)
 mcp.tool(task=True, timeout=_tool_timeout)(prompt)
-mcp.tool()(list_runners)
 mcp.tool()(set_preferences)
 mcp.tool()(get_preferences)
 mcp.tool()(clear_preferences)
