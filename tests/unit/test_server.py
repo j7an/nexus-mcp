@@ -19,12 +19,13 @@ from nexus_mcp.exceptions import (
 )
 from nexus_mcp.server import (
     _assign_labels,
+    _inject_cli_enum,
     batch_prompt,
     build_server_instructions,
     mcp,
     prompt,
 )
-from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY, MultiPromptResponse
+from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY, AgentTask, MultiPromptResponse
 from tests.fixtures import make_agent_response, make_agent_task
 
 
@@ -582,6 +583,43 @@ class TestServerInstructions:
         result = build_server_instructions()
         assert "gemini-2.5-flash" in result
         assert "gemini-2.5-pro" in result
+
+    def test_instructions_include_default_model_when_configured(self, monkeypatch):
+        """When NEXUS_{RUNNER}_MODEL is set, instructions include the default model line."""
+        monkeypatch.setenv("NEXUS_GEMINI_MODEL", "gemini-2.5-pro")
+        result = build_server_instructions()
+        assert "- Default model: gemini-2.5-pro" in result
+
+
+class TestInjectCliEnumEdgeCases:
+    """Tests for _inject_cli_enum() defensive closure branches (lines 95-98)."""
+
+    def test_chains_existing_callable_json_schema_extra(self, monkeypatch, request):
+        """When AgentTask already has a callable json_schema_extra, it is invoked."""
+        extra_was_called = []
+
+        def existing_extra(schema: dict) -> None:
+            extra_was_called.append(True)
+
+        monkeypatch.setitem(AgentTask.model_config, "json_schema_extra", existing_extra)
+        request.addfinalizer(lambda: AgentTask.model_rebuild(force=True))
+
+        _inject_cli_enum()
+        schema = AgentTask.model_json_schema()
+
+        assert extra_was_called, "Pre-existing callable extra was not invoked"
+        assert "enum" in schema.get("properties", {}).get("cli", {})
+
+    def test_merges_existing_dict_json_schema_extra(self, monkeypatch, request):
+        """When AgentTask already has a dict json_schema_extra, it is merged."""
+        monkeypatch.setitem(AgentTask.model_config, "json_schema_extra", {"x-custom": "preserved"})
+        request.addfinalizer(lambda: AgentTask.model_rebuild(force=True))
+
+        _inject_cli_enum()
+        schema = AgentTask.model_json_schema()
+
+        assert schema.get("x-custom") == "preserved"
+        assert "enum" in schema.get("properties", {}).get("cli", {})
 
 
 class TestDynamicCliEnum:
