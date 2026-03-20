@@ -10,7 +10,7 @@
 
 A MCP server that enables AI models to invoke AI CLI agents (Gemini CLI, Codex, Claude Code, OpenCode) as
 tools. Provides parallel execution, automatic retries with exponential backoff, JSON-first response
-parsing, and structured output through six MCP tools.
+parsing, and structured output through five MCP tools.
 
 ## Use Cases
 
@@ -186,23 +186,16 @@ uv run python -m nexus_mcp
 Once nexus-mcp is configured in your MCP client, your AI assistant automatically sees its tools.
 The reliable trigger is **explicitly asking for output from an external AI agent** (e.g. Gemini, Codex, Claude Code, OpenCode).
 Generic "do this in parallel" prompts may be handled by the host AI's own capabilities instead.
-Because `cli` is a required parameter, the assistant typically calls `list_runners` first to discover
-what's available, then fans out your request accordingly.
+Because `cli` is a required parameter, the server provides runner metadata (names, models, availability,
+execution modes) in its connection instructions — no discovery call needed. The `cli` parameter also
+includes a JSON schema enum listing valid runner names.
 
 ### Fan out a research question (batch_prompt)
 
 **You say to your AI assistant:**
 > "Get perspectives from Gemini, Codex, and OpenCode on transformer architectures — summary, limitations, and applications."
 
-**Your AI assistant first calls `list_runners` to discover available runners:**
-
-```json
-{}
-```
-
-**Response:** structured metadata for each runner (models, available, execution_modes, defaults)
-
-**Then calls `batch_prompt` with the discovered runners:**
+**Your AI assistant calls `batch_prompt` with the discovered runners:**
 
 ```json
 {
@@ -213,8 +206,6 @@ what's available, then fans out your request accordingly.
   ]
 }
 ```
-
-Runner discovery happens once per session; subsequent examples skip the `list_runners` step.
 
 ### Code review from multiple angles (batch_prompt)
 
@@ -310,7 +301,6 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 |------|-------|-------------|
 | `batch_prompt` | Yes | Fan out prompts to multiple runners in parallel; returns `MultiPromptResponse` |
 | `prompt` | Yes | Single-runner convenience wrapper; routes to `batch_prompt` |
-| `list_runners` | No | Returns structured metadata for each runner (models, available, execution_modes, defaults) |
 | `set_preferences` | No | Set or selectively clear session defaults for execution mode, model, max retries, output limit, timeout, retry base delay, and retry max delay |
 | `get_preferences` | No | Retrieve current session preferences |
 | `clear_preferences` | No | Reset all session preferences |
@@ -352,10 +342,6 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 | `timeout` | No | session pref or env default | Subprocess timeout in seconds |
 | `retry_base_delay` | No | session pref or env default | Base delay seconds for exponential backoff |
 | `retry_max_delay` | No | session pref or env default | Max delay cap for backoff in seconds |
-
-### `list_runners`
-
-No parameters. Returns a list of `RunnerInfo` objects with fields: `name`, `models`, `available`, `execution_modes`, `defaults` (nested `OperationalDefaults` with `model`, `timeout`, `output_limit`, `max_retries`, etc.).
 
 ### `set_preferences`
 
@@ -417,7 +403,7 @@ Valid `{AGENT}` values: `CLAUDE`, `CODEX`, `GEMINI`, `OPENCODE`
 | Variable pattern | Example | Description |
 |----------|---------|-------------|
 | `NEXUS_{AGENT}_MODEL` | `NEXUS_GEMINI_MODEL=gemini-2.5-flash` | Default model for this runner |
-| `NEXUS_{AGENT}_MODELS` | `NEXUS_GEMINI_MODELS=gemini-2.5-flash,gemini-2.5-pro` | Comma-separated model list (surfaced in `list_runners`) |
+| `NEXUS_{AGENT}_MODELS` | `NEXUS_GEMINI_MODELS=gemini-2.5-flash,gemini-2.5-pro` | Comma-separated model list (surfaced in server instructions) |
 | `NEXUS_{AGENT}_TIMEOUT` | `NEXUS_GEMINI_TIMEOUT=900` | Subprocess timeout override |
 | `NEXUS_{AGENT}_OUTPUT_LIMIT` | `NEXUS_CODEX_OUTPUT_LIMIT=100000` | Output limit override |
 | `NEXUS_{AGENT}_MAX_RETRIES` | `NEXUS_CLAUDE_MAX_RETRIES=5` | Max retry attempts override |
