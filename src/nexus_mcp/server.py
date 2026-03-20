@@ -40,6 +40,40 @@ from nexus_mcp.types import (
     SessionPreferences,
 )
 
+
+def build_server_instructions() -> str:
+    """Generate markdown instructions describing available CLI runners.
+
+    Called once at module load time. The instructions string is passed to
+    FastMCP's constructor so MCP clients receive runner metadata on connection
+    without needing a separate tool call.
+    """
+    lines = ["# nexus-mcp — CLI Agent Router", ""]
+    lines.append("## Available Runners")
+    lines.append("")
+
+    for name in RunnerFactory.list_clis():
+        cli_info = detect_cli(name)
+        defaults = get_runner_defaults(name)
+        runner_cls = RunnerFactory.get_runner_class(name)
+        models = get_runner_models(name)
+
+        status = "installed" if cli_info.found else "not found"
+        lines.append(f"### {name} ({status})")
+
+        if models:
+            lines.append(f"- Models: {', '.join(models)}")
+        if defaults.model:
+            lines.append(f"- Default model: {defaults.model}")
+
+        modes = ", ".join(runner_cls._SUPPORTED_MODES)
+        lines.append(f"- Execution modes: {modes}")
+        lines.append(f"- Default timeout: {defaults.timeout}s")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 mcp = FastMCP("nexus-mcp")
 logger = logging.getLogger(__name__)
 

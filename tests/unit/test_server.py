@@ -17,7 +17,14 @@ from nexus_mcp.exceptions import (
     SubprocessError,
     UnsupportedAgentError,
 )
-from nexus_mcp.server import _assign_labels, batch_prompt, list_runners, mcp, prompt
+from nexus_mcp.server import (
+    _assign_labels,
+    batch_prompt,
+    build_server_instructions,
+    list_runners,
+    mcp,
+    prompt,
+)
 from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY, MultiPromptResponse
 from tests.fixtures import make_agent_response, make_agent_task
 
@@ -602,3 +609,38 @@ class TestBatchPrompt:
 
         # Task failed but progress was still reported
         assert ctx.report_progress.await_count == 1
+
+
+class TestServerInstructions:
+    """Tests for the build_server_instructions() function."""
+
+    def test_instructions_is_non_empty_string(self):
+        """build_server_instructions() returns a non-empty markdown string."""
+        result = build_server_instructions()
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_instructions_mention_all_runner_names(self):
+        """Instructions contain all registered runner names."""
+        result = build_server_instructions()
+        for name in ("claude", "codex", "gemini", "opencode"):
+            assert name in result
+
+    def test_instructions_include_availability_status(self):
+        """Instructions contain availability markers for each runner."""
+        result = build_server_instructions()
+        # At minimum, some runners should show installed/not found status
+        assert "installed" in result or "not found" in result
+
+    def test_instructions_include_execution_modes(self):
+        """Instructions mention execution modes for runners."""
+        result = build_server_instructions()
+        assert "default" in result
+        assert "yolo" in result
+
+    def test_instructions_include_models_when_set(self, monkeypatch):
+        """When NEXUS_GEMINI_MODELS is set, instructions list those models."""
+        monkeypatch.setenv("NEXUS_GEMINI_MODELS", "gemini-2.5-flash,gemini-2.5-pro")
+        result = build_server_instructions()
+        assert "gemini-2.5-flash" in result
+        assert "gemini-2.5-pro" in result
