@@ -66,7 +66,7 @@ class TestRunnerFactory:
         """list_clis() should return list of supported agent names."""
         agents = RunnerFactory.list_clis()
 
-        assert agents == ["claude", "codex", "gemini", "opencode"]
+        assert agents == ["claude", "codex", "gemini", "opencode", "opencode_server"]
 
     def test_create_returns_cached_instance(self):
         """create() should return the same cached instance for the same agent."""
@@ -93,7 +93,13 @@ class TestRunnerFactory:
 
 class TestRunnerFactoryNewMethods:
     def test_list_clis_returns_sorted_names(self):
-        assert RunnerFactory.list_clis() == ["claude", "codex", "gemini", "opencode"]
+        assert RunnerFactory.list_clis() == [
+            "claude",
+            "codex",
+            "gemini",
+            "opencode",
+            "opencode_server",
+        ]
 
     def test_get_runner_class_returns_class(self):
         cls = RunnerFactory.get_runner_class("gemini")

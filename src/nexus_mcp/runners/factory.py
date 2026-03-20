@@ -18,6 +18,7 @@ from nexus_mcp.runners.claude import ClaudeRunner
 from nexus_mcp.runners.codex import CodexRunner
 from nexus_mcp.runners.gemini import GeminiRunner
 from nexus_mcp.runners.opencode import OpenCodeRunner
+from nexus_mcp.runners.opencode_server import OpenCodeServerRunner
 
 
 class RunnerFactory:
@@ -37,6 +38,7 @@ class RunnerFactory:
         CodexRunner.AGENT_NAME: CodexRunner,
         GeminiRunner.AGENT_NAME: GeminiRunner,
         OpenCodeRunner.AGENT_NAME: OpenCodeRunner,
+        OpenCodeServerRunner.AGENT_NAME: OpenCodeServerRunner,
     }
 
     _instances: ClassVar[dict[str, AbstractRunner]] = {}
@@ -50,7 +52,8 @@ class RunnerFactory:
         blocking subprocess calls in runner __init__ methods.
 
         Args:
-            name: CLI runner name (case-sensitive: "claude", "codex", "gemini", "opencode").
+            name: CLI runner name (case-sensitive: "claude", "codex", "gemini",
+                "opencode", "opencode_server").
 
         Returns:
             AbstractRunner instance for the name.
@@ -92,7 +95,7 @@ class RunnerFactory:
             Sorted list of CLI names that can be passed to create() or get_runner_class().
 
         Example:
-            RunnerFactory.list_clis()  # → ["claude", "codex", "gemini", "opencode"]
+            RunnerFactory.list_clis()  # → ["claude", "codex", ..., "opencode_server"]
         """
         return sorted(cls._REGISTRY)
 

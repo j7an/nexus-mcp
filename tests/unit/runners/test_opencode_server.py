@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from nexus_mcp.exceptions import RetryableError, SubprocessError
+from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.runners.opencode_server import OpenCodeServerRunner
 from tests.fixtures import make_prompt_request
 
@@ -394,3 +395,19 @@ class TestSSEErrorEvents:
         request = make_prompt_request(cli="opencode_server")
         with pytest.raises(RetryableError, match="RateLimitError"):
             await runner._execute(request)
+
+
+class TestFactoryRegistration:
+    """Test that opencode_server is registered in RunnerFactory."""
+
+    def test_opencode_server_in_list_clis(self):
+        assert "opencode_server" in RunnerFactory.list_clis()
+
+    def test_create_returns_opencode_server_runner(self):
+        runner = RunnerFactory.create("opencode_server")
+        assert isinstance(runner, OpenCodeServerRunner)
+        assert runner.AGENT_NAME == "opencode_server"
+
+    def test_get_runner_class(self):
+        cls = RunnerFactory.get_runner_class("opencode_server")
+        assert cls is OpenCodeServerRunner

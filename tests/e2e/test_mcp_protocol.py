@@ -96,7 +96,7 @@ class TestServerInstructionsProtocol:
         from nexus_mcp.server import mcp
 
         assert mcp.instructions is not None
-        for name in ("claude", "codex", "gemini", "opencode"):
+        for name in ("claude", "codex", "gemini", "opencode", "opencode_server"):
             assert name in mcp.instructions
 
 
