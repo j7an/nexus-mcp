@@ -66,7 +66,7 @@ class TestPrompt:
         mock_factory.create.assert_called_once_with("gemini")
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.prompt == "Test prompt"
-        assert call_args.context == {}
+        assert call_args.context.get("_nexus_label") == "gemini"
         assert call_args.execution_mode == "default"
         assert call_args.model is None
 
@@ -110,7 +110,8 @@ class TestPrompt:
         )
 
         call_args = mock_runner.run.call_args.args[0]
-        assert call_args.context == {"key": "value"}
+        assert call_args.context["key"] == "value"
+        assert call_args.context["_nexus_label"] == "gemini"
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_prompt_handles_unsupported_agent(self, mock_factory):

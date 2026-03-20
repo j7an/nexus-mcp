@@ -149,10 +149,13 @@ class AgentTask(BaseModel):
 
     def to_request(self) -> "PromptRequest":
         """Convert this task to a PromptRequest for runner execution."""
+        context = dict(self.context)
+        if self.label is not None:
+            context["_nexus_label"] = self.label
         return PromptRequest(
             cli=self.cli,
             prompt=self.prompt,
-            context=self.context,
+            context=context,
             execution_mode=self.execution_mode or "default",  # safety net: None → "default"
             model=self.model,
             max_retries=self.max_retries,
