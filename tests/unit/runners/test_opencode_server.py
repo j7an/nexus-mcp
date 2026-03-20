@@ -6,11 +6,12 @@ Mock boundary: httpx.AsyncClient — all HTTP calls mocked.
 
 import json
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
+from nexus_mcp.exceptions import RetryableError, SubprocessError
 from nexus_mcp.runners.opencode_server import OpenCodeServerRunner
 from tests.fixtures import make_prompt_request
 
@@ -249,3 +250,147 @@ class TestExecute:
         post_call = runner._client.post.call_args
         body = post_call.kwargs.get("json") or post_call[1].get("json")
         assert body["model"] == "anthropic/claude-3-opus"
+
+
+class TestErrorHandling:
+    """Test HTTP and SSE error classification."""
+
+    async def test_connect_error_is_retryable(self):
+        runner = make_server_runner()
+        runner._resolve_session = AsyncMock(return_value="ses_test")
+        runner._client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
+
+        with pytest.raises(RetryableError, match="Cannot connect"):
+            request = make_prompt_request(cli="opencode_server")
+            await runner._execute(request)
+
+    async def test_timeout_error_is_retryable(self):
+        runner = make_server_runner()
+        runner._resolve_session = AsyncMock(return_value="ses_test")
+        runner._client.post = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
+
+        with pytest.raises(RetryableError, match="timed out"):
+            request = make_prompt_request(cli="opencode_server")
+            await runner._execute(request)
+
+    async def test_http_429_raises_retryable(self):
+        runner = make_server_runner()
+        resp = AsyncMock(spec=httpx.Response)
+        resp.status_code = 429
+        resp.headers = {"Retry-After": "5"}
+
+        with pytest.raises(RetryableError) as exc_info:
+            runner._check_http_error(resp)
+        assert exc_info.value.retry_after == 5.0
+
+    async def test_http_503_is_retryable(self):
+        runner = make_server_runner()
+        resp = AsyncMock(spec=httpx.Response)
+        resp.status_code = 503
+        resp.headers = {}
+
+        with pytest.raises(RetryableError):
+            runner._check_http_error(resp)
+
+    async def test_http_401_is_not_retryable(self):
+        runner = make_server_runner()
+        resp = AsyncMock(spec=httpx.Response)
+        resp.status_code = 401
+        resp.headers = {}
+        resp.text = "Unauthorized"
+
+        with pytest.raises(SubprocessError, match="401"):
+            runner._check_http_error(resp)
+
+    async def test_http_403_is_not_retryable(self):
+        runner = make_server_runner()
+        resp = AsyncMock(spec=httpx.Response)
+        resp.status_code = 403
+        resp.headers = {}
+        resp.text = "Forbidden"
+
+        with pytest.raises(SubprocessError, match="403"):
+            runner._check_http_error(resp)
+
+
+class TestAuthConfiguration:
+    """Test HTTP client auth setup."""
+
+    def test_no_auth_when_password_unset(self):
+        runner = make_server_runner()
+        assert runner._client.auth is None
+
+    @patch.dict("os.environ", {"NEXUS_OPENCODE_SERVER_PASSWORD": "secret"})
+    def test_basic_auth_when_password_set(self):
+        runner = make_server_runner()
+        assert runner._client.auth is not None
+
+
+class TestSSEErrorEvents:
+    """Test SSE error event classification."""
+
+    async def test_sse_error_event_raises_subprocess_error(self):
+        """An SSE error event with non-retryable code raises SubprocessError."""
+        runner = make_server_runner()
+        runner._resolve_session = AsyncMock(return_value="ses_test")
+
+        prompt_resp = AsyncMock(spec=httpx.Response)
+        prompt_resp.status_code = 204
+        prompt_resp.raise_for_status = MagicMock()
+
+        error_event = json.dumps(
+            {
+                "type": "error",
+                "sessionID": "ses_test",
+                "error": {
+                    "name": "AuthenticationError",
+                    "data": {"message": "Invalid API key", "statusCode": 401},
+                },
+            }
+        )
+        sse_text = f"data: {error_event}\n\n"
+        sse_resp = _mock_sse_response(sse_text)
+
+        @asynccontextmanager
+        async def mock_stream(method, url, **kwargs):
+            yield sse_resp
+
+        runner._client.post = AsyncMock(return_value=prompt_resp)
+        runner._client.stream = mock_stream
+
+        request = make_prompt_request(cli="opencode_server")
+        with pytest.raises(SubprocessError, match="AuthenticationError"):
+            await runner._execute(request)
+
+    async def test_sse_error_event_retryable_code(self):
+        """An SSE error event with 429 raises RetryableError."""
+        runner = make_server_runner()
+        runner._resolve_session = AsyncMock(return_value="ses_test")
+
+        prompt_resp = AsyncMock(spec=httpx.Response)
+        prompt_resp.status_code = 204
+        prompt_resp.raise_for_status = MagicMock()
+
+        error_event = json.dumps(
+            {
+                "type": "error",
+                "sessionID": "ses_test",
+                "error": {
+                    "name": "RateLimitError",
+                    "data": {"message": "Too many requests", "statusCode": 429},
+                },
+            }
+        )
+        sse_text = f"data: {error_event}\n\n"
+        sse_resp = _mock_sse_response(sse_text)
+
+        @asynccontextmanager
+        async def mock_stream(method, url, **kwargs):
+            yield sse_resp
+
+        runner._client.post = AsyncMock(return_value=prompt_resp)
+        runner._client.stream = mock_stream
+
+        request = make_prompt_request(cli="opencode_server")
+        with pytest.raises(RetryableError, match="RateLimitError"):
+            await runner._execute(request)
