@@ -4,7 +4,7 @@
 Mock boundary: httpx.AsyncClient — all HTTP calls mocked.
 """
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -42,7 +42,7 @@ def _mock_post_session(session_id: str = "ses_abc123") -> AsyncMock:
     resp = AsyncMock(spec=httpx.Response)
     resp.status_code = 200
     resp.json.return_value = {"id": session_id}
-    resp.raise_for_status = AsyncMock()
+    resp.raise_for_status = MagicMock()
     return resp
 
 
@@ -51,7 +51,7 @@ def _mock_get_session_ok(session_id: str = "ses_abc123") -> AsyncMock:
     resp = AsyncMock(spec=httpx.Response)
     resp.status_code = 200
     resp.json.return_value = {"id": session_id}
-    resp.raise_for_status = AsyncMock()
+    resp.raise_for_status = MagicMock()
     return resp
 
 
@@ -111,3 +111,17 @@ class TestSessionManagement:
 
         assert session_id == "ses_ephemeral"
         assert None not in runner._sessions
+
+    async def test_server_error_on_validate_creates_new_session(self):
+        """Non-200, non-404 on GET /session/:id is treated as session unavailable."""
+        runner = make_server_runner()
+        runner._sessions["my-task"] = "ses_broken"
+        mock_get_500 = AsyncMock(spec=httpx.Response)
+        mock_get_500.status_code = 500
+        mock_post = _mock_post_session("ses_new")
+        runner._client.get = AsyncMock(return_value=mock_get_500)
+        runner._client.post = AsyncMock(return_value=mock_post)
+
+        session_id = await runner._resolve_session("my-task")
+
+        assert session_id == "ses_new"

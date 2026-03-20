@@ -92,4 +92,4 @@ class OpenCodeServerRunner(AbstractRunner):
             True if session exists (200), False if gone (404).
         """
         resp = await self._client.get(f"/session/{session_id}")
-        return resp.status_code != 404
+        return resp.status_code == 200
