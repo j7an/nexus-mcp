@@ -81,8 +81,8 @@ uvx --reinstall nexus-mcp
       "command": "uvx",
       "args": ["nexus-mcp"],
       "env": {
-        "NEXUS_GEMINI_MODEL": "gemini-2.5-flash",
-        "NEXUS_GEMINI_MODELS": "gemini-2.5-pro,gemini-2.5-flash,gemini-2.0-flash",
+        "NEXUS_GEMINI_MODEL": "gemini-3-flash-preview",
+        "NEXUS_GEMINI_MODELS": "gemini-3.1-pro-preview,gemini-3-flash-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite",
         "NEXUS_CODEX_MODEL": "gpt-5.2",
         "NEXUS_CODEX_MODELS": "gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.2-codex,gpt-5.2,gpt-5.1-codex-max,gpt-5.1-codex-mini",
         "NEXUS_OPENCODE_MODEL": "ollama-cloud/kimi-k2.5",
@@ -102,8 +102,8 @@ uvx --reinstall nexus-mcp
       "command": "uvx",
       "args": ["nexus-mcp"],
       "env": {
-        "NEXUS_GEMINI_MODEL": "gemini-2.5-flash",
-        "NEXUS_GEMINI_MODELS": "gemini-2.5-pro,gemini-2.5-flash,gemini-2.0-flash",
+        "NEXUS_GEMINI_MODEL": "gemini-3-flash-preview",
+        "NEXUS_GEMINI_MODELS": "gemini-3.1-pro-preview,gemini-3-flash-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite",
         "NEXUS_CODEX_MODEL": "gpt-5.2",
         "NEXUS_CODEX_MODELS": "gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.2-codex,gpt-5.2,gpt-5.1-codex-max,gpt-5.1-codex-mini",
         "NEXUS_OPENCODE_MODEL": "ollama-cloud/kimi-k2.5",
@@ -118,8 +118,8 @@ uvx --reinstall nexus-mcp
 
 ```bash
 claude mcp add nexus-mcp \
-  -e NEXUS_GEMINI_MODEL=gemini-2.5-flash \
-  -e NEXUS_GEMINI_MODELS=gemini-2.5-pro,gemini-2.5-flash,gemini-2.0-flash \
+  -e NEXUS_GEMINI_MODEL=gemini-3-flash-preview \
+  -e NEXUS_GEMINI_MODELS=gemini-3.1-pro-preview,gemini-3-flash-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite \
   -e NEXUS_CODEX_MODEL=gpt-5.2 \
   -e NEXUS_CODEX_MODELS=gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.2-codex,gpt-5.2,gpt-5.1-codex-max,gpt-5.1-codex-mini \
   -e NEXUS_OPENCODE_MODEL=ollama-cloud/kimi-k2.5 \
@@ -135,7 +135,7 @@ claude mcp add nexus-mcp \
   "args": ["nexus-mcp"],
   "transport": "stdio",
   "env": {
-    "NEXUS_GEMINI_MODEL": "gemini-2.5-flash",
+    "NEXUS_GEMINI_MODEL": "gemini-3-flash-preview",
     "NEXUS_CODEX_MODEL": "gpt-5.2",
     "NEXUS_OPENCODE_MODEL": "ollama-cloud/kimi-k2.5"
   }
@@ -235,7 +235,7 @@ includes a JSON schema enum listing valid runner names.
 {
   "cli": "gemini",
   "prompt": "Explain the difference between TCP and UDP in simple terms",
-  "model": "gemini-2.5-flash"
+  "model": "gemini-3-flash-preview"
 }
 ```
 
@@ -269,14 +269,14 @@ includes a JSON schema enum listing valid runner names.
 ```json
 {
   "execution_mode": "yolo",
-  "model": "gemini-2.5-flash",
+  "model": "gemini-3-flash-preview",
   "max_retries": 5
 }
 ```
 
 **Response:**
 ```
-Preferences set: {"execution_mode": "yolo", "model": "gemini-2.5-flash", "max_retries": 5, "output_limit": null, "timeout": null, "retry_base_delay": null, "retry_max_delay": null}
+Preferences set: {"execution_mode": "yolo", "model": "gemini-3-flash-preview", "max_retries": 5, "output_limit": null, "timeout": null, "retry_base_delay": null, "retry_max_delay": null}
 ```
 
 **Subsequent `prompt` and `batch_prompt` calls omit those fields — they inherit from the session:**
@@ -348,7 +348,7 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `execution_mode` | No | — | `"default"` or `"yolo"` |
-| `model` | No | — | Model name (e.g. `"gemini-2.5-flash"`) |
+| `model` | No | — | Model name (e.g. `"gemini-3-flash-preview"`) |
 | `max_retries` | No | — | Max total attempts including the first (≥1; 1 means run once, no retries) |
 | `output_limit` | No | — | Max output bytes before temp-file spillover (≥1) |
 | `timeout` | No | — | Subprocess timeout in seconds (≥1) |
@@ -402,8 +402,8 @@ Valid `{AGENT}` values: `CLAUDE`, `CODEX`, `GEMINI`, `OPENCODE`
 
 | Variable pattern | Example | Description |
 |----------|---------|-------------|
-| `NEXUS_{AGENT}_MODEL` | `NEXUS_GEMINI_MODEL=gemini-2.5-flash` | Default model for this runner |
-| `NEXUS_{AGENT}_MODELS` | `NEXUS_GEMINI_MODELS=gemini-2.5-flash,gemini-2.5-pro` | Comma-separated model list (surfaced in server instructions) |
+| `NEXUS_{AGENT}_MODEL` | `NEXUS_GEMINI_MODEL=gemini-3-flash-preview` | Default model for this runner |
+| `NEXUS_{AGENT}_MODELS` | `NEXUS_GEMINI_MODELS=gemini-3-flash-preview,gemini-2.5-pro` | Comma-separated model list (surfaced in server instructions) |
 | `NEXUS_{AGENT}_TIMEOUT` | `NEXUS_GEMINI_TIMEOUT=900` | Subprocess timeout override |
 | `NEXUS_{AGENT}_OUTPUT_LIMIT` | `NEXUS_CODEX_OUTPUT_LIMIT=100000` | Output limit override |
 | `NEXUS_{AGENT}_MAX_RETRIES` | `NEXUS_CLAUDE_MAX_RETRIES=5` | Max retry attempts override |
