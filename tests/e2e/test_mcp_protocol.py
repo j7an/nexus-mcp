@@ -43,14 +43,13 @@ def _extract_prompt_from_args(args: tuple) -> str:
 class TestToolDiscovery:
     """Verify MCP tool registration via list_tools() JSON-RPC call."""
 
-    async def test_list_tools_returns_all_six(self, mcp_client):
-        """list_tools() returns exactly 6 registered tools."""
+    async def test_list_tools_returns_all_five(self, mcp_client):
+        """list_tools() returns exactly 5 registered tools."""
         tools = await mcp_client.list_tools()
         names = {t.name for t in tools}
         assert names == {
             "prompt",
             "batch_prompt",
-            "list_runners",
             "set_preferences",
             "get_preferences",
             "clear_preferences",
@@ -83,38 +82,22 @@ class TestToolDiscovery:
 
 
 # ---------------------------------------------------------------------------
-# Class 2: list_runners protocol
+# Class 2: Server instructions protocol
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.e2e
-class TestListRunnersProtocol:
-    """Verify list_runners tool via the MCP protocol."""
+class TestServerInstructionsProtocol:
+    """Verify server instructions are delivered via MCP protocol."""
 
-    async def test_list_runners_returns_all_runners(self, mcp_client):
-        """call_tool('list_runners') returns all supported runners through JSON-RPC."""
-        result = await mcp_client.call_tool("list_runners", {})
-        assert result.is_error is False
-        names = {r.name for r in result.data}
-        assert names == {"claude", "codex", "gemini", "opencode"}
+    async def test_instructions_contain_runner_names(self, mcp_client):
+        """Server instructions mention all registered runner names."""
+        # FastMCP exposes instructions via the server info
+        from nexus_mcp.server import mcp
 
-    async def test_list_runners_field_values_survive_json_rpc(self, mcp_client):
-        """RunnerInfo fields survive JSON-RPC round-trip with correct types."""
-        result = await mcp_client.call_tool("list_runners", {})
-        runners = {r.name: r for r in result.data}
-        gemini = runners["gemini"]
-        assert isinstance(gemini.available, bool)
-        assert isinstance(gemini.execution_modes, (list, tuple))
-        assert "default" in gemini.execution_modes
-
-    async def test_list_runners_defaults_survive_json_rpc(self, mcp_client):
-        """Nested defaults object survives JSON-RPC round-trip."""
-        result = await mcp_client.call_tool("list_runners", {})
-        runners = {r.name: r for r in result.data}
-        gemini = runners["gemini"]
-        assert hasattr(gemini, "defaults")
-        assert gemini.defaults.timeout is not None
-        assert gemini.defaults.max_retries is not None
+        assert mcp.instructions is not None
+        for name in ("claude", "codex", "gemini", "opencode"):
+            assert name in mcp.instructions
 
 
 # ---------------------------------------------------------------------------
