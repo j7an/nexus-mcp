@@ -4,6 +4,8 @@
 Mock boundary: httpx.AsyncClient — all HTTP calls mocked.
 """
 
+import json
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -125,3 +127,125 @@ class TestSessionManagement:
         session_id = await runner._resolve_session("my-task")
 
         assert session_id == "ses_new"
+
+
+def _sse_lines(*events: str) -> str:
+    """Build raw SSE text from data strings."""
+    return "".join(f"data: {e}\n\n" for e in events)
+
+
+def _mock_sse_response(sse_text: str) -> AsyncMock:
+    """Build a mock streaming response that yields SSE lines."""
+    resp = AsyncMock(spec=httpx.Response)
+    resp.status_code = 200
+
+    async def aiter_lines():
+        for line in sse_text.splitlines(keepends=True):
+            yield line
+
+    resp.aiter_lines = aiter_lines
+    return resp
+
+
+class TestExecute:
+    """Test _execute() flow: session -> prompt_async -> SSE -> AgentResponse."""
+
+    async def test_basic_prompt_returns_response(self):
+        runner = make_server_runner()
+
+        # Mock session creation
+        runner._resolve_session = AsyncMock(return_value="ses_test")
+
+        # Mock prompt_async
+        prompt_resp = AsyncMock(spec=httpx.Response)
+        prompt_resp.status_code = 204
+        prompt_resp.raise_for_status = MagicMock()
+
+        # Mock SSE stream with a text event and completion
+        sse_data = json.dumps(
+            {
+                "type": "text",
+                "sessionID": "ses_test",
+                "part": {"type": "text", "text": "Hello world"},
+            }
+        )
+        completion = json.dumps({"type": "step_finish", "sessionID": "ses_test"})
+        sse_text = f"data: {sse_data}\n\ndata: {completion}\n\n"
+        sse_resp = _mock_sse_response(sse_text)
+
+        @asynccontextmanager
+        async def mock_stream(method, url, **kwargs):
+            yield sse_resp
+
+        runner._client.post = AsyncMock(return_value=prompt_resp)
+        runner._client.stream = mock_stream
+
+        request = make_prompt_request(cli="opencode_server", prompt="Say hello")
+        response = await runner._execute(request)
+
+        assert response.cli == "opencode_server"
+        assert response.output == "Hello world"
+
+    async def test_context_serialized_to_system_field(self):
+        runner = make_server_runner()
+        runner._resolve_session = AsyncMock(return_value="ses_test")
+
+        prompt_resp = AsyncMock(spec=httpx.Response)
+        prompt_resp.status_code = 204
+        prompt_resp.raise_for_status = MagicMock()
+
+        sse_data = json.dumps(
+            {"type": "text", "sessionID": "ses_test", "part": {"type": "text", "text": "ok"}}
+        )
+        completion = json.dumps({"type": "step_finish", "sessionID": "ses_test"})
+        sse_text = f"data: {sse_data}\n\ndata: {completion}\n\n"
+        sse_resp = _mock_sse_response(sse_text)
+
+        @asynccontextmanager
+        async def mock_stream(method, url, **kwargs):
+            yield sse_resp
+
+        runner._client.post = AsyncMock(return_value=prompt_resp)
+        runner._client.stream = mock_stream
+
+        request = make_prompt_request(
+            cli="opencode_server",
+            prompt="Do thing",
+            context={"project": "nexus-mcp"},
+        )
+        await runner._execute(request)
+
+        # Verify prompt_async was called with system field
+        post_call = runner._client.post.call_args
+        body = post_call.kwargs.get("json") or post_call[1].get("json")
+        assert "system" in body
+        assert json.loads(body["system"]) == {"project": "nexus-mcp"}
+
+    async def test_model_included_in_payload(self):
+        runner = make_server_runner()
+        runner._resolve_session = AsyncMock(return_value="ses_test")
+
+        prompt_resp = AsyncMock(spec=httpx.Response)
+        prompt_resp.status_code = 204
+        prompt_resp.raise_for_status = MagicMock()
+
+        sse_data = json.dumps(
+            {"type": "text", "sessionID": "ses_test", "part": {"type": "text", "text": "ok"}}
+        )
+        completion = json.dumps({"type": "step_finish", "sessionID": "ses_test"})
+        sse_text = f"data: {sse_data}\n\ndata: {completion}\n\n"
+        sse_resp = _mock_sse_response(sse_text)
+
+        @asynccontextmanager
+        async def mock_stream(method, url, **kwargs):
+            yield sse_resp
+
+        runner._client.post = AsyncMock(return_value=prompt_resp)
+        runner._client.stream = mock_stream
+
+        request = make_prompt_request(cli="opencode_server", model="anthropic/claude-3-opus")
+        await runner._execute(request)
+
+        post_call = runner._client.post.call_args
+        body = post_call.kwargs.get("json") or post_call[1].get("json")
+        assert body["model"] == "anthropic/claude-3-opus"
