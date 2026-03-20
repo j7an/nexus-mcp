@@ -48,3 +48,48 @@ class OpenCodeServerRunner(AbstractRunner):
 
     def parse_output(self, stdout: str, stderr: str) -> AgentResponse:
         raise NotImplementedError("OpenCodeServerRunner uses HTTP, not CLI output parsing")
+
+    async def _resolve_session(self, label: str | None) -> str:
+        """Resolve a session ID for the given label.
+
+        Args:
+            label: Task label for session reuse. None = ephemeral session.
+
+        Returns:
+            OpenCode session ID string.
+        """
+        if label is not None and label in self._sessions:
+            session_id = self._sessions[label]
+            if await self._validate_session(session_id):
+                return session_id
+            del self._sessions[label]
+
+        session_id = await self._create_session(label)
+        if label is not None:
+            self._sessions[label] = session_id
+        return session_id
+
+    async def _create_session(self, title: str | None) -> str:
+        """Create a new OpenCode session via POST /session.
+
+        Args:
+            title: Optional session title.
+
+        Returns:
+            New session ID.
+        """
+        body: dict[str, str] = {}
+        if title is not None:
+            body["title"] = title
+        resp = await self._client.post("/session", json=body)
+        resp.raise_for_status()
+        return str(resp.json()["id"])
+
+    async def _validate_session(self, session_id: str) -> bool:
+        """Check if a session still exists via GET /session/:id.
+
+        Returns:
+            True if session exists (200), False if gone (404).
+        """
+        resp = await self._client.get(f"/session/{session_id}")
+        return resp.status_code != 404
