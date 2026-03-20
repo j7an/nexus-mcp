@@ -1,10 +1,9 @@
 # src/nexus_mcp/server.py
 """FastMCP server with CLI agent tools.
 
-Exposes six MCP tools:
+Exposes five MCP tools:
 - batch_prompt: Send multiple prompts to CLI agents in parallel (primary tool)
 - prompt: Send a single prompt to a CLI agent, routes to batch_prompt
-- list_runners: Return metadata for all registered CLI runners
 - set_preferences: Set session defaults (execution mode, model, retries, etc.)
 - get_preferences: Retrieve current session preferences
 - clear_preferences: Reset all session preferences
@@ -36,7 +35,6 @@ from nexus_mcp.types import (
     AgentTaskResult,
     ExecutionMode,
     MultiPromptResponse,
-    RunnerInfo,
     SessionPreferences,
 )
 
@@ -336,49 +334,6 @@ async def prompt(
     return task_result.output
 
 
-_runner_info_cache: list[RunnerInfo] | None = None
-
-
-def _clear_runner_info_cache() -> None:
-    """Reset the runner info cache. Called by test fixtures for isolation."""
-    global _runner_info_cache
-    _runner_info_cache = None
-
-
-def list_runners() -> list[RunnerInfo]:
-    """Return metadata for all registered CLI runners.
-
-    Results are cached at module level since CLI availability doesn't change
-    during a process lifetime. Call _clear_runner_info_cache() in tests.
-
-    Returns:
-        List of RunnerInfo with models, availability, defaults, and
-        supported execution modes per runner.
-    """
-    global _runner_info_cache
-    if _runner_info_cache is not None:
-        return _runner_info_cache
-
-    result: list[RunnerInfo] = []
-    for name in RunnerFactory.list_clis():
-        defaults = get_runner_defaults(name)
-        cli_info = detect_cli(name)
-        runner_cls = RunnerFactory.get_runner_class(name)
-        models = get_runner_models(name)
-        result.append(
-            RunnerInfo(
-                name=name,
-                models=models,
-                available=cli_info.found,
-                defaults=defaults,
-                execution_modes=runner_cls._SUPPORTED_MODES,
-            )
-        )
-
-    _runner_info_cache = result
-    return result
-
-
 async def set_preferences(
     execution_mode: ExecutionMode | None = None,
     model: str | None = None,
@@ -541,7 +496,6 @@ _inject_cli_enum()
 _tool_timeout = get_tool_timeout()
 mcp.tool(task=True, timeout=_tool_timeout)(batch_prompt)
 mcp.tool(task=True, timeout=_tool_timeout)(prompt)
-mcp.tool()(list_runners)
 mcp.tool()(set_preferences)
 mcp.tool()(get_preferences)
 mcp.tool()(clear_preferences)

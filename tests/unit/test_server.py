@@ -21,7 +21,6 @@ from nexus_mcp.server import (
     _assign_labels,
     batch_prompt,
     build_server_instructions,
-    list_runners,
     mcp,
     prompt,
 )
@@ -197,8 +196,7 @@ class TestToolTimeoutRegistration:
     """Verify that tool-level timeouts are set on registered FunctionTools.
 
     Timeout is baked in at module import time via get_tool_timeout().
-    These tests verify the default (900.0s) is applied to prompt/batch_prompt
-    and that list_runners has no timeout.
+    These tests verify the default (900.0s) is applied to prompt/batch_prompt.
     """
 
     async def test_prompt_has_timeout(self):
@@ -210,66 +208,6 @@ class TestToolTimeoutRegistration:
         """batch_prompt tool is registered with the default tool timeout."""
         tool = await mcp.get_tool("batch_prompt")
         assert tool.timeout == get_tool_timeout()
-
-    async def test_list_runners_no_timeout(self):
-        """list_runners tool has no timeout (instant operation)."""
-        tool = await mcp.get_tool("list_runners")
-        assert tool.timeout is None
-
-
-class TestListRunners:
-    """Tests for the list_runners tool function."""
-
-    def test_list_runners_returns_all_runners(self):
-        result = list_runners()
-        assert len(result) == 4
-        names = [r.name for r in result]
-        assert names == ["claude", "codex", "gemini", "opencode"]
-
-    def test_list_runners_returns_runner_info_type(self):
-        result = list_runners()
-        from nexus_mcp.types import RunnerInfo
-
-        for r in result:
-            assert isinstance(r, RunnerInfo)
-
-    def test_list_runners_includes_execution_modes(self):
-        result = list_runners()
-        gemini = next(r for r in result if r.name == "gemini")
-        assert gemini.execution_modes == ("default", "yolo")
-        opencode = next(r for r in result if r.name == "opencode")
-        assert opencode.execution_modes == ("default",)
-
-    def test_list_runners_with_models_env(self, monkeypatch):
-        """Models are read from NEXUS_{RUNNER}_MODELS env var."""
-        monkeypatch.setenv("NEXUS_GEMINI_MODELS", "gemini-2.5-flash,gemini-2.5-pro")
-        result = list_runners()
-        gemini = next(r for r in result if r.name == "gemini")
-        assert gemini.models == ("gemini-2.5-flash", "gemini-2.5-pro")
-
-    def test_list_runners_no_models_env(self):
-        """Without NEXUS_{RUNNER}_MODELS, models is empty tuple."""
-        result = list_runners()
-        for r in result:
-            assert r.models == ()
-
-    @patch("nexus_mcp.server.detect_cli")
-    def test_list_runners_unavailable_cli(self, mock_detect_cli, monkeypatch):
-        """Unavailable CLI sets available=False; defaults.model comes from env."""
-        from nexus_mcp.cli_detector import CLIInfo
-
-        mock_detect_cli.return_value = CLIInfo(found=False, path=None, version=None)
-        monkeypatch.setenv("NEXUS_GEMINI_MODEL", "gemini-test-model")
-        result = list_runners()
-        gemini = next(r for r in result if r.name == "gemini")
-        assert gemini.available is False
-        assert gemini.defaults.model == "gemini-test-model"
-
-    def test_list_runners_cache_returns_same_object(self):
-        """Second call returns the exact same list object (cache hit)."""
-        first = list_runners()
-        second = list_runners()
-        assert first is second
 
 
 class TestAssignLabels:
