@@ -21,11 +21,11 @@ going through the FunctionTool wrapper.
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 
 from nexus_mcp.cli_detector import detect_cli
 from nexus_mcp.config import get_runner_defaults, get_runner_models, get_tool_timeout
@@ -74,7 +74,40 @@ def build_server_instructions() -> str:
     return "\n".join(lines)
 
 
-mcp = FastMCP("nexus-mcp")
+def _inject_cli_enum() -> None:
+    """Inject runtime CLI names as JSON schema enum on cli parameters.
+
+    Patches:
+    1. prompt() function's ``cli`` parameter annotation — adds enum to schema
+    2. AgentTask model's ``cli`` field — via json_schema_extra callable + model_rebuild()
+
+    Called once before tool registration. The enum is schema-only — runtime
+    validation stays with RunnerFactory.create() raising UnsupportedAgentError.
+    """
+    cli_names: list[Any] = list(RunnerFactory.list_clis())
+
+    # 1. Patch prompt() cli parameter annotation
+    prompt.__annotations__["cli"] = Annotated[str, Field(json_schema_extra={"enum": cli_names})]
+
+    # 2. Patch AgentTask.cli field schema
+    original_extra = AgentTask.model_config.get("json_schema_extra")
+
+    def _add_cli_enum(schema: dict[str, Any]) -> None:
+        if original_extra is not None:
+            if callable(original_extra):
+                original_extra(schema)  # type: ignore[call-arg]
+            elif isinstance(original_extra, dict):
+                schema.update(original_extra)
+        # Inject enum into the cli property
+        props = schema.get("properties", {})
+        if "cli" in props:
+            props["cli"]["enum"] = cli_names
+
+    AgentTask.model_config["json_schema_extra"] = _add_cli_enum
+    AgentTask.model_rebuild(force=True)
+
+
+mcp = FastMCP("nexus-mcp", instructions=build_server_instructions())
 logger = logging.getLogger(__name__)
 
 _PREFERENCES_KEY = "nexus:preferences"
@@ -496,6 +529,9 @@ async def clear_preferences(ctx: Context | None = None) -> str:
     await ctx.delete_state(_PREFERENCES_KEY)
     return "Preferences cleared"
 
+
+# Inject CLI names as enum into tool schemas before registration freezes them.
+_inject_cli_enum()
 
 # Register functions as MCP tools after definition so tests can import
 # and call the raw functions directly (not the FunctionTool wrappers).

@@ -644,3 +644,35 @@ class TestServerInstructions:
         result = build_server_instructions()
         assert "gemini-2.5-flash" in result
         assert "gemini-2.5-pro" in result
+
+
+class TestDynamicCliEnum:
+    """Tests for dynamic CLI enum injection into tool schemas."""
+
+    async def test_prompt_schema_has_cli_enum(self):
+        """prompt tool's cli parameter has an enum listing all runner names."""
+        tool = await mcp.get_tool("prompt")
+        cli_schema = tool.parameters["properties"]["cli"]
+        assert "enum" in cli_schema
+        assert set(cli_schema["enum"]) == {"claude", "codex", "gemini", "opencode"}
+
+    async def test_batch_prompt_task_cli_has_enum(self):
+        """batch_prompt's task schema has cli enum in the nested AgentTask definition."""
+        tool = await mcp.get_tool("batch_prompt")
+        # Navigate: properties → tasks → items → properties → cli
+        tasks_schema = tool.parameters["properties"]["tasks"]
+        # items may be under "items" directly or in "$defs"
+        items = tasks_schema.get("items", {})
+        # For Pydantic models, items may reference $defs — resolve if needed
+        if "$ref" in items:
+            ref_name = items["$ref"].split("/")[-1]
+            items = tool.parameters.get("$defs", {}).get(ref_name, {})
+        cli_field = items.get("properties", {}).get("cli", {})
+        assert "enum" in cli_field
+        assert set(cli_field["enum"]) == {"claude", "codex", "gemini", "opencode"}
+
+    async def test_instructions_are_set_on_mcp(self):
+        """FastMCP server has non-empty instructions after module load."""
+        assert mcp.instructions is not None
+        assert len(mcp.instructions) > 0
+        assert "nexus-mcp" in mcp.instructions
