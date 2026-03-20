@@ -10,7 +10,7 @@ See: docs/superpowers/specs/2026-03-18-opencode-server-runner-design.md
 import contextlib
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import ClassVar
 
 import httpx
@@ -171,7 +171,7 @@ class OpenCodeServerRunner(AbstractRunner):
         try:
             async with self._client.stream("GET", "/global/event", timeout=float(timeout)) as resp:
 
-                async def line_iter() -> AsyncIterator[str]:
+                async def line_iter() -> AsyncGenerator[str]:
                     async for line in resp.aiter_lines():
                         raw_lines.append(line)
                         yield line
