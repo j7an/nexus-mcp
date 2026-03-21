@@ -649,3 +649,102 @@ class TestCleanupAbort:
             await runner._execute(request)
 
         abort_mock.assert_awaited_once_with("ses_cancel")
+
+    async def test_abort_called_on_sse_timeout(self):
+        """TimeoutException during SSE triggers abort before RetryableError."""
+        runner = make_server_runner()
+        runner._resolve_session = AsyncMock(return_value="ses_timeout")
+
+        prompt_resp = AsyncMock(spec=httpx.Response)
+        prompt_resp.status_code = 204
+
+        # SSE stream that raises TimeoutException during iteration
+        sse_resp = AsyncMock(spec=httpx.Response)
+        sse_resp.status_code = 200
+
+        async def timeout_aiter_lines():
+            yield "data: {}\n"
+            raise httpx.ReadTimeout("stream timed out")
+
+        sse_resp.aiter_lines = timeout_aiter_lines
+
+        @asynccontextmanager
+        async def mock_stream(method, url, **kwargs):
+            yield sse_resp
+
+        abort_mock = AsyncMock()
+        runner._client.post = AsyncMock(return_value=prompt_resp)
+        runner._client.stream = mock_stream
+        runner._abort_session = abort_mock
+
+        request = make_prompt_request(cli="opencode_server")
+        with pytest.raises(RetryableError, match="SSE stream timed out"):
+            await runner._execute(request)
+
+        abort_mock.assert_awaited_once_with("ses_timeout")
+
+    async def test_abort_failure_does_not_mask_cancel(self):
+        """If the abort POST fails, CancelledError still propagates."""
+        runner = make_server_runner()
+        runner._resolve_session = AsyncMock(return_value="ses_x")
+
+        prompt_resp = AsyncMock(spec=httpx.Response)
+        prompt_resp.status_code = 204
+
+        sse_resp = AsyncMock(spec=httpx.Response)
+        sse_resp.status_code = 200
+
+        async def cancelling_aiter_lines():
+            yield "data: {}\n"
+            raise asyncio.CancelledError
+
+        sse_resp.aiter_lines = cancelling_aiter_lines
+
+        @asynccontextmanager
+        async def mock_stream(method, url, **kwargs):
+            yield sse_resp
+
+        async def post_side_effect(url, **kwargs):
+            if "/abort" in url:
+                raise httpx.ConnectError("server down")
+            return prompt_resp
+
+        runner._client.post = AsyncMock(side_effect=post_side_effect)
+        runner._client.stream = mock_stream
+
+        request = make_prompt_request(cli="opencode_server")
+        with pytest.raises(asyncio.CancelledError):
+            await runner._execute(request)
+
+    async def test_abort_failure_does_not_mask_timeout(self):
+        """If the abort POST fails, RetryableError still propagates."""
+        runner = make_server_runner()
+        runner._resolve_session = AsyncMock(return_value="ses_x")
+
+        prompt_resp = AsyncMock(spec=httpx.Response)
+        prompt_resp.status_code = 204
+
+        sse_resp = AsyncMock(spec=httpx.Response)
+        sse_resp.status_code = 200
+
+        async def timeout_aiter_lines():
+            yield "data: {}\n"
+            raise httpx.ReadTimeout("stream timed out")
+
+        sse_resp.aiter_lines = timeout_aiter_lines
+
+        @asynccontextmanager
+        async def mock_stream(method, url, **kwargs):
+            yield sse_resp
+
+        async def post_side_effect(url, **kwargs):
+            if "/abort" in url:
+                raise httpx.ConnectError("server down")
+            return prompt_resp
+
+        runner._client.post = AsyncMock(side_effect=post_side_effect)
+        runner._client.stream = mock_stream
+
+        request = make_prompt_request(cli="opencode_server")
+        with pytest.raises(RetryableError, match="SSE stream timed out"):
+            await runner._execute(request)
