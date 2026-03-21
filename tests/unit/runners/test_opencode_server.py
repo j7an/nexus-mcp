@@ -19,8 +19,15 @@ from tests.fixtures import make_prompt_request
 
 
 def make_server_runner() -> OpenCodeServerRunner:
-    """Create an OpenCodeServerRunner using autouse cli_detection_mocks."""
-    return OpenCodeServerRunner()
+    """Create an OpenCodeServerRunner using autouse cli_detection_mocks.
+
+    _check_health is mocked as a no-op so existing tests that call _execute()
+    are not affected by the pre-flight health check. Tests in TestHealthCheck
+    call the real method explicitly.
+    """
+    runner = OpenCodeServerRunner()
+    runner._check_health = AsyncMock()  # type: ignore[method-assign]
+    return runner
 
 
 class TestOpenCodeServerRunnerInit:
@@ -748,3 +755,55 @@ class TestCleanupAbort:
         request = make_prompt_request(cli="opencode_server")
         with pytest.raises(RetryableError, match="SSE stream timed out"):
             await runner._execute(request)
+
+
+def _mock_health_response(healthy: bool = True) -> AsyncMock:
+    """Build a mock httpx.Response for GET /global/health."""
+    resp = AsyncMock(spec=httpx.Response)
+    resp.status_code = 200
+    resp.json.return_value = {"healthy": healthy, "version": "1.0.0"}
+    return resp
+
+
+class TestHealthCheck:
+    """Test _check_health() pre-flight validation.
+
+    make_server_runner() mocks _check_health as a no-op. These tests restore
+    the real method via OpenCodeServerRunner._check_health to test it directly.
+    """
+
+    async def test_healthy_server_returns_silently(self):
+        runner = make_server_runner()
+        runner._check_health = OpenCodeServerRunner._check_health.__get__(runner)  # type: ignore[assignment]
+        runner._client.get = AsyncMock(return_value=_mock_health_response(healthy=True))
+
+        await runner._check_health()  # should not raise
+
+        runner._client.get.assert_called_once_with("/global/health")
+
+    async def test_unhealthy_server_raises_retryable(self):
+        runner = make_server_runner()
+        runner._check_health = OpenCodeServerRunner._check_health.__get__(runner)  # type: ignore[assignment]
+        runner._client.get = AsyncMock(return_value=_mock_health_response(healthy=False))
+
+        with pytest.raises(RetryableError, match="reports unhealthy"):
+            await runner._check_health()
+
+    async def test_connect_error_raises_retryable(self):
+        runner = make_server_runner()
+        runner._check_health = OpenCodeServerRunner._check_health.__get__(runner)  # type: ignore[assignment]
+        runner._client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+
+        with pytest.raises(RetryableError, match="Cannot connect"):
+            await runner._check_health()
+
+    async def test_http_500_raises_retryable(self):
+        runner = make_server_runner()
+        runner._check_health = OpenCodeServerRunner._check_health.__get__(runner)  # type: ignore[assignment]
+        resp = AsyncMock(spec=httpx.Response)
+        resp.status_code = 500
+        resp.json.side_effect = Exception("not json")
+        runner._client.get = AsyncMock(return_value=resp)
+
+        with pytest.raises(RetryableError, match="health check failed"):
+            await runner._check_health()
