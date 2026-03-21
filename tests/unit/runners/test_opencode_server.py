@@ -807,3 +807,125 @@ class TestHealthCheck:
 
         with pytest.raises(RetryableError, match="health check failed"):
             await runner._check_health()
+
+
+def _mock_diff_response(diff_data: list[dict] | None = None) -> AsyncMock:
+    """Build a mock httpx.Response for GET /session/:id/diff."""
+    resp = AsyncMock(spec=httpx.Response)
+    resp.status_code = 200
+    resp.json.return_value = (
+        diff_data
+        if diff_data is not None
+        else [
+            {"path": "src/main.py", "type": "modified"},
+        ]
+    )
+    return resp
+
+
+class TestSessionDiff:
+    """Test _fetch_session_diff() and its integration with _execute()."""
+
+    async def test_returns_diff_list_on_success(self):
+        runner = make_server_runner()
+        diff_data = [{"path": "src/main.py", "type": "modified"}]
+        runner._client.get = AsyncMock(return_value=_mock_diff_response(diff_data))
+
+        result = await runner._fetch_session_diff("ses_abc")
+
+        assert result == diff_data
+        runner._client.get.assert_called_once_with("/session/ses_abc/diff")
+
+    async def test_returns_none_on_404(self):
+        runner = make_server_runner()
+        resp = AsyncMock(spec=httpx.Response)
+        resp.status_code = 404
+        runner._client.get = AsyncMock(return_value=resp)
+
+        result = await runner._fetch_session_diff("ses_gone")
+
+        assert result is None
+
+    async def test_returns_none_on_timeout(self):
+        runner = make_server_runner()
+        runner._client.get = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
+
+        result = await runner._fetch_session_diff("ses_slow")
+
+        assert result is None
+
+    async def test_returns_none_on_json_decode_error(self):
+        runner = make_server_runner()
+        resp = AsyncMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.json.side_effect = json.JSONDecodeError("bad", "", 0)
+        runner._client.get = AsyncMock(return_value=resp)
+
+        result = await runner._fetch_session_diff("ses_bad")
+
+        assert result is None
+
+    async def test_diff_skipped_for_labeled_session(self):
+        """_execute() should NOT call _fetch_session_diff when label is set."""
+        runner = make_server_runner()
+        runner._check_health = AsyncMock()
+        runner._resolve_session = AsyncMock(return_value="ses_labeled")
+        runner._fetch_session_diff = AsyncMock()
+
+        prompt_resp = AsyncMock(spec=httpx.Response)
+        prompt_resp.status_code = 204
+
+        sse_text = _sse_lines(
+            _message_updated_event("ses_labeled", "msg_1", "assistant"),
+            _text_part_event("ses_labeled", "done"),
+            _idle_event("ses_labeled"),
+        )
+        sse_resp = _mock_sse_response(sse_text)
+
+        @asynccontextmanager
+        async def mock_stream(method, url, **kwargs):
+            yield sse_resp
+
+        runner._client.post = AsyncMock(return_value=prompt_resp)
+        runner._client.stream = mock_stream
+
+        request = make_prompt_request(
+            cli="opencode_server",
+            context={"_nexus_label": "my-task"},
+        )
+        response = await runner._execute(request)
+
+        runner._fetch_session_diff.assert_not_called()
+        assert "diff" not in response.metadata
+
+    async def test_diff_included_in_metadata_for_ephemeral_session(self):
+        """_execute() fetches diff for ephemeral sessions and adds to metadata."""
+        runner = make_server_runner()
+        runner._check_health = AsyncMock()
+        runner._resolve_session = AsyncMock(return_value="ses_eph")
+
+        diff_data = [{"path": "README.md", "type": "added"}]
+        runner._fetch_session_diff = AsyncMock(return_value=diff_data)
+
+        prompt_resp = AsyncMock(spec=httpx.Response)
+        prompt_resp.status_code = 204
+
+        sse_text = _sse_lines(
+            _message_updated_event("ses_eph", "msg_1", "assistant"),
+            _text_part_event("ses_eph", "created readme"),
+            _idle_event("ses_eph"),
+        )
+        sse_resp = _mock_sse_response(sse_text)
+
+        @asynccontextmanager
+        async def mock_stream(method, url, **kwargs):
+            yield sse_resp
+
+        runner._client.post = AsyncMock(return_value=prompt_resp)
+        runner._client.stream = mock_stream
+
+        request = make_prompt_request(cli="opencode_server")
+        response = await runner._execute(request)
+
+        runner._fetch_session_diff.assert_called_once_with("ses_eph")
+        assert response.metadata["diff"] == diff_data
