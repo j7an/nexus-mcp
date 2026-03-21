@@ -12,7 +12,7 @@ import contextlib
 import json
 import logging
 from collections.abc import AsyncGenerator
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import httpx
 
@@ -131,6 +131,26 @@ class OpenCodeServerRunner(AbstractRunner):
         if not data.get("healthy"):
             raise RetryableError("OpenCode server reports unhealthy", retry_after=None)
 
+    async def _fetch_session_diff(self, session_id: str) -> list[dict[str, Any]] | None:
+        """Fetch file diffs for a session via GET /session/:id/diff.
+
+        Best-effort: returns None on any failure. Never raises.
+
+        Args:
+            session_id: The session to fetch diffs for.
+
+        Returns:
+            List of diff dicts on success, None on any error.
+        """
+        try:
+            resp = await self._client.get(f"/session/{session_id}/diff")
+            if resp.status_code != 200:
+                return None
+            result: list[dict[str, Any]] = resp.json()
+            return result
+        except Exception:
+            return None
+
     async def _execute(self, request: PromptRequest) -> AgentResponse:
         """Execute prompt via OpenCode HTTP API.
 
@@ -169,6 +189,11 @@ class OpenCodeServerRunner(AbstractRunner):
             raw_output=raw_events,
             metadata={"session_id": session_id},
         )
+        if not label:
+            diff = await self._fetch_session_diff(session_id)
+            if diff is not None:
+                response = response.with_metadata(diff=diff)
+
         return self._apply_output_limit(response, request)
 
     async def _consume_sse(
