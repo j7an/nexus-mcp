@@ -100,6 +100,37 @@ class OpenCodeServerRunner(AbstractRunner):
         resp = await self._client.get(f"/session/{session_id}")
         return resp.status_code == 200
 
+    async def _check_health(self) -> None:
+        """Pre-flight health check via GET /global/health.
+
+        Raises:
+            RetryableError: If server is unreachable, unhealthy, or returns an error.
+        """
+        try:
+            resp = await self._client.get("/global/health")
+        except httpx.ConnectError as e:
+            raise RetryableError(
+                f"Cannot connect to OpenCode server at {self._base_url}: {e}",
+                retry_after=None,
+            ) from e
+
+        if resp.status_code != 200:
+            raise RetryableError(
+                f"OpenCode server health check failed: HTTP {resp.status_code}",
+                retry_after=None,
+            )
+
+        try:
+            data = resp.json()
+        except Exception as e:
+            raise RetryableError(
+                "OpenCode server health check failed: invalid JSON response",
+                retry_after=None,
+            ) from e
+
+        if not data.get("healthy"):
+            raise RetryableError("OpenCode server reports unhealthy", retry_after=None)
+
     async def _execute(self, request: PromptRequest) -> AgentResponse:
         """Execute prompt via OpenCode HTTP API.
 
@@ -113,6 +144,7 @@ class OpenCodeServerRunner(AbstractRunner):
         5. Build AgentResponse
         6. Apply output limit (inherited)
         """
+        await self._check_health()
         label = request.context.get("_nexus_label")
         session_id = await self._resolve_session(label)
 
