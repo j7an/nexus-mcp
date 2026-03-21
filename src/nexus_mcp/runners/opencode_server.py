@@ -7,6 +7,7 @@ Uses async prompting (POST /session/:id/prompt_async) with SSE event streaming.
 See: docs/superpowers/specs/2026-03-18-opencode-server-runner-design.md
 """
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -106,10 +107,11 @@ class OpenCodeServerRunner(AbstractRunner):
 
         Steps:
         1. Resolve session (reuse or create)
-        2. POST /session/:id/prompt_async
-        3. Consume SSE from GET /global/event
-        4. Build AgentResponse
-        5. Apply output limit (inherited)
+        2. Open SSE stream (GET /global/event)
+        3. POST /session/:id/prompt_async — inside the open stream to avoid race condition
+        4. Consume SSE events
+        5. Build AgentResponse
+        6. Apply output limit (inherited)
         """
         label = request.context.get("_nexus_label")
         session_id = await self._resolve_session(label)
@@ -120,32 +122,14 @@ class OpenCodeServerRunner(AbstractRunner):
         }
         model = request.model or self.default_model
         if model:
-            payload["model"] = model
+            payload["model"] = self._parse_model(model)
         if request.context:
             payload["system"] = json.dumps(request.context)
 
-        # Fire async prompt
         effective_timeout = request.timeout if request.timeout is not None else self.timeout
-        try:
-            resp = await self._client.post(
-                f"/session/{session_id}/prompt_async",
-                json=payload,
-                timeout=float(effective_timeout),
-            )
-            self._check_http_error(resp)
-        except httpx.ConnectError as e:
-            raise RetryableError(
-                f"Cannot connect to OpenCode server at {self._base_url}: {e}",
-                retry_after=None,
-            ) from e
-        except httpx.TimeoutException as e:
-            raise RetryableError(
-                f"OpenCode server request timed out: {e}",
-                retry_after=None,
-            ) from e
 
-        # Consume SSE
-        output_parts, raw_events = await self._consume_sse(session_id, effective_timeout)
+        # SSE stream opens FIRST; prompt fires inside to avoid missing step_finish
+        output_parts, raw_events = await self._consume_sse(session_id, payload, effective_timeout)
 
         response = AgentResponse(
             cli=self.AGENT_NAME,
@@ -155,21 +139,49 @@ class OpenCodeServerRunner(AbstractRunner):
         )
         return self._apply_output_limit(response, request)
 
-    async def _consume_sse(self, session_id: str, timeout: int) -> tuple[list[str], str]:
-        """Consume SSE events from GET /global/event for the given session.
+    async def _consume_sse(
+        self,
+        session_id: str,
+        payload: dict[str, object],
+        timeout: int,
+    ) -> tuple[list[str], str]:
+        """Open SSE stream, fire prompt_async, then consume events.
+
+        The stream is opened BEFORE posting the prompt to avoid a race condition
+        where step_finish is emitted before the client subscribes to /global/event.
 
         Args:
-            session_id: Filter events for this session.
+            session_id: Session to post to and filter events for.
+            payload: JSON body for POST /session/:id/prompt_async.
             timeout: HTTP timeout seconds.
 
         Returns:
             Tuple of (text parts list, raw SSE text).
         """
-        parts: list[str] = []
+        text_parts: dict[str, str] = {}  # part_id → final text (deduplicates re-deliveries)
+        assistant_msg_ids: set[str] = set()
         raw_lines: list[str] = []
 
         try:
             async with self._client.stream("GET", "/global/event", timeout=float(timeout)) as resp:
+                # Fire prompt AFTER stream is open
+                try:
+                    post_resp = await self._client.post(
+                        f"/session/{session_id}/prompt_async",
+                        json=payload,
+                        timeout=float(timeout),
+                    )
+                    self._check_http_error(post_resp)
+                except httpx.ConnectError as e:
+                    raise RetryableError(
+                        f"Cannot connect to OpenCode server at {self._base_url}: {e}",
+                        retry_after=None,
+                    ) from e
+                except httpx.TimeoutException as e:
+                    raise RetryableError(
+                        f"OpenCode server request timed out: {e}",
+                        retry_after=None,
+                    ) from e
 
                 async def line_iter() -> AsyncGenerator[str]:
                     async for line in resp.aiter_lines():
@@ -186,20 +198,47 @@ class OpenCodeServerRunner(AbstractRunner):
                     if not isinstance(data, dict):
                         continue
 
-                    event_session = data.get("sessionID")
+                    # Real OpenCode schema: {"payload": {"type": ..., "properties": {...}}}
+                    envelope = data.get("payload")
+                    if not isinstance(envelope, dict):
+                        continue
+                    event_type = envelope.get("type")
+                    props = envelope.get("properties")
+                    if not isinstance(props, dict):
+                        continue
+
+                    # Session ID path varies by event type:
+                    #   message.updated        → props.info.sessionID
+                    #   message.part.updated   → props.part.sessionID
+                    #   all others             → props.sessionID
+                    info_obj = props.get("info")
+                    part_obj = props.get("part")
+                    if isinstance(info_obj, dict):
+                        event_session = info_obj.get("sessionID")
+                    elif isinstance(part_obj, dict):
+                        event_session = part_obj.get("sessionID")
+                    else:
+                        event_session = props.get("sessionID")
                     if event_session != session_id:
                         continue
 
-                    event_type = data.get("type")
-                    if event_type == "text":
-                        part = data.get("part")
-                        if isinstance(part, dict) and part.get("type") == "text":
-                            text = part.get("text")
-                            if isinstance(text, str):
-                                parts.append(text)
+                    if event_type == "message.updated":
+                        # Track which message IDs belong to the assistant
+                        if isinstance(info_obj, dict) and info_obj.get("role") == "assistant":
+                            msg_id = info_obj.get("id")
+                            if isinstance(msg_id, str):
+                                assistant_msg_ids.add(msg_id)
+                    elif event_type == "message.part.updated":
+                        if isinstance(part_obj, dict) and part_obj.get("type") == "text":
+                            msg_id = part_obj.get("messageID", "")
+                            if msg_id in assistant_msg_ids:
+                                text = part_obj.get("text")
+                                part_id = part_obj.get("id", "")
+                                if isinstance(text, str) and text:
+                                    text_parts[part_id] = text
                     elif event_type == "error":
-                        self._handle_sse_error(data)
-                    elif event_type == "step_finish":
+                        self._handle_sse_error(props)
+                    elif event_type == "session.idle":
                         break
         except httpx.ConnectError as e:
             raise RetryableError(
@@ -207,12 +246,27 @@ class OpenCodeServerRunner(AbstractRunner):
                 retry_after=None,
             ) from e
         except httpx.TimeoutException as e:
+            await self._abort_session(session_id)
             raise RetryableError(
                 f"SSE stream timed out: {e}",
                 retry_after=None,
             ) from e
+        except asyncio.CancelledError:
+            await self._abort_session(session_id)
+            raise
 
-        return parts, "\n".join(raw_lines)
+        return list(text_parts.values()), "\n".join(raw_lines)
+
+    async def _abort_session(self, session_id: str) -> None:
+        """Best-effort abort — POST /session/:id/abort, swallow all errors."""
+        try:
+            resp = await self._client.post(
+                f"/session/{session_id}/abort",
+                timeout=5.0,
+            )
+            logger.info("Abort session %s: HTTP %d", session_id, resp.status_code)
+        except Exception:
+            logger.debug("Abort session %s failed (best-effort)", session_id, exc_info=True)
 
     def _check_http_error(self, resp: httpx.Response) -> None:
         """Classify HTTP error responses into retryable/non-retryable.
@@ -245,11 +299,26 @@ class OpenCodeServerRunner(AbstractRunner):
             stderr=resp.text,
         )
 
+    @staticmethod
+    def _parse_model(model: str) -> dict[str, str]:
+        """Convert 'providerID/modelID' string to the OpenCode model object.
+
+        Args:
+            model: Model string, e.g. "ollama-cloud/kimi-k2.5".
+
+        Returns:
+            Dict with 'providerID' and 'modelID' keys.
+        """
+        provider, sep, model_id = model.partition("/")
+        if not sep:
+            return {"providerID": "", "modelID": provider}
+        return {"providerID": provider, "modelID": model_id}
+
     def _handle_sse_error(self, data: dict) -> None:  # type: ignore[type-arg]
         """Handle an SSE error event from the OpenCode stream.
 
         Args:
-            data: Parsed JSON from the SSE data field.
+            data: The payload.properties dict from an "error" SSE event.
 
         Raises:
             RetryableError or SubprocessError based on error code.
