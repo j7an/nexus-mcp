@@ -355,6 +355,16 @@ class TestErrorHandling:
     async def test_connect_error_is_retryable(self):
         runner = make_server_runner()
         runner._resolve_session = AsyncMock(return_value="ses_test")
+
+        # Mock SSE stream so it opens, then mock post to raise ConnectError
+        sse_text = _sse_lines(_idle_event("ses_test"))
+        sse_resp = _mock_sse_response(sse_text)
+
+        @asynccontextmanager
+        async def mock_stream(method, url, **kwargs):
+            yield sse_resp
+
+        runner._client.stream = mock_stream
         runner._client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
 
         with pytest.raises(RetryableError, match="Cannot connect"):
@@ -364,6 +374,16 @@ class TestErrorHandling:
     async def test_timeout_error_is_retryable(self):
         runner = make_server_runner()
         runner._resolve_session = AsyncMock(return_value="ses_test")
+
+        # Mock SSE stream so it opens, then mock post to raise TimeoutException
+        sse_text = _sse_lines(_idle_event("ses_test"))
+        sse_resp = _mock_sse_response(sse_text)
+
+        @asynccontextmanager
+        async def mock_stream(method, url, **kwargs):
+            yield sse_resp
+
+        runner._client.stream = mock_stream
         runner._client.post = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
 
         with pytest.raises(RetryableError, match="timed out"):
