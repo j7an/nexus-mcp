@@ -889,7 +889,7 @@ class TestBatchPromptPreferenceFallback:
         """Session mode applies to None-mode tasks; explicit-mode tasks keep theirs."""
         call_modes: list[str] = []
 
-        async def capture_mode(request):
+        async def capture_mode(request, **kwargs):
             call_modes.append(request.execution_mode)
             return make_agent_response()
 
