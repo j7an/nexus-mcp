@@ -41,6 +41,7 @@ parallel rather than sequentially:
 - **Session preferences** — set defaults for execution mode, model, max retries, output limit, and timeout once per session; subsequent calls inherit them without repeating parameters
 - **Tool timeouts** — configurable safety timeout (default 15 min) cancels long-running tool calls to prevent the server from blocking indefinitely
 - **Client-visible logging** — runner events (retries, output truncation, error recovery) are sent to MCP clients via protocol notifications, not just server stderr
+- **Elicitation** — interactive parameter resolution via MCP elicitation; disambiguates missing CLI, offers model selection, confirms YOLO mode, and prompts for elaboration on vague prompts. Auto-detects client support and skips gracefully when unavailable. Suppression flags prevent repeat prompts within a session
 - **Extensible** — implement `build_command` + `parse_output`, register in `RunnerFactory`
 
 | Agent | Status |
@@ -188,8 +189,9 @@ uv run python -m nexus_mcp
 Once nexus-mcp is configured in your MCP client, your AI assistant automatically sees its tools.
 The reliable trigger is **explicitly asking for output from an external AI agent** (e.g. Gemini, Codex, Claude Code, OpenCode).
 Generic "do this in parallel" prompts may be handled by the host AI's own capabilities instead.
-Because `cli` is a required parameter, the server provides runner metadata (names, models, availability,
-execution modes) in its connection instructions — no discovery call needed. The `cli` parameter also
+The `cli` parameter is optional — if omitted and the client supports MCP elicitation, the server will
+ask which runner to use. The server provides runner metadata (names, models, availability,
+execution modes) in its connection instructions — no discovery call needed. The `cli` parameter
 includes a JSON schema enum listing valid runner names.
 
 ### Fan out a research question (batch_prompt)
@@ -303,7 +305,7 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 |------|-------|-------------|
 | `batch_prompt` | Yes | Fan out prompts to multiple runners in parallel; returns `MultiPromptResponse` |
 | `prompt` | Yes | Single-runner convenience wrapper; routes to `batch_prompt` |
-| `set_preferences` | No | Set or selectively clear session defaults for execution mode, model, max retries, output limit, timeout, retry base delay, and retry max delay |
+| `set_preferences` | No | Set or selectively clear session defaults for execution mode, model, retries, timeouts, elicitation, and trigger suppression |
 | `get_preferences` | No | Retrieve current session preferences |
 | `clear_preferences` | No | Reset all session preferences |
 
@@ -313,12 +315,13 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 |-----------|----------|---------|-------------|
 | `tasks` | Yes | — | List of task objects (see below) |
 | `max_concurrency` | No | `3` | Max parallel agent invocations |
+| `elicit` | No | session pref or `true` | Enable/disable interactive elicitation for this call |
 
 **Task object fields:**
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `cli` | Yes | — | Runner name (e.g. `"gemini"`) |
+| `cli` | No | — | Runner name (e.g. `"gemini"`); if omitted and elicitation is enabled, the server asks which runner to use |
 | `prompt` | Yes | — | Prompt text |
 | `label` | No | auto | Display label for results (auto-assigned from runner name if omitted) |
 | `context` | No | `{}` | Optional context metadata dict |
@@ -334,7 +337,7 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `cli` | Yes | — | Runner name |
+| `cli` | No | — | Runner name; if omitted and elicitation is enabled, the server asks which runner to use |
 | `prompt` | Yes | — | Prompt text |
 | `context` | No | `{}` | Optional context metadata dict |
 | `execution_mode` | No | session pref or `"default"` | `"default"` or `"yolo"` |
@@ -344,6 +347,7 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 | `timeout` | No | session pref or env default | Subprocess timeout in seconds |
 | `retry_base_delay` | No | session pref or env default | Base delay seconds for exponential backoff |
 | `retry_max_delay` | No | session pref or env default | Max delay cap for backoff in seconds |
+| `elicit` | No | session pref or `true` | Enable/disable interactive elicitation for this call |
 
 ### `set_preferences`
 
@@ -363,10 +367,20 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 | `clear_timeout` | No | `false` | Clear timeout (takes precedence if `timeout` is also provided) |
 | `clear_retry_base_delay` | No | `false` | Clear retry base delay |
 | `clear_retry_max_delay` | No | `false` | Clear retry max delay |
+| `elicit` | No | — | Enable/disable elicitation for the session (`true`/`false`) |
+| `confirm_yolo` | No | — | Suppress YOLO confirmation prompt (`false` to suppress) |
+| `confirm_vague_prompt` | No | — | Suppress vague prompt check (`false` to suppress) |
+| `confirm_high_retries` | No | — | Suppress high retry warning (`false` to suppress) |
+| `confirm_large_batch` | No | — | Suppress large batch confirmation (`false` to suppress) |
+| `clear_elicit` | No | `false` | Clear elicit preference |
+| `clear_confirm_yolo` | No | `false` | Clear YOLO suppression (re-enables prompt) |
+| `clear_confirm_vague_prompt` | No | `false` | Clear vague prompt suppression |
+| `clear_confirm_high_retries` | No | `false` | Clear high retry suppression |
+| `clear_confirm_large_batch` | No | `false` | Clear large batch suppression |
 
 ### `get_preferences`
 
-No parameters. Returns a dict with `execution_mode`, `model`, `max_retries`, `output_limit`, `timeout`, `retry_base_delay`, and `retry_max_delay` keys (`null` when unset).
+No parameters. Returns a dict with `execution_mode`, `model`, `max_retries`, `output_limit`, `timeout`, `retry_base_delay`, `retry_max_delay`, `elicit`, `confirm_yolo`, `confirm_vague_prompt`, `confirm_high_retries`, and `confirm_large_batch` keys (`null` when unset).
 
 ### `clear_preferences`
 
@@ -377,9 +391,9 @@ No parameters. Resets all session preferences.
 | Operation | Tool | Notes |
 |-----------|------|-------|
 | Set one or more fields | `set_preferences` | Pass only the fields you want to change |
-| Read current values | `get_preferences` | Returns `{execution_mode, model, max_retries, output_limit, timeout, retry_base_delay, retry_max_delay}` with `null` for unset fields |
+| Read current values | `get_preferences` | Returns all preference fields with `null` for unset |
 | Clear all fields | `clear_preferences` | Reverts to per-call defaults |
-| Clear one preference | `set_preferences` with `clear_model: true`, `clear_execution_mode: true`, `clear_max_retries: true`, `clear_output_limit: true`, `clear_timeout: true`, `clear_retry_base_delay: true`, or `clear_retry_max_delay: true` | Other preferences are preserved |
+| Clear one preference | `set_preferences` with the corresponding `clear_*: true` flag | Other preferences are preserved |
 
 ## Configuration
 
@@ -490,6 +504,7 @@ nexus-mcp/
 │   ├── types.py            # Pydantic models
 │   ├── exceptions.py       # Exception hierarchy
 │   ├── config.py           # Environment variable config
+│   ├── elicitation.py      # ElicitationGuard — interactive parameter resolution
 │   ├── process.py          # Subprocess wrapper
 │   ├── parser.py           # JSON→text fallback parsing
 │   ├── cli_detector.py     # CLI binary detection + version checks
