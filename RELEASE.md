@@ -45,7 +45,7 @@ Run these commands in order — the inline comments explain each step:
 
 ## What Happens Next (Automated)
 
-The `release.yml` workflow runs four jobs in sequence:
+The `release.yml` workflow runs five jobs in sequence:
 
 | Job | What it does |
 |-----|--------------|
@@ -53,6 +53,7 @@ The `release.yml` workflow runs four jobs in sequence:
 | `publish-testpypi` | Publishes to TestPyPI, waits 30 s, installs and smoke-tests the package |
 | `publish-pypi` | **Waits for a required reviewer to approve** the `pypi` environment, then publishes |
 | `github-release` | Creates a **draft** GitHub Release with auto-generated notes and dist assets attached |
+| `publish-mcp-registry` | Patches `server.json` version from tag, authenticates via OIDC, publishes metadata to MCP Registry |
 
 Monitor progress at:
 `https://github.com/j7an/nexus-mcp/actions`
@@ -65,6 +66,7 @@ Monitor progress at:
 - [ ] Verify the live package: `pip install "nexus-mcp==${VERSION}"`
 - [ ] Smoke-test: `python -c "import nexus_mcp; print(nexus_mcp.__version__)"`
 - [ ] Open the draft GitHub Release, review auto-generated notes, and click **Publish release**
+- [ ] Verify the MCP Registry listing
 
 ---
 

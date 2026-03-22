@@ -1,4 +1,5 @@
 # Nexus MCP
+<!-- mcp-name: io.github.j7an/nexus-mcp -->
 
 [![PyPI](https://img.shields.io/pypi/v/nexus-mcp)](https://pypi.org/project/nexus-mcp/)
 [![Python 3.13+](https://img.shields.io/pypi/pyversions/nexus-mcp)](https://www.python.org)

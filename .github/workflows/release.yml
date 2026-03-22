@@ -137,3 +137,28 @@ jobs:
           draft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: dist/*
+
+  publish-mcp-registry:
+    name: Publish to MCP Registry
+    needs: [build, publish-pypi]
+    if: needs.publish-pypi.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Patch server.json version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.tmp.json
+          mv server.tmp.json server.json
+
+      - name: Install mcp-publisher
+        run: npm install -g @anthropic-ai/mcp-publisher
+
+      - name: Authenticate to MCP Registry
+        run: mcp-publisher login github-oidc
+
+      - name: Publish to MCP Registry
+        run: mcp-publisher publish

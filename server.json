@@ -1,0 +1,25 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.j7an/nexus-mcp",
+  "description": "MCP server that lets AI models invoke CLI agents (Gemini, Codex, Claude, OpenCode) as tools — with parallel execution, retries, and structured output parsing.",
+  "version": "0.8.1",
+  "repository": {
+    "url": "https://github.com/j7an/nexus-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "nexus-mcp",
+      "version": "0.8.1",
+      "runtimeHint": "uvx",
+      "runtimeArguments": [
+        { "type": "positional", "value": "--python", "isRequired": true },
+        { "type": "positional", "value": "3.13", "isRequired": true }
+      ],
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
