@@ -45,6 +45,7 @@ from nexus_mcp.types import (
     LogEmitter,
     LogLevel,
     MultiPromptResponse,
+    ProgressEmitter,
     SessionPreferences,
 )
 
@@ -149,6 +150,40 @@ def _make_mcp_emitter(ctx: Context) -> LogEmitter:
             getattr(logger, level)(message)
 
     return _emit
+
+
+def _make_progress_emitter(ctx: Context) -> ProgressEmitter:
+    """Create a ProgressEmitter that bridges to ctx.report_progress.
+
+    Used for single-task prompt() calls — runner's progress/total pass through directly.
+    """
+
+    async def _report(progress: float, total: float, message: str) -> None:
+        await ctx.report_progress(progress=progress, total=total, message=message)
+
+    return _report
+
+
+def _make_batch_progress_emitter(
+    ctx: Context, *, task_idx: int, task_count: int, label: str
+) -> ProgressEmitter:
+    """Create a ProgressEmitter that wraps runner progress with task-level counters.
+
+    The runner's progress/total are replaced with task_idx/task_count.
+    The runner's message is preserved with a task label prefix.
+
+    Used for multi-task batch_prompt() calls — hierarchical composition.
+    """
+
+    async def _report(progress: float, total: float, message: str) -> None:
+        await ctx.report_progress(
+            progress=task_idx,
+            total=task_count,
+            message=f"Task '{label}' ({task_idx}/{task_count}): {message}",
+        )
+
+    return _report
+
 
 
 async def _get_session_preferences(ctx: Context | None) -> SessionPreferences:
