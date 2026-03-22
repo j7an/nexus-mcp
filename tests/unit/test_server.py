@@ -20,6 +20,7 @@ from nexus_mcp.exceptions import (
 from nexus_mcp.server import (
     _assign_labels,
     _inject_cli_enum,
+    _make_mcp_emitter,
     batch_prompt,
     build_server_instructions,
     mcp,
@@ -291,7 +292,7 @@ class TestBatchPrompt:
     async def test_partial_failure(self, mock_factory):
         """One task ok, one errors → succeeded=1, failed=1, good result preserved."""
 
-        async def run_side_effect(request):
+        async def run_side_effect(request, **kwargs):
             if request.prompt == "ok":
                 return make_agent_response(output="good output")
             raise RuntimeError("agent exploded")
@@ -323,7 +324,7 @@ class TestBatchPrompt:
         max_concurrent = 0
         current = 0
 
-        async def slow_run(request):
+        async def slow_run(request, **kwargs):
             nonlocal max_concurrent, current
             current += 1
             max_concurrent = max(max_concurrent, current)
@@ -343,7 +344,7 @@ class TestBatchPrompt:
         """Results are in the same order as the input tasks."""
         call_order: list[str] = []
 
-        async def ordered_run(request):
+        async def ordered_run(request, **kwargs):
             call_order.append(request.prompt)
             return make_agent_response(output=f"result-{request.prompt}")
 
@@ -652,3 +653,103 @@ class TestDynamicCliEnum:
         assert mcp.instructions is not None
         assert len(mcp.instructions) > 0
         assert "nexus-mcp" in mcp.instructions
+
+
+class TestEmitterWiring:
+    """Emitter is created and passed to runner in _run_single."""
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_emitter_passed_to_runner_when_ctx_provided(self, mock_factory, ctx):
+        """runner.run() receives an emitter keyword arg when ctx is provided."""
+        mock_runner = _setup_mock_runner(mock_factory, output="Done")
+
+        await batch_prompt(tasks=[make_agent_task()], ctx=ctx)
+
+        call_kwargs = mock_runner.run.call_args.kwargs
+        assert "emitter" in call_kwargs
+        assert call_kwargs["emitter"] is not None
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_no_emitter_when_ctx_is_none(self, mock_factory):
+        """runner.run() receives no emitter when ctx is None."""
+        mock_runner = _setup_mock_runner(mock_factory, output="Done")
+
+        await batch_prompt(tasks=[make_agent_task()])
+
+        call_kwargs = mock_runner.run.call_args.kwargs
+        assert call_kwargs.get("emitter") is None
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_task_failure_emits_error_with_ctx(self, mock_factory, ctx):
+        """Task failure emits error via emitter when ctx is provided."""
+        _setup_mock_runner(
+            mock_factory,
+            side_effect=ParseError("bad json"),
+        )
+
+        result = await batch_prompt(tasks=[make_agent_task()], ctx=ctx)
+
+        assert result.failed == 1
+        ctx.error.assert_awaited_once()
+        error_msg = ctx.error.call_args[0][0]
+        assert "failed" in error_msg.lower()
+
+    @patch("nexus_mcp.server.RunnerFactory")
+    async def test_task_failure_falls_back_to_logger_without_ctx(self, mock_factory, caplog):
+        """Task failure uses logger.exception when ctx is None."""
+        import logging
+
+        _setup_mock_runner(
+            mock_factory,
+            side_effect=ParseError("bad json"),
+        )
+
+        with caplog.at_level(logging.ERROR, logger="nexus_mcp.server"):
+            await batch_prompt(tasks=[make_agent_task()])
+
+        assert len(caplog.records) == 1
+        assert caplog.records[0].exc_info is not None
+
+
+class TestMakeMcpEmitter:
+    """_make_mcp_emitter creates a dual-output emitter."""
+
+    async def test_info_calls_both_ctx_and_logger(self, ctx):
+        """Info level calls ctx.info() and logger.info()."""
+        emitter = _make_mcp_emitter(ctx)
+
+        with patch("nexus_mcp.server.logger") as mock_logger:
+            await emitter("info", "test message")
+
+        ctx.info.assert_awaited_once_with("test message")
+        mock_logger.info.assert_called_once_with("test message")
+
+    async def test_warning_calls_both_ctx_and_logger(self, ctx):
+        """Warning level calls ctx.warning() and logger.warning()."""
+        emitter = _make_mcp_emitter(ctx)
+
+        with patch("nexus_mcp.server.logger") as mock_logger:
+            await emitter("warning", "retry warning")
+
+        ctx.warning.assert_awaited_once_with("retry warning")
+        mock_logger.warning.assert_called_once_with("retry warning")
+
+    async def test_error_calls_ctx_and_logger_with_exc_info(self, ctx):
+        """Error level calls ctx.error() and logger.error(exc_info=True)."""
+        emitter = _make_mcp_emitter(ctx)
+
+        with patch("nexus_mcp.server.logger") as mock_logger:
+            await emitter("error", "task failed")
+
+        ctx.error.assert_awaited_once_with("task failed")
+        mock_logger.error.assert_called_once_with("task failed", exc_info=True)
+
+    async def test_debug_calls_both_ctx_and_logger(self, ctx):
+        """Debug level calls ctx.debug() and logger.debug()."""
+        emitter = _make_mcp_emitter(ctx)
+
+        with patch("nexus_mcp.server.logger") as mock_logger:
+            await emitter("debug", "debug message")
+
+        ctx.debug.assert_awaited_once_with("debug message")
+        mock_logger.debug.assert_called_once_with("debug message")

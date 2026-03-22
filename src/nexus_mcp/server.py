@@ -34,6 +34,8 @@ from nexus_mcp.types import (
     AgentTask,
     AgentTaskResult,
     ExecutionMode,
+    LogEmitter,
+    LogLevel,
     MultiPromptResponse,
     SessionPreferences,
 )
@@ -107,6 +109,30 @@ def _inject_cli_enum() -> None:
 
 mcp = FastMCP("nexus-mcp", instructions=build_server_instructions())
 logger = logging.getLogger(__name__)
+
+
+def _make_mcp_emitter(ctx: Context) -> LogEmitter:
+    """Create a LogEmitter that sends to both MCP client and Python logger.
+
+    Error-level messages use logger.error(exc_info=True) to preserve tracebacks
+    on stderr for server operators, while MCP clients get a clean message.
+    """
+    _ctx_methods = {
+        "debug": ctx.debug,
+        "info": ctx.info,
+        "warning": ctx.warning,
+        "error": ctx.error,
+    }
+
+    async def _emit(level: LogLevel, message: str) -> None:
+        await _ctx_methods[level](message)
+        if level == "error":
+            logger.error(message, exc_info=True)
+        else:
+            getattr(logger, level)(message)
+
+    return _emit
+
 
 _PREFERENCES_KEY = "nexus:preferences"
 
@@ -240,13 +266,17 @@ async def batch_prompt(
     async def _run_single(task: AgentTask) -> AgentTaskResult:
         nonlocal completed
         async with semaphore:
+            emitter = _make_mcp_emitter(ctx) if ctx else None
             try:
                 request = task.to_request()
                 runner = RunnerFactory.create(task.cli)
-                response = await runner.run(request)
+                response = await runner.run(request, emitter=emitter)
                 return AgentTaskResult(label=task.label, output=response.output)  # type: ignore[arg-type]
             except Exception as e:
-                logger.exception("Task %r failed: %s", task.label, e)
+                if emitter:
+                    await emitter("error", f"Task '{task.label}' failed: {e}")
+                else:
+                    logger.exception("Task %r failed: %s", task.label, e)
                 return AgentTaskResult(label=task.label, error=str(e), error_type=type(e).__name__)  # type: ignore[arg-type]
             finally:
                 completed += 1

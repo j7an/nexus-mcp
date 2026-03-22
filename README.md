@@ -40,6 +40,7 @@ parallel rather than sequentially:
 - **CLI detection** — auto-detects binary path, version, and JSON output capability at startup
 - **Session preferences** — set defaults for execution mode, model, max retries, output limit, and timeout once per session; subsequent calls inherit them without repeating parameters
 - **Tool timeouts** — configurable safety timeout (default 15 min) cancels long-running tool calls to prevent the server from blocking indefinitely
+- **Client-visible logging** — runner events (retries, output truncation, error recovery) are sent to MCP clients via protocol notifications, not just server stderr
 - **Extensible** — implement `build_command` + `parse_output`, register in `RunnerFactory`
 
 | Agent | Status |

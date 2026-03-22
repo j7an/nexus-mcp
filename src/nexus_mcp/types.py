@@ -1,9 +1,22 @@
 import math
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Literal, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 type ExecutionMode = Literal["default", "yolo"]
+type LogLevel = Literal["debug", "info", "warning", "error"]
+
+
+class LogEmitter(Protocol):
+    """Callback protocol for emitting log messages from runners.
+
+    Any async callable matching (level: LogLevel, message: str) -> None satisfies
+    this protocol. Runners accept an optional LogEmitter; server.py provides one
+    that sends to both MCP clients and Python's logging module.
+    """
+
+    async def __call__(self, level: LogLevel, message: str) -> None: ...
+
 
 # Shared Annotated type aliases — single source of truth for field constraints.
 # Used across OperationalDefaults, SessionPreferences, PromptRequest, AgentTask.
