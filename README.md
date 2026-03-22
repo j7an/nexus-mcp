@@ -263,6 +263,21 @@ includes a JSON schema enum listing valid runner names.
 }
 ```
 
+### Letting the server pick the runner (elicitation)
+
+**You say to your AI assistant:**
+> "Explain the CAP theorem using one of the available agents."
+
+**Your AI assistant calls `prompt` without specifying `cli`:**
+
+```json
+{
+  "prompt": "Explain the CAP theorem in simple terms"
+}
+```
+
+If the MCP client supports elicitation, the server asks which runner to use. If elicitation is unavailable, the server returns an error asking for `cli` to be specified. To skip elicitation for a specific call, pass `"elicit": false`.
+
 ### Session preferences (set_preferences)
 
 **You say to your AI assistant:**
@@ -280,7 +295,7 @@ includes a JSON schema enum listing valid runner names.
 
 **Response:**
 ```
-Preferences set: {"execution_mode": "yolo", "model": "gemini-3-flash-preview", "max_retries": 5, "output_limit": null, "timeout": null, "retry_base_delay": null, "retry_max_delay": null}
+Preferences set: {"execution_mode": "yolo", "model": "gemini-3-flash-preview", "max_retries": 5, "output_limit": null, "timeout": null, "retry_base_delay": null, "retry_max_delay": null, "elicit": null, "confirm_yolo": null, "confirm_vague_prompt": null, "confirm_high_retries": null, "confirm_large_batch": null}
 ```
 
 **Subsequent `prompt` and `batch_prompt` calls omit those fields — they inherit from the session:**
@@ -294,7 +309,7 @@ Preferences set: {"execution_mode": "yolo", "model": "gemini-3-flash-preview", "
 
 The fallback chain is: **explicit parameter → session preference → per-runner env → global env → hardcoded default**.
 To override for one call, pass the parameter directly — it takes precedence without changing the session.
-To clear a single preference, use `set_preferences` with the corresponding `clear_*` flag (e.g. `clear_execution_mode: true`, `clear_model: true`, `clear_max_retries: true`, `clear_output_limit: true`, `clear_timeout: true`, `clear_retry_base_delay: true`, `clear_retry_max_delay: true`).
+To clear a single preference, use `set_preferences` with the corresponding `clear_*` flag (e.g. `clear_model: true`). Other preferences are preserved.
 
 ## MCP Tools
 
@@ -333,6 +348,8 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 | `retry_base_delay` | No | session pref or env default | Base delay seconds for exponential backoff |
 | `retry_max_delay` | No | session pref or env default | Max delay cap for backoff in seconds |
 
+> **Note:** `elicit` is a batch-level parameter, not a per-task field. When enabled, the server runs a single upfront elicitation pass across all tasks (e.g., "3 of 5 tasks use YOLO mode — confirm?") rather than prompting per-task.
+
 ### `prompt`
 
 | Parameter | Required | Default | Description |
@@ -341,7 +358,7 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 | `prompt` | Yes | — | Prompt text |
 | `context` | No | `{}` | Optional context metadata dict |
 | `execution_mode` | No | session pref or `"default"` | `"default"` or `"yolo"` |
-| `model` | No | session pref or CLI default | Model name override |
+| `model` | No | session pref or CLI default | Model name override; if omitted and the runner has multiple models, elicitation may offer a choice |
 | `max_retries` | No | session pref or env default | Max retry attempts for transient errors |
 | `output_limit` | No | session pref or env default | Max output bytes before temp-file spillover |
 | `timeout` | No | session pref or env default | Subprocess timeout in seconds |
@@ -367,24 +384,39 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 | `clear_timeout` | No | `false` | Clear timeout (takes precedence if `timeout` is also provided) |
 | `clear_retry_base_delay` | No | `false` | Clear retry base delay |
 | `clear_retry_max_delay` | No | `false` | Clear retry max delay |
-| `elicit` | No | — | Enable/disable elicitation for the session (`true`/`false`) |
-| `confirm_yolo` | No | — | Suppress YOLO confirmation prompt (`false` to suppress) |
-| `confirm_vague_prompt` | No | — | Suppress vague prompt check (`false` to suppress) |
-| `confirm_high_retries` | No | — | Suppress high retry warning (`false` to suppress) |
-| `confirm_large_batch` | No | — | Suppress large batch confirmation (`false` to suppress) |
-| `clear_elicit` | No | `false` | Clear elicit preference |
-| `clear_confirm_yolo` | No | `false` | Clear YOLO suppression (re-enables prompt) |
-| `clear_confirm_vague_prompt` | No | `false` | Clear vague prompt suppression |
-| `clear_confirm_high_retries` | No | `false` | Clear high retry suppression |
-| `clear_confirm_large_batch` | No | `false` | Clear large batch suppression |
+| `elicit` | No | `true` | Enable/disable elicitation for the session. When `true` (default), the server may ask the client for missing parameters or confirmations |
+| `confirm_yolo` | No | `true` | Whether to prompt before YOLO mode. Set to `false` to skip the confirmation. Auto-set to `false` after first acceptance |
+| `confirm_vague_prompt` | No | `true` | Whether to prompt when prompts are very short. Set to `false` to skip. Not auto-suppressed |
+| `confirm_high_retries` | No | `true` | Whether to prompt when max_retries > 5. Set to `false` to skip. Auto-set to `false` after first acceptance |
+| `confirm_large_batch` | No | `true` | Whether to prompt when batch has > 5 tasks. Set to `false` to skip. Auto-set to `false` after first acceptance |
+| `clear_elicit` | No | `false` | Reset elicit to default (`true`) |
+| `clear_confirm_yolo` | No | `false` | Reset YOLO suppression (re-enables confirmation prompt) |
+| `clear_confirm_vague_prompt` | No | `false` | Reset vague prompt suppression |
+| `clear_confirm_high_retries` | No | `false` | Reset high retry suppression |
+| `clear_confirm_large_batch` | No | `false` | Reset large batch suppression |
 
 ### `get_preferences`
 
-No parameters. Returns a dict with `execution_mode`, `model`, `max_retries`, `output_limit`, `timeout`, `retry_base_delay`, `retry_max_delay`, `elicit`, `confirm_yolo`, `confirm_vague_prompt`, `confirm_high_retries`, and `confirm_large_batch` keys (`null` when unset).
+No parameters. Returns a dict with all preference fields (`null` when unset):
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `execution_mode` | `string \| null` | `"default"` or `"yolo"` |
+| `model` | `string \| null` | Model name |
+| `max_retries` | `int \| null` | Max total attempts |
+| `output_limit` | `int \| null` | Max output bytes |
+| `timeout` | `int \| null` | Subprocess timeout seconds |
+| `retry_base_delay` | `float \| null` | Backoff base delay |
+| `retry_max_delay` | `float \| null` | Backoff max delay |
+| `elicit` | `bool \| null` | Elicitation enabled |
+| `confirm_yolo` | `bool \| null` | YOLO confirmation enabled |
+| `confirm_vague_prompt` | `bool \| null` | Vague prompt check enabled |
+| `confirm_high_retries` | `bool \| null` | High retry warning enabled |
+| `confirm_large_batch` | `bool \| null` | Large batch confirmation enabled |
 
 ### `clear_preferences`
 
-No parameters. Resets all session preferences.
+No parameters. Resets all session preferences to `null`, including elicitation suppression flags (re-enables all confirmation prompts).
 
 ### Managing Session Preferences
 
@@ -394,6 +426,9 @@ No parameters. Resets all session preferences.
 | Read current values | `get_preferences` | Returns all preference fields with `null` for unset |
 | Clear all fields | `clear_preferences` | Reverts to per-call defaults |
 | Clear one preference | `set_preferences` with the corresponding `clear_*: true` flag | Other preferences are preserved |
+| Suppress an elicitation prompt | `set_preferences` with `confirm_*: false` | Persists for the session; YOLO/batch/retry auto-suppress after first acceptance |
+| Re-enable a suppressed prompt | `set_preferences` with `clear_confirm_*: true` | Resets to default (prompts again) |
+| Disable all elicitation | `set_preferences` with `elicit: false` | Skips all interactive prompts for the session |
 
 ## Configuration
 
