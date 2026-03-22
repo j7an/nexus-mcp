@@ -46,10 +46,6 @@ class TimingMiddleware(Middleware):
             logger.debug("Tool '%s' completed in %dms", tool_name, elapsed_ms)
 
 
-# Tools that use prompt text — these get arg summarization, not full dump.
-_PROMPT_TOOLS = frozenset({"prompt", "batch_prompt"})
-
-
 def _summarize_args(tool_name: str, arguments: dict[str, object] | None) -> str:
     """Build a concise arg summary for log messages.
 
@@ -60,25 +56,25 @@ def _summarize_args(tool_name: str, arguments: dict[str, object] | None) -> str:
     if not arguments:
         return ""
 
-    if tool_name not in _PROMPT_TOOLS:
-        # Preferences tools — safe to log everything
-        parts = [f"{k}={v}" for k, v in arguments.items() if v is not None]
-        return f" [{', '.join(parts)}]" if parts else ""
+    match tool_name:
+        case "batch_prompt":
+            raw_tasks = arguments.get("tasks", [])
+            task_count = len(raw_tasks) if isinstance(raw_tasks, list) else 0
+            parts = [f"tasks={task_count}"]
+            max_conc = arguments.get("max_concurrency")
+            if max_conc is not None:
+                parts.append(f"max_concurrency={max_conc}")
+        case "prompt":
+            safe_keys = ("cli", "model", "execution_mode", "max_retries", "timeout")
+            parts = [
+                f"{k}={arguments[k]}"
+                for k in safe_keys
+                if k in arguments and arguments[k] is not None
+            ]
+        case _:
+            # Preferences and other tools — safe to log everything
+            parts = [f"{k}={v}" for k, v in arguments.items() if v is not None]
 
-    if tool_name == "batch_prompt":
-        raw_tasks = arguments.get("tasks", [])
-        task_count = len(raw_tasks) if isinstance(raw_tasks, list) else 0
-        parts = [f"tasks={task_count}"]
-        max_conc = arguments.get("max_concurrency")
-        if max_conc is not None:
-            parts.append(f"max_concurrency={max_conc}")
-        return f" [{', '.join(parts)}]"
-
-    # prompt — log structured fields, skip prompt text and context
-    safe_keys = ("cli", "model", "execution_mode", "max_retries", "timeout")
-    parts = [
-        f"{k}={arguments[k]}" for k in safe_keys if k in arguments and arguments[k] is not None
-    ]
     return f" [{', '.join(parts)}]" if parts else ""
 
 

@@ -17,6 +17,11 @@ from fastmcp.tools.tool import ToolResult
 from pydantic import ValidationError
 
 from nexus_mcp.exceptions import CLINotFoundError, UnsupportedAgentError
+from nexus_mcp.middleware import (
+    ErrorNormalizationMiddleware,
+    RequestLoggingMiddleware,
+    TimingMiddleware,
+)
 
 
 @dataclass(frozen=True)
@@ -59,8 +64,6 @@ class TestTimingMiddleware:
 
     async def test_logs_duration_on_success(self, caplog):
         """Successful tool call logs duration at DEBUG level."""
-        from nexus_mcp.middleware import TimingMiddleware
-
         mw = TimingMiddleware()
         ctx = _make_context("prompt")
         call_next = AsyncMock(return_value=_make_tool_result())
@@ -77,8 +80,6 @@ class TestTimingMiddleware:
 
     async def test_logs_duration_on_failure(self, caplog):
         """Failed tool call still logs duration at DEBUG level."""
-        from nexus_mcp.middleware import TimingMiddleware
-
         mw = TimingMiddleware()
         ctx = _make_context("batch_prompt")
         call_next = AsyncMock(side_effect=ToolError("boom"))
@@ -94,8 +95,6 @@ class TestTimingMiddleware:
 
     async def test_duration_is_positive(self, caplog):
         """Duration logged is always non-negative (sanity check via mock)."""
-        from nexus_mcp.middleware import TimingMiddleware
-
         mw = TimingMiddleware()
         ctx = _make_context("get_preferences")
         call_next = AsyncMock(return_value=_make_tool_result())
@@ -114,8 +113,6 @@ class TestRequestLoggingMiddleware:
 
     async def test_logs_entry_and_exit(self, caplog):
         """Successful tool call logs entry with args and exit."""
-        from nexus_mcp.middleware import RequestLoggingMiddleware
-
         mw = RequestLoggingMiddleware()
         ctx = _make_context("prompt", {"cli": "gemini", "prompt": "tell me a joke"})
         call_next = AsyncMock(return_value=_make_tool_result())
@@ -130,8 +127,6 @@ class TestRequestLoggingMiddleware:
 
     async def test_logs_failure(self, caplog):
         """Failed tool call logs entry and failure with exception type."""
-        from nexus_mcp.middleware import RequestLoggingMiddleware
-
         mw = RequestLoggingMiddleware()
         ctx = _make_context("prompt", {"cli": "codex", "prompt": "hello"})
         call_next = AsyncMock(side_effect=ToolError("codex not found"))
@@ -148,8 +143,6 @@ class TestRequestLoggingMiddleware:
 
     async def test_redacts_prompt_text(self, caplog):
         """Prompt text must NOT appear in log messages (privacy/size)."""
-        from nexus_mcp.middleware import RequestLoggingMiddleware
-
         mw = RequestLoggingMiddleware()
         secret_prompt = "tell me the nuclear launch codes"
         ctx = _make_context(
@@ -165,8 +158,6 @@ class TestRequestLoggingMiddleware:
 
     async def test_logs_batch_prompt_task_count(self, caplog):
         """batch_prompt logs task count, not individual task details."""
-        from nexus_mcp.middleware import RequestLoggingMiddleware
-
         mw = RequestLoggingMiddleware()
         ctx = _make_context(
             "batch_prompt",
@@ -188,8 +179,6 @@ class TestRequestLoggingMiddleware:
 
     async def test_logs_full_args_for_preferences(self, caplog):
         """Preferences tools log full args (small config values, no secrets)."""
-        from nexus_mcp.middleware import RequestLoggingMiddleware
-
         mw = RequestLoggingMiddleware()
         ctx = _make_context(
             "set_preferences",
@@ -210,8 +199,6 @@ class TestErrorNormalizationMiddleware:
 
     async def test_successful_call_passes_through(self):
         """Successful tool calls are returned unmodified."""
-        from nexus_mcp.middleware import ErrorNormalizationMiddleware
-
         mw = ErrorNormalizationMiddleware()
         ctx = _make_context("prompt")
         expected = _make_tool_result("success")
@@ -223,8 +210,6 @@ class TestErrorNormalizationMiddleware:
 
     async def test_tool_error_passes_through(self):
         """ToolError is re-raised unchanged (already normalized)."""
-        from nexus_mcp.middleware import ErrorNormalizationMiddleware
-
         mw = ErrorNormalizationMiddleware()
         ctx = _make_context("prompt")
         call_next = AsyncMock(side_effect=ToolError("already clean"))
@@ -234,8 +219,6 @@ class TestErrorNormalizationMiddleware:
 
     async def test_cli_not_found_becomes_tool_error(self):
         """CLINotFoundError is mapped to ToolError with clean message."""
-        from nexus_mcp.middleware import ErrorNormalizationMiddleware
-
         mw = ErrorNormalizationMiddleware()
         ctx = _make_context("prompt")
         call_next = AsyncMock(side_effect=CLINotFoundError("codex"))
@@ -245,8 +228,6 @@ class TestErrorNormalizationMiddleware:
 
     async def test_unsupported_agent_becomes_tool_error(self):
         """UnsupportedAgentError is mapped to ToolError."""
-        from nexus_mcp.middleware import ErrorNormalizationMiddleware
-
         mw = ErrorNormalizationMiddleware()
         ctx = _make_context("prompt")
         call_next = AsyncMock(side_effect=UnsupportedAgentError("unknown_cli"))
@@ -256,26 +237,21 @@ class TestErrorNormalizationMiddleware:
 
     async def test_validation_error_becomes_tool_error(self):
         """Pydantic ValidationError is mapped to ToolError with 'Invalid input' prefix."""
-        from nexus_mcp.middleware import ErrorNormalizationMiddleware
+        from nexus_mcp.types import SessionPreferences
 
         mw = ErrorNormalizationMiddleware()
         ctx = _make_context("set_preferences")
 
-        # Trigger a real ValidationError from pydantic
-        try:
-            from nexus_mcp.types import SessionPreferences
-
+        # Capture a real ValidationError from pydantic
+        with pytest.raises(ValidationError) as exc_info:
             SessionPreferences(max_retries=-1)  # ge=1 constraint
-        except ValidationError as real_ve:
-            call_next = AsyncMock(side_effect=real_ve)
+        call_next = AsyncMock(side_effect=exc_info.value)
 
         with pytest.raises(ToolError, match="Invalid input"):
             await mw.on_call_tool(ctx, call_next)
 
     async def test_unexpected_exception_becomes_internal_error(self, caplog):
         """Unknown exceptions become 'Internal error' ToolError and are logged."""
-        from nexus_mcp.middleware import ErrorNormalizationMiddleware
-
         mw = ErrorNormalizationMiddleware()
         ctx = _make_context("prompt")
         call_next = AsyncMock(side_effect=RuntimeError("something broke"))
