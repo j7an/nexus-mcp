@@ -28,6 +28,11 @@ from pydantic import Field, ValidationError
 
 from nexus_mcp.cli_detector import detect_cli
 from nexus_mcp.config import get_runner_defaults, get_runner_models, get_tool_timeout
+from nexus_mcp.middleware import (
+    ErrorNormalizationMiddleware,
+    RequestLoggingMiddleware,
+    TimingMiddleware,
+)
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import (
     DEFAULT_MAX_CONCURRENCY,
@@ -108,6 +113,13 @@ def _inject_cli_enum() -> None:
 
 
 mcp = FastMCP("nexus-mcp", instructions=build_server_instructions())
+
+# Middleware executes outermost → innermost on request, reverse on response.
+# Order: ErrorNormalization (catch all) → Timing (measure) → RequestLogging (log entry/exit)
+mcp.add_middleware(ErrorNormalizationMiddleware())
+mcp.add_middleware(TimingMiddleware())
+mcp.add_middleware(RequestLoggingMiddleware())
+
 logger = logging.getLogger(__name__)
 
 
