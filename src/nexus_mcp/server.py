@@ -456,6 +456,13 @@ async def prompt(
     return task_result.output
 
 
+def _resolve_field(clear: bool, new_value: Any, existing_value: Any) -> Any:
+    """Resolve a preference field: clear wins, then new value, then existing."""
+    if clear:
+        return None
+    return new_value if new_value is not None else existing_value
+
+
 async def set_preferences(
     execution_mode: ExecutionMode | None = None,
     model: str | None = None,
@@ -523,115 +530,31 @@ async def set_preferences(
         raise ToolError("set_preferences requires an active session context")
     existing = await _get_session_preferences(ctx)
 
-    new_execution_mode: ExecutionMode | None
-    if clear_execution_mode:
-        new_execution_mode = None
-    elif execution_mode is not None:
-        new_execution_mode = execution_mode
-    else:
-        new_execution_mode = existing.execution_mode
-
-    new_model: str | None
-    if clear_model:
-        new_model = None
-    elif model is not None:
-        new_model = model
-    else:
-        new_model = existing.model
-
-    new_max_retries: int | None
-    if clear_max_retries:
-        new_max_retries = None
-    elif max_retries is not None:
-        new_max_retries = max_retries
-    else:
-        new_max_retries = existing.max_retries
-
-    new_output_limit: int | None
-    if clear_output_limit:
-        new_output_limit = None
-    elif output_limit is not None:
-        new_output_limit = output_limit
-    else:
-        new_output_limit = existing.output_limit
-
-    new_timeout: int | None
-    if clear_timeout:
-        new_timeout = None
-    elif timeout is not None:
-        new_timeout = timeout
-    else:
-        new_timeout = existing.timeout
-
-    new_retry_base_delay: float | None
-    if clear_retry_base_delay:
-        new_retry_base_delay = None
-    elif retry_base_delay is not None:
-        new_retry_base_delay = retry_base_delay
-    else:
-        new_retry_base_delay = existing.retry_base_delay
-
-    new_retry_max_delay: float | None
-    if clear_retry_max_delay:
-        new_retry_max_delay = None
-    elif retry_max_delay is not None:
-        new_retry_max_delay = retry_max_delay
-    else:
-        new_retry_max_delay = existing.retry_max_delay
-
-    new_elicit: bool | None
-    if clear_elicit:
-        new_elicit = None
-    elif elicit is not None:
-        new_elicit = elicit
-    else:
-        new_elicit = existing.elicit
-
-    new_confirm_yolo: bool | None
-    if clear_confirm_yolo:
-        new_confirm_yolo = None
-    elif confirm_yolo is not None:
-        new_confirm_yolo = confirm_yolo
-    else:
-        new_confirm_yolo = existing.confirm_yolo
-
-    new_confirm_vague_prompt: bool | None
-    if clear_confirm_vague_prompt:
-        new_confirm_vague_prompt = None
-    elif confirm_vague_prompt is not None:
-        new_confirm_vague_prompt = confirm_vague_prompt
-    else:
-        new_confirm_vague_prompt = existing.confirm_vague_prompt
-
-    new_confirm_high_retries: bool | None
-    if clear_confirm_high_retries:
-        new_confirm_high_retries = None
-    elif confirm_high_retries is not None:
-        new_confirm_high_retries = confirm_high_retries
-    else:
-        new_confirm_high_retries = existing.confirm_high_retries
-
-    new_confirm_large_batch: bool | None
-    if clear_confirm_large_batch:
-        new_confirm_large_batch = None
-    elif confirm_large_batch is not None:
-        new_confirm_large_batch = confirm_large_batch
-    else:
-        new_confirm_large_batch = existing.confirm_large_batch
-
     merged = SessionPreferences(
-        execution_mode=new_execution_mode,
-        model=new_model,
-        max_retries=new_max_retries,
-        output_limit=new_output_limit,
-        timeout=new_timeout,
-        retry_base_delay=new_retry_base_delay,
-        retry_max_delay=new_retry_max_delay,
-        elicit=new_elicit,
-        confirm_yolo=new_confirm_yolo,
-        confirm_vague_prompt=new_confirm_vague_prompt,
-        confirm_high_retries=new_confirm_high_retries,
-        confirm_large_batch=new_confirm_large_batch,
+        execution_mode=_resolve_field(
+            clear_execution_mode, execution_mode, existing.execution_mode
+        ),
+        model=_resolve_field(clear_model, model, existing.model),
+        max_retries=_resolve_field(clear_max_retries, max_retries, existing.max_retries),
+        output_limit=_resolve_field(clear_output_limit, output_limit, existing.output_limit),
+        timeout=_resolve_field(clear_timeout, timeout, existing.timeout),
+        retry_base_delay=_resolve_field(
+            clear_retry_base_delay, retry_base_delay, existing.retry_base_delay
+        ),
+        retry_max_delay=_resolve_field(
+            clear_retry_max_delay, retry_max_delay, existing.retry_max_delay
+        ),
+        elicit=_resolve_field(clear_elicit, elicit, existing.elicit),
+        confirm_yolo=_resolve_field(clear_confirm_yolo, confirm_yolo, existing.confirm_yolo),
+        confirm_vague_prompt=_resolve_field(
+            clear_confirm_vague_prompt, confirm_vague_prompt, existing.confirm_vague_prompt
+        ),
+        confirm_high_retries=_resolve_field(
+            clear_confirm_high_retries, confirm_high_retries, existing.confirm_high_retries
+        ),
+        confirm_large_batch=_resolve_field(
+            clear_confirm_large_batch, confirm_large_batch, existing.confirm_large_batch
+        ),
     )
     await ctx.set_state(PREFERENCES_KEY, merged.model_dump())
     return f"Preferences set: {json.dumps(merged.model_dump())}"
