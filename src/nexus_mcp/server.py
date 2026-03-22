@@ -37,6 +37,7 @@ from nexus_mcp.middleware import (
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import (
     DEFAULT_MAX_CONCURRENCY,
+    PREFERENCES_KEY,
     AgentTask,
     AgentTaskResult,
     ExecutionMode,
@@ -147,14 +148,11 @@ def _make_mcp_emitter(ctx: Context) -> LogEmitter:
     return _emit
 
 
-_PREFERENCES_KEY = "nexus:preferences"
-
-
 async def _get_session_preferences(ctx: Context | None) -> SessionPreferences:
     """Read session preferences from ctx state, returning defaults when unset or ctx is None."""
     if ctx is None:
         return SessionPreferences()
-    raw = await ctx.get_state(_PREFERENCES_KEY)
+    raw = await ctx.get_state(PREFERENCES_KEY)
     if raw is None:
         return SessionPreferences()
     try:
@@ -499,7 +497,7 @@ async def set_preferences(
         retry_base_delay=new_retry_base_delay,
         retry_max_delay=new_retry_max_delay,
     )
-    await ctx.set_state(_PREFERENCES_KEY, merged.model_dump())
+    await ctx.set_state(PREFERENCES_KEY, merged.model_dump())
     return f"Preferences set: {json.dumps(merged.model_dump())}"
 
 
@@ -524,7 +522,7 @@ async def clear_preferences(ctx: Context | None = None) -> str:
     """
     if ctx is None:
         raise ToolError("clear_preferences requires an active session context")
-    await ctx.delete_state(_PREFERENCES_KEY)
+    await ctx.delete_state(PREFERENCES_KEY)
     return "Preferences cleared"
 
 

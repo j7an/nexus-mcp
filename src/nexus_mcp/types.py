@@ -66,10 +66,16 @@ class SessionPreferences(BaseModel):
     timeout: Timeout = None
     retry_base_delay: Delay = None
     retry_max_delay: Delay = None
+    elicit: bool | None = None
+    confirm_yolo: bool | None = None
+    confirm_vague_prompt: bool | None = None
+    confirm_high_retries: bool | None = None
+    confirm_large_batch: bool | None = None
 
 
 DEFAULT_MAX_CONCURRENCY = 3
 MAX_PROMPT_LENGTH = 131072  # 128KB character limit — conservative guard against ARG_MAX
+PREFERENCES_KEY = "nexus:preferences"
 
 
 class PromptRequest(BaseModel):

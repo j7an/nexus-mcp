@@ -325,5 +325,10 @@ def make_session_preferences(**overrides: Any) -> SessionPreferences:
         "timeout": None,
         "retry_base_delay": None,
         "retry_max_delay": None,
+        "elicit": None,
+        "confirm_yolo": None,
+        "confirm_vague_prompt": None,
+        "confirm_high_retries": None,
+        "confirm_large_batch": None,
     }
     return SessionPreferences(**(defaults | overrides))

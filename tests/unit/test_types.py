@@ -525,3 +525,93 @@ class TestSessionPreferences:
         prefs = SessionPreferences(execution_mode="default")
         with pytest.raises(ValidationError):
             prefs.execution_mode = "yolo"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Task 1: SessionPreferences elicitation fields
+# ---------------------------------------------------------------------------
+
+
+class TestSessionPreferencesElicitation:
+    def test_elicit_defaults_to_none(self):
+        """elicit field defaults to None."""
+        prefs = SessionPreferences()
+        assert prefs.elicit is None
+
+    def test_elicit_accepts_true(self):
+        """elicit field accepts True."""
+        prefs = SessionPreferences(elicit=True)
+        assert prefs.elicit is True
+
+    def test_elicit_accepts_false(self):
+        """elicit field accepts False."""
+        prefs = SessionPreferences(elicit=False)
+        assert prefs.elicit is False
+
+    def test_confirm_yolo_defaults_to_none(self):
+        """confirm_yolo field defaults to None."""
+        prefs = SessionPreferences()
+        assert prefs.confirm_yolo is None
+
+    def test_confirm_yolo_accepts_bool(self):
+        """confirm_yolo accepts bool values."""
+        assert SessionPreferences(confirm_yolo=True).confirm_yolo is True
+        assert SessionPreferences(confirm_yolo=False).confirm_yolo is False
+
+    def test_confirm_vague_prompt_defaults_to_none(self):
+        """confirm_vague_prompt field defaults to None."""
+        prefs = SessionPreferences()
+        assert prefs.confirm_vague_prompt is None
+
+    def test_confirm_vague_prompt_accepts_bool(self):
+        """confirm_vague_prompt accepts bool values."""
+        assert SessionPreferences(confirm_vague_prompt=True).confirm_vague_prompt is True
+        assert SessionPreferences(confirm_vague_prompt=False).confirm_vague_prompt is False
+
+    def test_confirm_high_retries_defaults_to_none(self):
+        """confirm_high_retries field defaults to None."""
+        prefs = SessionPreferences()
+        assert prefs.confirm_high_retries is None
+
+    def test_confirm_high_retries_accepts_bool(self):
+        """confirm_high_retries accepts bool values."""
+        assert SessionPreferences(confirm_high_retries=True).confirm_high_retries is True
+        assert SessionPreferences(confirm_high_retries=False).confirm_high_retries is False
+
+    def test_confirm_large_batch_defaults_to_none(self):
+        """confirm_large_batch field defaults to None."""
+        prefs = SessionPreferences()
+        assert prefs.confirm_large_batch is None
+
+    def test_confirm_large_batch_accepts_bool(self):
+        """confirm_large_batch accepts bool values."""
+        assert SessionPreferences(confirm_large_batch=True).confirm_large_batch is True
+        assert SessionPreferences(confirm_large_batch=False).confirm_large_batch is False
+
+    def test_model_dump_includes_all_elicitation_fields(self):
+        """model_dump() includes all 5 new elicitation fields."""
+        prefs = SessionPreferences(
+            elicit=True,
+            confirm_yolo=False,
+            confirm_vague_prompt=True,
+            confirm_high_retries=False,
+            confirm_large_batch=True,
+        )
+        d = prefs.model_dump()
+        assert d["elicit"] is True
+        assert d["confirm_yolo"] is False
+        assert d["confirm_vague_prompt"] is True
+        assert d["confirm_high_retries"] is False
+        assert d["confirm_large_batch"] is True
+
+    def test_model_dump_all_none_by_default(self):
+        """model_dump() shows all elicitation fields as None by default."""
+        d = SessionPreferences().model_dump()
+        for field in (
+            "elicit",
+            "confirm_yolo",
+            "confirm_vague_prompt",
+            "confirm_high_retries",
+            "confirm_large_batch",
+        ):
+            assert d[field] is None, f"{field} should be None in default dump"
