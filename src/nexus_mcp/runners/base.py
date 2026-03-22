@@ -34,9 +34,17 @@ from nexus_mcp.cli_detector import (
 from nexus_mcp.config import get_runner_defaults
 from nexus_mcp.exceptions import CLINotFoundError, ParseError, RetryableError, SubprocessError
 from nexus_mcp.process import run_subprocess
-from nexus_mcp.types import AgentResponse, ExecutionMode, PromptRequest
+from nexus_mcp.types import AgentResponse, ExecutionMode, LogLevel, PromptRequest
 
 logger = logging.getLogger(__name__)
+
+
+async def _default_log_emitter(level: LogLevel, message: str) -> None:
+    """Fallback emitter: delegates to Python's stdlib logger.
+
+    Used when no MCP-aware emitter is provided (direct runner usage, tests).
+    """
+    getattr(logger, level)(message)
 
 
 class CLIRunner(Protocol):
