@@ -154,7 +154,7 @@ class SubprocessResult(BaseModel):
 class AgentTask(BaseModel):
     """Per-task input for batch_prompt."""
 
-    cli: str = Field(..., min_length=1)
+    cli: str | None = Field(default=None, min_length=1)
     prompt: str = Field(..., min_length=1, max_length=MAX_PROMPT_LENGTH)
     label: str | None = None
     context: dict[str, Any] = Field(default_factory=dict)
@@ -167,9 +167,12 @@ class AgentTask(BaseModel):
     retry_max_delay: Delay = None
 
     def to_request(self) -> "PromptRequest":
-        """Convert this task to a PromptRequest for runner execution."""
+        """Convert this task to a PromptRequest for runner execution.
+
+        Raises ValidationError if cli is None (caller must resolve CLI before converting).
+        """
         return PromptRequest(
-            cli=self.cli,
+            cli=self.cli,  # type: ignore[arg-type]  # intentional: None → Pydantic ValidationError
             prompt=self.prompt,
             context=self.context,
             execution_mode=self.execution_mode or "default",  # safety net: None → "default"

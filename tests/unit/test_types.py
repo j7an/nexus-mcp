@@ -615,3 +615,36 @@ class TestSessionPreferencesElicitation:
             "confirm_large_batch",
         ):
             assert d[field] is None, f"{field} should be None in default dump"
+
+
+# ---------------------------------------------------------------------------
+# Task 2: AgentTask.cli optional
+# ---------------------------------------------------------------------------
+
+
+class TestAgentTaskOptionalCli:
+    def test_cli_none_is_valid(self):
+        """cli=None is valid (enables elicitation disambiguation)."""
+        task = AgentTask(cli=None, prompt="Hello")
+        assert task.cli is None
+
+    def test_cli_defaults_to_none_when_omitted(self):
+        """cli defaults to None when not provided."""
+        task = AgentTask(prompt="Hello")
+        assert task.cli is None
+
+    def test_cli_empty_string_rejected(self):
+        """cli='' is rejected by min_length=1."""
+        with pytest.raises(ValidationError):
+            AgentTask(cli="", prompt="Hello")
+
+    def test_cli_valid_string_still_works(self):
+        """cli='gemini' still works as before."""
+        task = AgentTask(cli="gemini", prompt="Hello")
+        assert task.cli == "gemini"
+
+    def test_to_request_with_cli_none_raises_validation_error(self):
+        """to_request() with cli=None raises ValidationError (cli required in PromptRequest)."""
+        task = AgentTask(cli=None, prompt="Hello")
+        with pytest.raises(ValidationError):
+            task.to_request()

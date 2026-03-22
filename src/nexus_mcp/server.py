@@ -229,7 +229,7 @@ def _assign_labels(tasks: list[AgentTask]) -> list[AgentTask]:
             result.append(task)
             continue
 
-        label = _next_available_label(task.cli, reserved)
+        label = _next_available_label(task.cli or "task", reserved)
         reserved.add(label)
         result.append(task.model_copy(update={"label": label}))
 
@@ -280,7 +280,7 @@ async def batch_prompt(
             emitter = _make_mcp_emitter(ctx) if ctx else None
             try:
                 request = task.to_request()
-                runner = RunnerFactory.create(task.cli)
+                runner = RunnerFactory.create(request.cli)
                 response = await runner.run(request, emitter=emitter)
                 return AgentTaskResult(label=task.label, output=response.output)  # type: ignore[arg-type]
             except Exception as e:

@@ -38,6 +38,11 @@ class TestPreferencesRoundTrip:
             "timeout": None,
             "retry_base_delay": None,
             "retry_max_delay": None,
+            "elicit": None,
+            "confirm_yolo": None,
+            "confirm_vague_prompt": None,
+            "confirm_high_retries": None,
+            "confirm_large_batch": None,
         }
 
     async def test_set_model_preference(self, mcp_client):
@@ -67,6 +72,11 @@ class TestPreferencesRoundTrip:
             "timeout": None,
             "retry_base_delay": None,
             "retry_max_delay": None,
+            "elicit": None,
+            "confirm_yolo": None,
+            "confirm_vague_prompt": None,
+            "confirm_high_retries": None,
+            "confirm_large_batch": None,
         }
 
     async def test_set_max_retries_preference(self, mcp_client):
