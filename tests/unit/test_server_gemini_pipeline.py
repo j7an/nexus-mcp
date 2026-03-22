@@ -53,7 +53,7 @@ class TestPromptGeminiPipeline:
         """Full success path: subprocess returns valid JSON → prompt() returns output text."""
         mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("Hello from Gemini"))
 
-        result = await prompt("gemini", "Say hello")
+        result = await prompt(cli="gemini", prompt="Say hello")
 
         assert result == "Hello from Gemini"
         assert mock_subprocess.call_count == 1
@@ -66,7 +66,7 @@ class TestPromptGeminiPipeline:
         """model parameter is forwarded as --model flag in the subprocess command."""
         mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
 
-        await prompt("gemini", "test", model="gemini-2.5-flash")
+        await prompt(cli="gemini", prompt="test", model="gemini-2.5-flash")
 
         args = list(mock_subprocess.call_args.args)
         assert "--model" in args
@@ -76,7 +76,7 @@ class TestPromptGeminiPipeline:
         """execution_mode='yolo' adds --yolo to subprocess args."""
         mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
 
-        await prompt("gemini", "test", execution_mode="yolo")
+        await prompt(cli="gemini", prompt="test", execution_mode="yolo")
 
         args = list(mock_subprocess.call_args.args)
         assert "--yolo" in args
@@ -86,7 +86,7 @@ class TestPromptGeminiPipeline:
         mock_subprocess.return_value = create_mock_process(stdout="not valid json", returncode=0)
 
         with pytest.raises(ToolError, match=r"\[ParseError\]"):
-            await prompt("gemini", "test")
+            await prompt(cli="gemini", prompt="test")
 
     async def test_401_raises_tool_error(self, mock_subprocess):
         """Non-retryable API error (401) → SubprocessError → ToolError with [SubprocessError]."""
@@ -98,7 +98,7 @@ class TestPromptGeminiPipeline:
         mock_subprocess.return_value = create_mock_process(stdout=error_json, returncode=1)
 
         with pytest.raises(ToolError, match=r"\[SubprocessError\]"):
-            await prompt("gemini", "test")
+            await prompt(cli="gemini", prompt="test")
 
     async def test_429_retries_then_succeeds(self, mock_subprocess, fast_retry_sleep):
         """HTTP 429 rate limit triggers retry; second attempt succeeds."""
@@ -108,7 +108,7 @@ class TestPromptGeminiPipeline:
             create_mock_process(stdout=_gemini_json("ok after retry")),
         ]
 
-        result = await prompt("gemini", "test", max_retries=2)
+        result = await prompt(cli="gemini", prompt="test", max_retries=2)
 
         assert result == "ok after retry"
         assert mock_subprocess.call_count == 2
@@ -117,7 +117,7 @@ class TestPromptGeminiPipeline:
         """Node.js warnings before JSON are stripped; response field is extracted correctly."""
         mock_subprocess.return_value = create_mock_process(stdout=GEMINI_NOISY_STDOUT, returncode=0)
 
-        result = await prompt("gemini", "test")
+        result = await prompt(cli="gemini", prompt="test")
 
         assert result == "test output"
 
@@ -127,7 +127,7 @@ class TestPromptGeminiPipeline:
             stdout=_gemini_json("recovered output"), returncode=1
         )
 
-        result = await prompt("gemini", "test")
+        result = await prompt(cli="gemini", prompt="test")
 
         assert result == "recovered output"
 
@@ -137,7 +137,7 @@ class TestPromptGeminiPipeline:
         mock_subprocess.return_value = create_mock_process(stdout=error_json, returncode=1)
 
         with pytest.raises(ToolError, match=r"\[RetryableError\]"):
-            await prompt("gemini", "test", max_retries=3)
+            await prompt(cli="gemini", prompt="test", max_retries=3)
 
         assert mock_subprocess.call_count == 3
 

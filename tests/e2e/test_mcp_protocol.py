@@ -56,14 +56,16 @@ class TestToolDiscovery:
         }
 
     async def test_prompt_schema_has_required_params(self, mcp_client):
-        """prompt tool schema requires 'cli' and 'prompt' parameters."""
+        """prompt tool schema requires 'prompt'; 'cli' is optional (elicitation)."""
         tools = await mcp_client.list_tools()
         prompt_tool = next(t for t in tools if t.name == "prompt")
         schema = prompt_tool.inputSchema
         assert schema is not None
         required = schema.get("required", [])
-        assert "cli" in required
         assert "prompt" in required
+        # cli is optional — can be resolved via elicitation
+        assert "cli" not in required
+        assert "cli" in schema.get("properties", {})
 
     async def test_batch_prompt_schema_has_tasks_array(self, mcp_client):
         """batch_prompt tool schema requires 'tasks' as an array parameter."""

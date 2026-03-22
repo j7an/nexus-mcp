@@ -27,7 +27,12 @@ from nexus_mcp.server import (
     prompt,
 )
 from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY, AgentTask, MultiPromptResponse
-from tests.fixtures import make_agent_response, make_agent_task
+from tests.fixtures import (
+    GEMINI_JSON_RESPONSE,
+    create_mock_process,
+    make_agent_response,
+    make_agent_task,
+)
 
 
 def _setup_mock_runner(mock_factory, *, output: str = "test output", side_effect=None) -> AsyncMock:
@@ -753,3 +758,11 @@ class TestMakeMcpEmitter:
 
         ctx.debug.assert_awaited_once_with("debug message")
         mock_logger.debug.assert_called_once_with("debug message")
+
+
+class TestPromptElicitation:
+    async def test_prompt_accepts_elicit_parameter(self, mock_cli_detection, mock_subprocess, ctx):
+        mock_subprocess.return_value = create_mock_process(stdout=GEMINI_JSON_RESPONSE)
+        ctx.get_state.return_value = None
+        result = await prompt(cli="gemini", prompt="Hello world test prompt", elicit=False, ctx=ctx)
+        assert "test output" in result

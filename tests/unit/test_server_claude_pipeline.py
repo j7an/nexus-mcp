@@ -61,7 +61,7 @@ class TestPromptClaudePipeline:
         """Full success path: subprocess returns valid JSON → prompt() returns output text."""
         mock_subprocess.return_value = create_mock_process(stdout=_claude_json("Hello from Claude"))
 
-        result = await prompt("claude", "Say hello")
+        result = await prompt(cli="claude", prompt="Say hello")
 
         assert result == "Hello from Claude"
         assert mock_subprocess.call_count == 1
@@ -74,7 +74,7 @@ class TestPromptClaudePipeline:
         """model parameter is forwarded as --model flag in the subprocess command."""
         mock_subprocess.return_value = create_mock_process(stdout=_claude_json("ok"))
 
-        await prompt("claude", "test", model="claude-sonnet-4-6")
+        await prompt(cli="claude", prompt="test", model="claude-sonnet-4-6")
 
         args = list(mock_subprocess.call_args.args)
         assert "--model" in args
@@ -84,7 +84,7 @@ class TestPromptClaudePipeline:
         """execution_mode='yolo' adds --dangerously-skip-permissions flag."""
         mock_subprocess.return_value = create_mock_process(stdout=_claude_json("ok"))
 
-        await prompt("claude", "test", execution_mode="yolo")
+        await prompt(cli="claude", prompt="test", execution_mode="yolo")
 
         args = list(mock_subprocess.call_args.args)
         assert "--dangerously-skip-permissions" in args
@@ -94,7 +94,7 @@ class TestPromptClaudePipeline:
         mock_subprocess.return_value = create_mock_process(stdout="not valid json", returncode=0)
 
         with pytest.raises(ToolError, match=r"\[ParseError\]"):
-            await prompt("claude", "test")
+            await prompt(cli="claude", prompt="test")
 
     async def test_401_raises_tool_error(self, mock_subprocess):
         """Non-retryable API error (401) → SubprocessError → ToolError with [SubprocessError]."""
@@ -102,7 +102,7 @@ class TestPromptClaudePipeline:
         mock_subprocess.return_value = create_mock_process(stderr=error_json, returncode=1)
 
         with pytest.raises(ToolError, match=r"\[SubprocessError\]"):
-            await prompt("claude", "test")
+            await prompt(cli="claude", prompt="test")
 
     async def test_429_retry_then_success(self, mock_subprocess, fast_retry_sleep):
         """HTTP 429 rate limit triggers retry; second attempt succeeds."""
@@ -112,7 +112,7 @@ class TestPromptClaudePipeline:
             create_mock_process(stdout=_claude_json("ok after retry")),
         ]
 
-        result = await prompt("claude", "test", max_retries=2)
+        result = await prompt(cli="claude", prompt="test", max_retries=2)
 
         assert result == "ok after retry"
         assert mock_subprocess.call_count == 2
@@ -123,7 +123,7 @@ class TestPromptClaudePipeline:
             stdout=_claude_json("recovered output"), returncode=1
         )
 
-        result = await prompt("claude", "test")
+        result = await prompt(cli="claude", prompt="test")
 
         assert result == "recovered output"
 
@@ -131,7 +131,7 @@ class TestPromptClaudePipeline:
         """Log lines before JSON → still parsed correctly via fallback."""
         mock_subprocess.return_value = create_mock_process(stdout=CLAUDE_NOISY_STDOUT, returncode=0)
 
-        result = await prompt("claude", "test")
+        result = await prompt(cli="claude", prompt="test")
 
         assert result == "test output"
 
@@ -141,7 +141,7 @@ class TestPromptClaudePipeline:
         mock_subprocess.return_value = create_mock_process(stderr=error_json, returncode=1)
 
         with pytest.raises(ToolError, match=r"\[RetryableError\]"):
-            await prompt("claude", "test", max_retries=3)
+            await prompt(cli="claude", prompt="test", max_retries=3)
 
         assert mock_subprocess.call_count == 3
 

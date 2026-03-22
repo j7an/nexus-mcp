@@ -28,6 +28,7 @@ from pydantic import Field, ValidationError
 
 from nexus_mcp.cli_detector import detect_cli
 from nexus_mcp.config import get_runner_defaults, get_runner_models, get_tool_timeout
+from nexus_mcp.elicitation import ElicitationGuard
 from nexus_mcp.icons import SERVER_ICONS, TOOL_CONFIG_ICONS, TOOL_EXEC_ICONS
 from nexus_mcp.middleware import (
     ErrorNormalizationMiddleware,
@@ -37,6 +38,7 @@ from nexus_mcp.middleware import (
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import (
     DEFAULT_MAX_CONCURRENCY,
+    PREFERENCES_KEY,
     AgentTask,
     AgentTaskResult,
     ExecutionMode,
@@ -93,7 +95,9 @@ def _inject_cli_enum() -> None:
     cli_names: list[Any] = list(RunnerFactory.list_clis())
 
     # 1. Patch prompt() cli parameter annotation
-    prompt.__annotations__["cli"] = Annotated[str, Field(json_schema_extra={"enum": cli_names})]
+    prompt.__annotations__["cli"] = Annotated[
+        str | None, Field(default=None, json_schema_extra={"enum": cli_names})
+    ]
 
     # 2. Patch AgentTask.cli field schema
     original_extra = AgentTask.model_config.get("json_schema_extra")
@@ -147,14 +151,11 @@ def _make_mcp_emitter(ctx: Context) -> LogEmitter:
     return _emit
 
 
-_PREFERENCES_KEY = "nexus:preferences"
-
-
 async def _get_session_preferences(ctx: Context | None) -> SessionPreferences:
     """Read session preferences from ctx state, returning defaults when unset or ctx is None."""
     if ctx is None:
         return SessionPreferences()
-    raw = await ctx.get_state(_PREFERENCES_KEY)
+    raw = await ctx.get_state(PREFERENCES_KEY)
     if raw is None:
         return SessionPreferences()
     try:
@@ -231,7 +232,7 @@ def _assign_labels(tasks: list[AgentTask]) -> list[AgentTask]:
             result.append(task)
             continue
 
-        label = _next_available_label(task.cli, reserved)
+        label = _next_available_label(task.cli or "task", reserved)
         reserved.add(label)
         result.append(task.model_copy(update={"label": label}))
 
@@ -239,8 +240,10 @@ def _assign_labels(tasks: list[AgentTask]) -> list[AgentTask]:
 
 
 async def batch_prompt(
+    *,
     tasks: list[AgentTask],
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+    elicit: bool | None = None,
     ctx: Context | None = None,
 ) -> MultiPromptResponse:
     """Send multiple prompts to CLI runners in parallel (primary tool).
@@ -269,6 +272,21 @@ async def batch_prompt(
     prefs = await _get_session_preferences(ctx)
     tasks = [_apply_preferences(t, prefs) for t in tasks]
 
+    resolved_elicit = (
+        elicit if elicit is not None else (prefs.elicit if prefs.elicit is not None else True)
+    )
+    guard = (
+        ElicitationGuard(ctx, installed_clis=list(RunnerFactory.list_clis()), prefs=prefs)
+        if ctx
+        else None
+    )
+    if guard:
+        tasks = await guard.check_batch(tasks, elicit=resolved_elicit)
+    else:
+        for t in tasks:
+            if t.cli is None:
+                raise ToolError("cli is required on all tasks when no context available")
+
     labelled = _assign_labels(tasks)
     semaphore = asyncio.Semaphore(max_concurrency)
     completed = 0
@@ -282,7 +300,7 @@ async def batch_prompt(
             emitter = _make_mcp_emitter(ctx) if ctx else None
             try:
                 request = task.to_request()
-                runner = RunnerFactory.create(task.cli)
+                runner = RunnerFactory.create(request.cli)
                 response = await runner.run(request, emitter=emitter)
                 return AgentTaskResult(label=task.label, output=response.output)  # type: ignore[arg-type]
             except Exception as e:
@@ -308,7 +326,8 @@ async def batch_prompt(
 
 
 async def prompt(
-    cli: str,
+    *,
+    cli: str | None = None,
     prompt: str,
     context: dict[str, Any] | None = None,
     execution_mode: ExecutionMode | None = None,
@@ -318,6 +337,7 @@ async def prompt(
     timeout: int | None = None,
     retry_base_delay: float | None = None,
     retry_max_delay: float | None = None,
+    elicit: bool | None = None,
     ctx: Context | None = None,
 ) -> str:
     """Send a prompt to a CLI runner as a background task.
@@ -357,6 +377,29 @@ async def prompt(
         retry_max_delay if retry_max_delay is not None else prefs.retry_max_delay
     )
 
+    resolved_elicit = (
+        elicit if elicit is not None else (prefs.elicit if prefs.elicit is not None else True)
+    )
+    guard = (
+        ElicitationGuard(ctx, installed_clis=list(RunnerFactory.list_clis()), prefs=prefs)
+        if ctx
+        else None
+    )
+    if guard:
+        resolved = await guard.check_prompt(
+            cli=cli,
+            model=resolved_model,
+            execution_mode=resolved_mode,
+            prompt_text=prompt,
+            elicit=resolved_elicit,
+        )
+        cli = resolved.cli
+        resolved_model = resolved.model
+        resolved_mode = resolved.execution_mode
+        prompt = resolved.prompt_text
+    elif cli is None:
+        raise ToolError("cli is required")
+
     task = AgentTask(
         cli=cli,
         prompt=prompt,
@@ -369,7 +412,7 @@ async def prompt(
         retry_base_delay=resolved_retry_base_delay,
         retry_max_delay=resolved_retry_max_delay,
     )
-    result = await batch_prompt(tasks=[task], ctx=ctx)
+    result = await batch_prompt(tasks=[task], elicit=False, ctx=ctx)
     task_result = result.results[0]
     if task_result.error:
         raise ToolError(task_result.formatted_error)
@@ -385,6 +428,11 @@ async def set_preferences(
     timeout: int | None = None,
     retry_base_delay: float | None = None,
     retry_max_delay: float | None = None,
+    elicit: bool | None = None,
+    confirm_yolo: bool | None = None,
+    confirm_vague_prompt: bool | None = None,
+    confirm_high_retries: bool | None = None,
+    confirm_large_batch: bool | None = None,
     clear_execution_mode: bool = False,
     clear_model: bool = False,
     clear_max_retries: bool = False,
@@ -392,6 +440,11 @@ async def set_preferences(
     clear_timeout: bool = False,
     clear_retry_base_delay: bool = False,
     clear_retry_max_delay: bool = False,
+    clear_elicit: bool = False,
+    clear_confirm_yolo: bool = False,
+    clear_confirm_vague_prompt: bool = False,
+    clear_confirm_high_retries: bool = False,
+    clear_confirm_large_batch: bool = False,
     ctx: Context | None = None,
 ) -> str:
     """Set session-scoped preferences that apply to subsequent prompt/batch_prompt calls.
@@ -490,6 +543,46 @@ async def set_preferences(
     else:
         new_retry_max_delay = existing.retry_max_delay
 
+    new_elicit: bool | None
+    if clear_elicit:
+        new_elicit = None
+    elif elicit is not None:
+        new_elicit = elicit
+    else:
+        new_elicit = existing.elicit
+
+    new_confirm_yolo: bool | None
+    if clear_confirm_yolo:
+        new_confirm_yolo = None
+    elif confirm_yolo is not None:
+        new_confirm_yolo = confirm_yolo
+    else:
+        new_confirm_yolo = existing.confirm_yolo
+
+    new_confirm_vague_prompt: bool | None
+    if clear_confirm_vague_prompt:
+        new_confirm_vague_prompt = None
+    elif confirm_vague_prompt is not None:
+        new_confirm_vague_prompt = confirm_vague_prompt
+    else:
+        new_confirm_vague_prompt = existing.confirm_vague_prompt
+
+    new_confirm_high_retries: bool | None
+    if clear_confirm_high_retries:
+        new_confirm_high_retries = None
+    elif confirm_high_retries is not None:
+        new_confirm_high_retries = confirm_high_retries
+    else:
+        new_confirm_high_retries = existing.confirm_high_retries
+
+    new_confirm_large_batch: bool | None
+    if clear_confirm_large_batch:
+        new_confirm_large_batch = None
+    elif confirm_large_batch is not None:
+        new_confirm_large_batch = confirm_large_batch
+    else:
+        new_confirm_large_batch = existing.confirm_large_batch
+
     merged = SessionPreferences(
         execution_mode=new_execution_mode,
         model=new_model,
@@ -498,8 +591,13 @@ async def set_preferences(
         timeout=new_timeout,
         retry_base_delay=new_retry_base_delay,
         retry_max_delay=new_retry_max_delay,
+        elicit=new_elicit,
+        confirm_yolo=new_confirm_yolo,
+        confirm_vague_prompt=new_confirm_vague_prompt,
+        confirm_high_retries=new_confirm_high_retries,
+        confirm_large_batch=new_confirm_large_batch,
     )
-    await ctx.set_state(_PREFERENCES_KEY, merged.model_dump())
+    await ctx.set_state(PREFERENCES_KEY, merged.model_dump())
     return f"Preferences set: {json.dumps(merged.model_dump())}"
 
 
@@ -524,7 +622,7 @@ async def clear_preferences(ctx: Context | None = None) -> str:
     """
     if ctx is None:
         raise ToolError("clear_preferences requires an active session context")
-    await ctx.delete_state(_PREFERENCES_KEY)
+    await ctx.delete_state(PREFERENCES_KEY)
     return "Preferences cleared"
 
 

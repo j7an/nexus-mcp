@@ -194,6 +194,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
         assert "yolo" in result
@@ -211,6 +216,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -227,6 +237,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -244,6 +259,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -261,6 +281,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -290,6 +315,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -307,6 +337,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -324,6 +359,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -341,6 +381,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -358,6 +403,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -375,6 +425,11 @@ class TestSetPreferences:
                 "timeout": 30,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -398,6 +453,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -421,6 +481,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -444,6 +509,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -467,6 +537,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": 1.5,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -484,6 +559,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": 60.0,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -497,6 +577,11 @@ class TestSetPreferences:
             "timeout": None,
             "retry_base_delay": 1.5,
             "retry_max_delay": None,
+            "elicit": None,
+            "confirm_yolo": None,
+            "confirm_vague_prompt": None,
+            "confirm_high_retries": None,
+            "confirm_large_batch": None,
         }
         await set_preferences(clear_retry_base_delay=True, ctx=ctx)
         ctx.set_state.assert_awaited_once_with(
@@ -509,6 +594,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -534,6 +624,11 @@ class TestSetPreferences:
                 "timeout": None,
                 "retry_base_delay": None,
                 "retry_max_delay": None,
+                "elicit": None,
+                "confirm_yolo": None,
+                "confirm_vague_prompt": None,
+                "confirm_high_retries": None,
+                "confirm_large_batch": None,
             },
         )
 
@@ -559,6 +654,11 @@ class TestGetPreferences:
             "timeout": None,
             "retry_base_delay": None,
             "retry_max_delay": None,
+            "elicit": None,
+            "confirm_yolo": None,
+            "confirm_vague_prompt": None,
+            "confirm_high_retries": None,
+            "confirm_large_batch": None,
         }
 
     async def test_returns_empty_defaults_when_no_prefs(self, ctx):
@@ -572,6 +672,11 @@ class TestGetPreferences:
             "timeout": None,
             "retry_base_delay": None,
             "retry_max_delay": None,
+            "elicit": None,
+            "confirm_yolo": None,
+            "confirm_vague_prompt": None,
+            "confirm_high_retries": None,
+            "confirm_large_batch": None,
         }
 
     async def test_returns_dict_not_pydantic(self, ctx):
@@ -750,6 +855,11 @@ class TestPromptPreferenceFallback:
             "timeout": None,
             "retry_base_delay": 1.5,
             "retry_max_delay": None,
+            "elicit": None,
+            "confirm_yolo": None,
+            "confirm_vague_prompt": None,
+            "confirm_high_retries": None,
+            "confirm_large_batch": None,
         }
 
         await prompt(cli="gemini", prompt="test", ctx=ctx)
@@ -905,3 +1015,34 @@ class TestBatchPromptPreferenceFallback:
 
         assert "yolo" in call_modes
         assert "default" in call_modes
+
+
+# ---------------------------------------------------------------------------
+# Task 10: TestElicitationPreferences
+# ---------------------------------------------------------------------------
+
+
+class TestElicitationPreferences:
+    async def test_set_elicit_false(self, ctx):
+        """set_preferences(elicit=False) stores elicit=False in session state."""
+        ctx.get_state.return_value = None
+
+        result = await set_preferences(elicit=False, ctx=ctx)
+
+        assert '"elicit": false' in result
+
+    async def test_set_confirm_yolo_false(self, ctx):
+        """set_preferences(confirm_yolo=False) stores confirm_yolo=False in session state."""
+        ctx.get_state.return_value = None
+
+        result = await set_preferences(confirm_yolo=False, ctx=ctx)
+
+        assert '"confirm_yolo": false' in result
+
+    async def test_clear_confirm_yolo(self, ctx):
+        """clear_confirm_yolo=True resets confirm_yolo to null even if existing value is False."""
+        ctx.get_state.return_value = {"confirm_yolo": False}
+
+        result = await set_preferences(clear_confirm_yolo=True, ctx=ctx)
+
+        assert '"confirm_yolo": null' in result
