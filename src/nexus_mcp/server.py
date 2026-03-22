@@ -185,7 +185,6 @@ def _make_batch_progress_emitter(
     return _report
 
 
-
 async def _get_session_preferences(ctx: Context | None) -> SessionPreferences:
     """Read session preferences from ctx state, returning defaults when unset or ctx is None."""
     if ctx is None:
