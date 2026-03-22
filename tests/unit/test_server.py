@@ -20,6 +20,7 @@ from nexus_mcp.exceptions import (
 from nexus_mcp.server import (
     _assign_labels,
     _inject_cli_enum,
+    _make_mcp_emitter,
     batch_prompt,
     build_server_instructions,
     mcp,
@@ -652,3 +653,47 @@ class TestDynamicCliEnum:
         assert mcp.instructions is not None
         assert len(mcp.instructions) > 0
         assert "nexus-mcp" in mcp.instructions
+
+
+class TestMakeMcpEmitter:
+    """_make_mcp_emitter creates a dual-output emitter."""
+
+    async def test_info_calls_both_ctx_and_logger(self, ctx):
+        """Info level calls ctx.info() and logger.info()."""
+        emitter = _make_mcp_emitter(ctx)
+
+        with patch("nexus_mcp.server.logger") as mock_logger:
+            await emitter("info", "test message")
+
+        ctx.info.assert_awaited_once_with("test message")
+        mock_logger.info.assert_called_once_with("test message")
+
+    async def test_warning_calls_both_ctx_and_logger(self, ctx):
+        """Warning level calls ctx.warning() and logger.warning()."""
+        emitter = _make_mcp_emitter(ctx)
+
+        with patch("nexus_mcp.server.logger") as mock_logger:
+            await emitter("warning", "retry warning")
+
+        ctx.warning.assert_awaited_once_with("retry warning")
+        mock_logger.warning.assert_called_once_with("retry warning")
+
+    async def test_error_calls_ctx_and_logger_with_exc_info(self, ctx):
+        """Error level calls ctx.error() and logger.error(exc_info=True)."""
+        emitter = _make_mcp_emitter(ctx)
+
+        with patch("nexus_mcp.server.logger") as mock_logger:
+            await emitter("error", "task failed")
+
+        ctx.error.assert_awaited_once_with("task failed")
+        mock_logger.error.assert_called_once_with("task failed", exc_info=True)
+
+    async def test_debug_calls_both_ctx_and_logger(self, ctx):
+        """Debug level calls ctx.debug() and logger.debug()."""
+        emitter = _make_mcp_emitter(ctx)
+
+        with patch("nexus_mcp.server.logger") as mock_logger:
+            await emitter("debug", "debug message")
+
+        ctx.debug.assert_awaited_once_with("debug message")
+        mock_logger.debug.assert_called_once_with("debug message")

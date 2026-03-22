@@ -34,6 +34,8 @@ from nexus_mcp.types import (
     AgentTask,
     AgentTaskResult,
     ExecutionMode,
+    LogEmitter,
+    LogLevel,
     MultiPromptResponse,
     SessionPreferences,
 )
@@ -107,6 +109,30 @@ def _inject_cli_enum() -> None:
 
 mcp = FastMCP("nexus-mcp", instructions=build_server_instructions())
 logger = logging.getLogger(__name__)
+
+
+def _make_mcp_emitter(ctx: Context) -> LogEmitter:
+    """Create a LogEmitter that sends to both MCP client and Python logger.
+
+    Error-level messages use logger.error(exc_info=True) to preserve tracebacks
+    on stderr for server operators, while MCP clients get a clean message.
+    """
+    _ctx_methods = {
+        "debug": ctx.debug,
+        "info": ctx.info,
+        "warning": ctx.warning,
+        "error": ctx.error,
+    }
+
+    async def _emit(level: LogLevel, message: str) -> None:
+        await _ctx_methods[level](message)
+        if level == "error":
+            logger.error(message, exc_info=True)
+        else:
+            getattr(logger, level)(message)
+
+    return _emit
+
 
 _PREFERENCES_KEY = "nexus:preferences"
 
