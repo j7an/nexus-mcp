@@ -104,3 +104,99 @@ class TestTimingMiddleware:
             await mw.on_call_tool(ctx, call_next)
 
         assert "completed in 3ms" in caplog.text
+
+
+class TestRequestLoggingMiddleware:
+    """Tests for RequestLoggingMiddleware."""
+
+    async def test_logs_entry_and_exit(self, caplog):
+        """Successful tool call logs entry with args and exit."""
+        from nexus_mcp.middleware import RequestLoggingMiddleware
+
+        mw = RequestLoggingMiddleware()
+        ctx = _make_context("prompt", {"cli": "gemini", "prompt": "tell me a joke"})
+        call_next = AsyncMock(return_value=_make_tool_result())
+
+        with caplog.at_level(logging.INFO, logger="nexus_mcp.middleware"):
+            result = await mw.on_call_tool(ctx, call_next)
+
+        assert result == call_next.return_value
+        assert "Tool 'prompt' called" in caplog.text
+        assert "cli=gemini" in caplog.text
+        assert "Tool 'prompt' completed" in caplog.text
+
+    async def test_logs_failure(self, caplog):
+        """Failed tool call logs entry and failure with exception type."""
+        from nexus_mcp.middleware import RequestLoggingMiddleware
+
+        mw = RequestLoggingMiddleware()
+        ctx = _make_context("prompt", {"cli": "codex", "prompt": "hello"})
+        call_next = AsyncMock(side_effect=ToolError("codex not found"))
+
+        with (
+            caplog.at_level(logging.INFO, logger="nexus_mcp.middleware"),
+            pytest.raises(ToolError),
+        ):
+            await mw.on_call_tool(ctx, call_next)
+
+        assert "Tool 'prompt' called" in caplog.text
+        assert "Tool 'prompt' failed" in caplog.text
+        assert "codex not found" in caplog.text
+
+    async def test_redacts_prompt_text(self, caplog):
+        """Prompt text must NOT appear in log messages (privacy/size)."""
+        from nexus_mcp.middleware import RequestLoggingMiddleware
+
+        mw = RequestLoggingMiddleware()
+        secret_prompt = "tell me the nuclear launch codes"
+        ctx = _make_context(
+            "prompt",
+            {"cli": "gemini", "prompt": secret_prompt, "execution_mode": "default"},
+        )
+        call_next = AsyncMock(return_value=_make_tool_result())
+
+        with caplog.at_level(logging.DEBUG, logger="nexus_mcp.middleware"):
+            await mw.on_call_tool(ctx, call_next)
+
+        assert secret_prompt not in caplog.text
+
+    async def test_logs_batch_prompt_task_count(self, caplog):
+        """batch_prompt logs task count, not individual task details."""
+        from nexus_mcp.middleware import RequestLoggingMiddleware
+
+        mw = RequestLoggingMiddleware()
+        ctx = _make_context(
+            "batch_prompt",
+            {
+                "tasks": [
+                    {"cli": "gemini", "prompt": "secret1"},
+                    {"cli": "codex", "prompt": "secret2"},
+                ],
+            },
+        )
+        call_next = AsyncMock(return_value=_make_tool_result())
+
+        with caplog.at_level(logging.INFO, logger="nexus_mcp.middleware"):
+            await mw.on_call_tool(ctx, call_next)
+
+        assert "tasks=2" in caplog.text
+        assert "secret1" not in caplog.text
+        assert "secret2" not in caplog.text
+
+    async def test_logs_full_args_for_preferences(self, caplog):
+        """Preferences tools log full args (small config values, no secrets)."""
+        from nexus_mcp.middleware import RequestLoggingMiddleware
+
+        mw = RequestLoggingMiddleware()
+        ctx = _make_context(
+            "set_preferences",
+            {"execution_mode": "yolo", "model": "gemini-2.5-flash"},
+        )
+        call_next = AsyncMock(return_value=_make_tool_result())
+
+        with caplog.at_level(logging.INFO, logger="nexus_mcp.middleware"):
+            await mw.on_call_tool(ctx, call_next)
+
+        assert "execution_mode" in caplog.text
+        assert "yolo" in caplog.text
+        assert "gemini-2.5-flash" in caplog.text
