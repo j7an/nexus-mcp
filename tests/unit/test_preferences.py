@@ -1015,3 +1015,34 @@ class TestBatchPromptPreferenceFallback:
 
         assert "yolo" in call_modes
         assert "default" in call_modes
+
+
+# ---------------------------------------------------------------------------
+# Task 10: TestElicitationPreferences
+# ---------------------------------------------------------------------------
+
+
+class TestElicitationPreferences:
+    async def test_set_elicit_false(self, ctx):
+        """set_preferences(elicit=False) stores elicit=False in session state."""
+        ctx.get_state.return_value = None
+
+        result = await set_preferences(elicit=False, ctx=ctx)
+
+        assert '"elicit": false' in result
+
+    async def test_set_confirm_yolo_false(self, ctx):
+        """set_preferences(confirm_yolo=False) stores confirm_yolo=False in session state."""
+        ctx.get_state.return_value = None
+
+        result = await set_preferences(confirm_yolo=False, ctx=ctx)
+
+        assert '"confirm_yolo": false' in result
+
+    async def test_clear_confirm_yolo(self, ctx):
+        """clear_confirm_yolo=True resets confirm_yolo to null even if existing value is False."""
+        ctx.get_state.return_value = {"confirm_yolo": False}
+
+        result = await set_preferences(clear_confirm_yolo=True, ctx=ctx)
+
+        assert '"confirm_yolo": null' in result

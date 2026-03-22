@@ -428,6 +428,11 @@ async def set_preferences(
     timeout: int | None = None,
     retry_base_delay: float | None = None,
     retry_max_delay: float | None = None,
+    elicit: bool | None = None,
+    confirm_yolo: bool | None = None,
+    confirm_vague_prompt: bool | None = None,
+    confirm_high_retries: bool | None = None,
+    confirm_large_batch: bool | None = None,
     clear_execution_mode: bool = False,
     clear_model: bool = False,
     clear_max_retries: bool = False,
@@ -435,6 +440,11 @@ async def set_preferences(
     clear_timeout: bool = False,
     clear_retry_base_delay: bool = False,
     clear_retry_max_delay: bool = False,
+    clear_elicit: bool = False,
+    clear_confirm_yolo: bool = False,
+    clear_confirm_vague_prompt: bool = False,
+    clear_confirm_high_retries: bool = False,
+    clear_confirm_large_batch: bool = False,
     ctx: Context | None = None,
 ) -> str:
     """Set session-scoped preferences that apply to subsequent prompt/batch_prompt calls.
@@ -533,6 +543,46 @@ async def set_preferences(
     else:
         new_retry_max_delay = existing.retry_max_delay
 
+    new_elicit: bool | None
+    if clear_elicit:
+        new_elicit = None
+    elif elicit is not None:
+        new_elicit = elicit
+    else:
+        new_elicit = existing.elicit
+
+    new_confirm_yolo: bool | None
+    if clear_confirm_yolo:
+        new_confirm_yolo = None
+    elif confirm_yolo is not None:
+        new_confirm_yolo = confirm_yolo
+    else:
+        new_confirm_yolo = existing.confirm_yolo
+
+    new_confirm_vague_prompt: bool | None
+    if clear_confirm_vague_prompt:
+        new_confirm_vague_prompt = None
+    elif confirm_vague_prompt is not None:
+        new_confirm_vague_prompt = confirm_vague_prompt
+    else:
+        new_confirm_vague_prompt = existing.confirm_vague_prompt
+
+    new_confirm_high_retries: bool | None
+    if clear_confirm_high_retries:
+        new_confirm_high_retries = None
+    elif confirm_high_retries is not None:
+        new_confirm_high_retries = confirm_high_retries
+    else:
+        new_confirm_high_retries = existing.confirm_high_retries
+
+    new_confirm_large_batch: bool | None
+    if clear_confirm_large_batch:
+        new_confirm_large_batch = None
+    elif confirm_large_batch is not None:
+        new_confirm_large_batch = confirm_large_batch
+    else:
+        new_confirm_large_batch = existing.confirm_large_batch
+
     merged = SessionPreferences(
         execution_mode=new_execution_mode,
         model=new_model,
@@ -541,6 +591,11 @@ async def set_preferences(
         timeout=new_timeout,
         retry_base_delay=new_retry_base_delay,
         retry_max_delay=new_retry_max_delay,
+        elicit=new_elicit,
+        confirm_yolo=new_confirm_yolo,
+        confirm_vague_prompt=new_confirm_vague_prompt,
+        confirm_high_retries=new_confirm_high_retries,
+        confirm_large_batch=new_confirm_large_batch,
     )
     await ctx.set_state(PREFERENCES_KEY, merged.model_dump())
     return f"Preferences set: {json.dumps(merged.model_dump())}"
