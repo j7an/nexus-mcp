@@ -201,8 +201,86 @@ class ElicitationGuard:
         tasks: list[Any],
         elicit: bool = True,
     ) -> list[Any]:
-        """Resolve parameters for a batch of tasks.
+        """Resolve parameters for a batch of tasks with aggregated elicitation.
 
-        Stub — implemented in Task 8.
+        Three aggregated triggers fire at most once per batch (not once per task):
+        1. YOLO confirmation — if any tasks have execution_mode="yolo" and
+           confirm_yolo is not False. Accept → auto_suppress. Decline → downgrade
+           all yolo tasks to default.
+        2. CLI disambiguation — if any tasks have cli=None. Accept → set all
+           None-cli tasks to chosen CLI. Decline → raise ToolError.
+        3. Vague prompt advisory — if any tasks have short prompts and
+           confirm_vague_prompt is not False. Decline does NOT block.
+
+        When elicit=False, validates all tasks have cli set (raises ToolError if not).
+
+        Args:
+            tasks: List of AgentTask objects to resolve.
+            elicit: If False, skip all elicitation and raise on missing params.
+
+        Returns:
+            List of resolved task objects.
+
+        Raises:
+            ToolError: If cli is missing and elicitation is disabled, declined, or
+                unavailable; or if final validation fails.
         """
-        return tasks
+        if not elicit:
+            for task in tasks:
+                if task.cli is None:
+                    raise ToolError("cli is required on all tasks when elicitation is disabled")
+            return tasks
+
+        resolved = list(tasks)
+
+        # Trigger #1: YOLO confirmation (aggregated)
+        yolo_indices = [i for i, t in enumerate(resolved) if t.execution_mode == "yolo"]
+        if yolo_indices and self._prefs.confirm_yolo is not False:
+            count = len(yolo_indices)
+            result = await self._try_elicit(
+                f"YOLO mode will auto-approve all actions for {count} task(s). Confirm?",
+                None,
+            )
+            if result is None:
+                pass  # elicitation unavailable, proceed
+            elif result.action == "accept":
+                await self._auto_suppress("confirm_yolo")
+            else:
+                # Downgrade all YOLO tasks to default
+                for i in yolo_indices:
+                    resolved[i] = resolved[i].model_copy(update={"execution_mode": "default"})
+                logger.warning(
+                    "YOLO mode declined for batch, downgrading %d task(s) to default", count
+                )
+
+        # Trigger #2: CLI disambiguation (aggregated)
+        none_cli_indices = [i for i, t in enumerate(resolved) if t.cli is None]
+        if none_cli_indices:
+            result = await self._try_elicit(
+                f"Which CLI agent should handle {len(none_cli_indices)} task(s) with no CLI set?",
+                self._installed_clis,
+            )
+            if result is None or result.action != "accept":
+                raise ToolError("cli is required — elicitation was declined or unavailable")
+            assert isinstance(result, AcceptedElicitation)
+            chosen_cli = str(result.data)
+            for i in none_cli_indices:
+                resolved[i] = resolved[i].model_copy(update={"cli": chosen_cli})
+
+        # Trigger #3: Vague prompt advisory (aggregated)
+        vague_indices = [
+            i for i, t in enumerate(resolved) if len(t.prompt.strip()) < _VAGUE_PROMPT_THRESHOLD
+        ]
+        if vague_indices and self._prefs.confirm_vague_prompt is not False:
+            await self._try_elicit(
+                f"{len(vague_indices)} task(s) have very short prompts. Consider elaborating.",
+                None,
+            )
+            # Advisory only — result does not affect tasks
+
+        # Final validation: all tasks must have cli resolved
+        for task in resolved:
+            if task.cli is None:
+                raise ToolError("cli is required on all tasks — at least one task has no CLI set")
+
+        return resolved

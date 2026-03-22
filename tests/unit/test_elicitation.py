@@ -14,7 +14,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData
 
 from nexus_mcp.elicitation import ElicitationGuard
-from nexus_mcp.types import SessionPreferences
+from nexus_mcp.types import AgentTask, SessionPreferences
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -434,3 +434,105 @@ class TestVaguePromptCheck:
         )
         mock_ctx.elicit.assert_not_called()
         assert result.prompt_text == "explain QC"
+
+
+# ---------------------------------------------------------------------------
+# Task 8: TestBatchElicitation
+# ---------------------------------------------------------------------------
+
+
+class TestBatchElicitation:
+    @pytest.fixture(autouse=True)
+    def _reset_class_cache(self) -> None:
+        ElicitationGuard._elicitation_available = None
+        yield
+        ElicitationGuard._elicitation_available = None
+
+    async def test_aggregates_yolo_confirmation(
+        self, mock_ctx: AsyncMock, installed_clis: list[str]
+    ) -> None:
+        """3 out of 5 YOLO tasks triggers a single elicit with count in message."""
+        mock_ctx.elicit.return_value = AcceptedElicitation(data={})
+        mock_ctx.get_state.return_value = None
+        tasks = [
+            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="yolo"),
+            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="yolo"),
+            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="yolo"),
+            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="default"),
+            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="default"),
+        ]
+        guard = ElicitationGuard(mock_ctx, installed_clis)
+        await guard.check_batch(tasks, elicit=True)
+        mock_ctx.elicit.assert_called_once()
+        call_message = mock_ctx.elicit.call_args.args[0]
+        assert "3" in call_message
+
+    async def test_batch_decline_yolo_downgrades_all(
+        self, mock_ctx: AsyncMock, installed_clis: list[str]
+    ) -> None:
+        """Declining YOLO confirmation downgrades all YOLO tasks to default."""
+        mock_ctx.elicit.return_value = DeclinedElicitation()
+        tasks = [
+            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="yolo"),
+            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="yolo"),
+            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="default"),
+        ]
+        guard = ElicitationGuard(mock_ctx, installed_clis)
+        result = await guard.check_batch(tasks, elicit=True)
+        assert result[0].execution_mode == "default"
+        assert result[1].execution_mode == "default"
+        assert result[2].execution_mode == "default"
+
+    async def test_batch_validates_cli_required(
+        self, mock_ctx: AsyncMock, installed_clis: list[str]
+    ) -> None:
+        """elicit=False + task with cli=None → ToolError."""
+        tasks = [
+            AgentTask(cli="gemini", prompt="do something useful here"),
+            AgentTask(cli=None, prompt="do something useful here"),
+        ]
+        guard = ElicitationGuard(mock_ctx, installed_clis)
+        with pytest.raises(ToolError):
+            await guard.check_batch(tasks, elicit=False)
+        mock_ctx.elicit.assert_not_called()
+
+    async def test_batch_aggregates_cli_disambiguation(
+        self, mock_ctx: AsyncMock, installed_clis: list[str]
+    ) -> None:
+        """2 tasks with cli=None → single elicit call, both tasks get chosen CLI."""
+        mock_ctx.elicit.return_value = AcceptedElicitation(data="gemini")
+        tasks = [
+            AgentTask(cli=None, prompt="do something useful here"),
+            AgentTask(cli=None, prompt="do something useful here"),
+            AgentTask(cli="codex", prompt="do something useful here"),
+        ]
+        guard = ElicitationGuard(mock_ctx, installed_clis)
+        result = await guard.check_batch(tasks, elicit=True)
+        mock_ctx.elicit.assert_called_once()
+        assert result[0].cli == "gemini"
+        assert result[1].cli == "gemini"
+        assert result[2].cli == "codex"
+
+    async def test_batch_cli_decline_raises(
+        self, mock_ctx: AsyncMock, installed_clis: list[str]
+    ) -> None:
+        """Declining CLI disambiguation raises ToolError."""
+        mock_ctx.elicit.return_value = DeclinedElicitation()
+        tasks = [
+            AgentTask(cli=None, prompt="do something useful here"),
+        ]
+        guard = ElicitationGuard(mock_ctx, installed_clis)
+        with pytest.raises(ToolError):
+            await guard.check_batch(tasks, elicit=True)
+
+    async def test_batch_elicit_false_skips(
+        self, mock_ctx: AsyncMock, installed_clis: list[str]
+    ) -> None:
+        """elicit=False with all tasks having cli set → no elicit calls, even for YOLO."""
+        tasks = [
+            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="yolo"),
+        ]
+        guard = ElicitationGuard(mock_ctx, installed_clis)
+        result = await guard.check_batch(tasks, elicit=False)
+        mock_ctx.elicit.assert_not_called()
+        assert result[0].execution_mode == "yolo"
