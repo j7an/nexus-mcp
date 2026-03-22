@@ -19,7 +19,7 @@ from fastmcp.server.elicitation import (
 from mcp.shared.exceptions import McpError
 
 from nexus_mcp.config import get_runner_models
-from nexus_mcp.types import PREFERENCES_KEY, SessionPreferences
+from nexus_mcp.types import PREFERENCES_KEY, ExecutionMode, SessionPreferences
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class ResolvedParams:
 
     cli: str
     model: str | None
-    execution_mode: str
+    execution_mode: ExecutionMode
     prompt_text: str
 
 
@@ -100,7 +100,7 @@ class ElicitationGuard:
         self,
         cli: str | None,
         model: str | None,
-        execution_mode: str,
+        execution_mode: ExecutionMode,
         prompt_text: str,
         elicit: bool = True,
     ) -> ResolvedParams:

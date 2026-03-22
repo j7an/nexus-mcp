@@ -28,6 +28,7 @@ from pydantic import Field, ValidationError
 
 from nexus_mcp.cli_detector import detect_cli
 from nexus_mcp.config import get_runner_defaults, get_runner_models, get_tool_timeout
+from nexus_mcp.elicitation import ElicitationGuard
 from nexus_mcp.icons import SERVER_ICONS, TOOL_CONFIG_ICONS, TOOL_EXEC_ICONS
 from nexus_mcp.middleware import (
     ErrorNormalizationMiddleware,
@@ -94,7 +95,9 @@ def _inject_cli_enum() -> None:
     cli_names: list[Any] = list(RunnerFactory.list_clis())
 
     # 1. Patch prompt() cli parameter annotation
-    prompt.__annotations__["cli"] = Annotated[str, Field(json_schema_extra={"enum": cli_names})]
+    prompt.__annotations__["cli"] = Annotated[
+        str | None, Field(default=None, json_schema_extra={"enum": cli_names})
+    ]
 
     # 2. Patch AgentTask.cli field schema
     original_extra = AgentTask.model_config.get("json_schema_extra")
@@ -237,8 +240,10 @@ def _assign_labels(tasks: list[AgentTask]) -> list[AgentTask]:
 
 
 async def batch_prompt(
+    *,
     tasks: list[AgentTask],
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+    elicit: bool | None = None,
     ctx: Context | None = None,
 ) -> MultiPromptResponse:
     """Send multiple prompts to CLI runners in parallel (primary tool).
@@ -266,6 +271,21 @@ async def batch_prompt(
     # (Redis-backed Docket) cannot access the foreground session's MemoryStore.
     prefs = await _get_session_preferences(ctx)
     tasks = [_apply_preferences(t, prefs) for t in tasks]
+
+    resolved_elicit = (
+        elicit if elicit is not None else (prefs.elicit if prefs.elicit is not None else True)
+    )
+    guard = (
+        ElicitationGuard(ctx, installed_clis=list(RunnerFactory.list_clis()), prefs=prefs)
+        if ctx
+        else None
+    )
+    if guard:
+        tasks = await guard.check_batch(tasks, elicit=resolved_elicit)
+    else:
+        for t in tasks:
+            if t.cli is None:
+                raise ToolError("cli is required on all tasks when no context available")
 
     labelled = _assign_labels(tasks)
     semaphore = asyncio.Semaphore(max_concurrency)
@@ -306,7 +326,8 @@ async def batch_prompt(
 
 
 async def prompt(
-    cli: str,
+    *,
+    cli: str | None = None,
     prompt: str,
     context: dict[str, Any] | None = None,
     execution_mode: ExecutionMode | None = None,
@@ -316,6 +337,7 @@ async def prompt(
     timeout: int | None = None,
     retry_base_delay: float | None = None,
     retry_max_delay: float | None = None,
+    elicit: bool | None = None,
     ctx: Context | None = None,
 ) -> str:
     """Send a prompt to a CLI runner as a background task.
@@ -355,6 +377,29 @@ async def prompt(
         retry_max_delay if retry_max_delay is not None else prefs.retry_max_delay
     )
 
+    resolved_elicit = (
+        elicit if elicit is not None else (prefs.elicit if prefs.elicit is not None else True)
+    )
+    guard = (
+        ElicitationGuard(ctx, installed_clis=list(RunnerFactory.list_clis()), prefs=prefs)
+        if ctx
+        else None
+    )
+    if guard:
+        resolved = await guard.check_prompt(
+            cli=cli,
+            model=resolved_model,
+            execution_mode=resolved_mode,
+            prompt_text=prompt,
+            elicit=resolved_elicit,
+        )
+        cli = resolved.cli
+        resolved_model = resolved.model
+        resolved_mode = resolved.execution_mode
+        prompt = resolved.prompt_text
+    elif cli is None:
+        raise ToolError("cli is required")
+
     task = AgentTask(
         cli=cli,
         prompt=prompt,
@@ -367,7 +412,7 @@ async def prompt(
         retry_base_delay=resolved_retry_base_delay,
         retry_max_delay=resolved_retry_max_delay,
     )
-    result = await batch_prompt(tasks=[task], ctx=ctx)
+    result = await batch_prompt(tasks=[task], elicit=False, ctx=ctx)
     task_result = result.results[0]
     if task_result.error:
         raise ToolError(task_result.formatted_error)

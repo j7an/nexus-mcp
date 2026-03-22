@@ -43,7 +43,7 @@ class TestPromptCodexPipeline:
         """Full success path: subprocess returns valid NDJSON → output text returned."""
         mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE)
 
-        result = await prompt("codex", "ping")
+        result = await prompt(cli="codex", prompt="ping")
 
         assert result == "pong"
         assert mock_subprocess.call_count == 1
@@ -55,7 +55,7 @@ class TestPromptCodexPipeline:
         """model parameter is forwarded as --model flag in the subprocess command."""
         mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE)
 
-        await prompt("codex", "test", model="o3")
+        await prompt(cli="codex", prompt="test", model="o3")
 
         args = list(mock_subprocess.call_args.args)
         assert "--model" in args
@@ -65,7 +65,7 @@ class TestPromptCodexPipeline:
         """execution_mode='yolo' adds --dangerously-bypass-approvals-and-sandbox."""
         mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE)
 
-        await prompt("codex", "test", execution_mode="yolo")
+        await prompt(cli="codex", prompt="test", execution_mode="yolo")
 
         args = list(mock_subprocess.call_args.args)
         assert "--dangerously-bypass-approvals-and-sandbox" in args
@@ -75,7 +75,7 @@ class TestPromptCodexPipeline:
         mock_subprocess.return_value = create_mock_process(stdout="", returncode=0)
 
         with pytest.raises(ToolError, match=r"\[ParseError\]"):
-            await prompt("codex", "test")
+            await prompt(cli="codex", prompt="test")
 
     async def test_recovery_from_nonzero_exit_with_valid_ndjson(self, mock_subprocess):
         """Non-zero exit with valid NDJSON → recovery path → output returned."""
@@ -83,7 +83,7 @@ class TestPromptCodexPipeline:
             stdout=CODEX_NDJSON_RESPONSE, returncode=1
         )
 
-        result = await prompt("codex", "test")
+        result = await prompt(cli="codex", prompt="test")
 
         assert result == "pong"
 
@@ -95,7 +95,7 @@ class TestPromptCodexPipeline:
             create_mock_process(stdout=CODEX_NDJSON_RESPONSE),
         ]
 
-        result = await prompt("codex", "test", max_retries=2)
+        result = await prompt(cli="codex", prompt="test", max_retries=2)
 
         assert result == "pong"
         assert mock_subprocess.call_count == 2
@@ -110,6 +110,6 @@ class TestPromptCodexPipeline:
         )
         mock_subprocess.return_value = create_mock_process(stdout=ndjson)
 
-        result = await prompt("codex", "test")
+        result = await prompt(cli="codex", prompt="test")
 
         assert result == "part1\n\npart2"
