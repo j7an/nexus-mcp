@@ -68,12 +68,18 @@ class CLIRunner(Protocol):
     and returns an AgentResponse.
     """
 
-    async def run(self, request: PromptRequest, emitter: LogEmitter | None = None) -> AgentResponse:
+    async def run(
+        self,
+        request: PromptRequest,
+        emitter: LogEmitter | None = None,
+        progress: ProgressEmitter | None = None,
+    ) -> AgentResponse:
         """Execute CLI agent with given request.
 
         Args:
             request: Prompt request containing agent, prompt, and execution settings.
             emitter: Optional log emitter for client-visible logging.
+            progress: Optional progress emitter for structured progress reporting.
 
         Returns:
             AgentResponse containing agent output and metadata.
@@ -127,7 +133,12 @@ class AbstractRunner(ABC):
         self.default_model: str | None = defaults.model
         self.cli_path: str = self.AGENT_NAME
 
-    async def run(self, request: PromptRequest, emitter: LogEmitter | None = None) -> AgentResponse:
+    async def run(
+        self,
+        request: PromptRequest,
+        emitter: LogEmitter | None = None,
+        progress: ProgressEmitter | None = None,
+    ) -> AgentResponse:
         """Execute CLI agent with retry on transient errors.
 
         Wraps _execute() in a retry loop. RetryableError triggers exponential
@@ -137,6 +148,8 @@ class AbstractRunner(ABC):
             request: Prompt request with agent, prompt, execution mode, etc.
                      request.max_retries overrides the env-var default when set.
             emitter: Optional log emitter. When None, uses _default_log_emitter.
+            progress: Optional progress emitter for structured progress reporting.
+                      When None, uses _noop_progress.
 
         Returns:
             AgentResponse with parsed output and metadata.
@@ -147,6 +160,7 @@ class AbstractRunner(ABC):
             ParseError: If output parsing fails.
         """
         emit = emitter or _default_log_emitter
+        report = progress or _noop_progress
         max_attempts = (
             request.max_retries if request.max_retries is not None else self.default_max_attempts
         )
@@ -160,8 +174,9 @@ class AbstractRunner(ABC):
             request.retry_max_delay if request.retry_max_delay is not None else self.max_delay
         )
         for attempt in range(max_attempts):
+            await report(attempt + 1, max_attempts, f"Attempt {attempt + 1}/{max_attempts}")
             try:
-                return await self._execute(request, emit, _noop_progress)
+                return await self._execute(request, emit, report)
             except RetryableError as e:
                 if attempt == max_attempts - 1:
                     raise
@@ -172,6 +187,11 @@ class AbstractRunner(ABC):
                     "warning",
                     f"Retryable error (attempt {attempt + 1}/{max_attempts}),"
                     f" retrying in {delay:.1f}s: {e}",
+                )
+                await report(
+                    attempt + 1,
+                    max_attempts,
+                    f"Waiting {delay:.1f}s before retry {attempt + 2}/{max_attempts}",
                 )
                 await asyncio.sleep(delay)
         # Unreachable: loop always returns or raises — satisfies type checker
