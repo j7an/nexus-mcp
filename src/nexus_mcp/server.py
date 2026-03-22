@@ -266,13 +266,17 @@ async def batch_prompt(
     async def _run_single(task: AgentTask) -> AgentTaskResult:
         nonlocal completed
         async with semaphore:
+            emitter = _make_mcp_emitter(ctx) if ctx else None
             try:
                 request = task.to_request()
                 runner = RunnerFactory.create(task.cli)
-                response = await runner.run(request)
+                response = await runner.run(request, emitter=emitter)
                 return AgentTaskResult(label=task.label, output=response.output)  # type: ignore[arg-type]
             except Exception as e:
-                logger.exception("Task %r failed: %s", task.label, e)
+                if emitter:
+                    await emitter("error", f"Task '{task.label}' failed: {e}")
+                else:
+                    logger.exception("Task %r failed: %s", task.label, e)
                 return AgentTaskResult(label=task.label, error=str(e), error_type=type(e).__name__)  # type: ignore[arg-type]
             finally:
                 completed += 1
