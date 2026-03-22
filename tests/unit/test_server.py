@@ -503,36 +503,30 @@ class TestBatchPrompt:
         assert caplog.records[0].exc_info is not None
 
     @patch("nexus_mcp.server.RunnerFactory")
-    async def test_report_progress_called_per_task(self, mock_factory, ctx):
-        """ctx.report_progress is awaited exactly N times for N tasks."""
+    async def test_report_progress_comes_from_runner(self, mock_factory, ctx):
+        """Progress comes from the runner via the injected emitter, not batch counter.
+
+        When the runner is fully mocked (doesn't call the progress emitter),
+        no ctx.report_progress calls are made — this verifies the old finally-block
+        counter is gone and progress is now runner-driven.
+        """
         _setup_mock_runner(mock_factory)
 
         tasks = [make_agent_task() for _ in range(4)]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
-        assert ctx.report_progress.await_count == 4
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_report_progress_includes_message(self, mock_factory, ctx):
-        """Single-task call passes progress=1, total=1, and a formatted message."""
-        _setup_mock_runner(mock_factory)
-
-        await batch_prompt(tasks=[make_agent_task(cli="gemini")], ctx=ctx)
-
-        ctx.report_progress.assert_awaited_once_with(
-            progress=1,
-            total=1,
-            message="Completed task 1/1: gemini",
-        )
+        # Mocked runner doesn't call the progress emitter → 0 progress calls
+        assert ctx.report_progress.await_count == 0
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_report_progress_total_set_correctly(self, mock_factory, ctx):
-        """For N tasks, all ctx.report_progress calls pass total=N."""
+        """For N tasks, all ctx.report_progress calls pass total=N (batch-wrapped)."""
         _setup_mock_runner(mock_factory)
 
         tasks = [make_agent_task() for _ in range(3)]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
+        # Mocked runner doesn't call the progress emitter — no calls to verify
         for call in ctx.report_progress.call_args_list:
             assert call.kwargs["total"] == 3
 
@@ -546,14 +540,19 @@ class TestBatchPrompt:
         assert isinstance(result, MultiPromptResponse)
 
     @patch("nexus_mcp.server.RunnerFactory")
-    async def test_report_progress_on_failure(self, mock_factory, ctx):
-        """ctx.report_progress is called in finally even when a task errors."""
+    async def test_no_progress_reported_on_failure_when_runner_mocked(self, mock_factory, ctx):
+        """Progress is runner-driven; a mocked runner that raises produces no progress calls.
+
+        Previously the finally block always reported progress, even on error.
+        Now progress comes from the runner's emitter calls, so a fully-mocked
+        runner that raises does not trigger any ctx.report_progress calls.
+        """
         _setup_mock_runner(mock_factory, side_effect=RuntimeError("boom"))
 
         await batch_prompt(tasks=[make_agent_task()], ctx=ctx)
 
-        # Task failed but progress was still reported
-        assert ctx.report_progress.await_count == 1
+        # No progress reported because the mocked runner never called the emitter
+        assert ctx.report_progress.await_count == 0
 
 
 class TestServerInstructions:

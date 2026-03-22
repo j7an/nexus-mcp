@@ -58,14 +58,22 @@ class TestServerPromptPipeline:
 
     @pytest.mark.slow
     async def test_prompt_reports_progress(self, gemini_cli_available: str, ctx: AsyncMock) -> None:  # noqa: ARG002
-        """prompt() should call ctx.report_progress once with progress=1, total=1."""
+        """prompt() reports runner-level progress (attempt + step-level calls).
+
+        Single-task prompt uses unwrapped emitter: runner's progress/total pass
+        through directly. Expect 5 calls: 1 attempt + 4 steps (happy path skips
+        error-check step 3).
+        """
         await prompt(
             cli="gemini",
             prompt=PING_PROMPT,
             ctx=ctx,
         )
 
-        assert ctx.report_progress.await_count == 1
-        call_kwargs = ctx.report_progress.call_args.kwargs
-        assert call_kwargs["progress"] == 1
-        assert call_kwargs["total"] == 1
+        assert ctx.report_progress.await_count == 5
+        # First call is attempt-level
+        first_msg = ctx.report_progress.call_args_list[0].kwargs["message"]
+        assert first_msg.startswith("Attempt ")
+        # No task wrapper prefix (unwrapped emitter for single-task)
+        messages = [c.kwargs["message"] for c in ctx.report_progress.call_args_list]
+        assert all("Task '" not in m for m in messages)

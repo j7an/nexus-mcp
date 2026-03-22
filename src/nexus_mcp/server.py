@@ -45,6 +45,7 @@ from nexus_mcp.types import (
     LogEmitter,
     LogLevel,
     MultiPromptResponse,
+    ProgressEmitter,
     SessionPreferences,
 )
 
@@ -149,6 +150,39 @@ def _make_mcp_emitter(ctx: Context) -> LogEmitter:
             getattr(logger, level)(message)
 
     return _emit
+
+
+def _make_progress_emitter(ctx: Context) -> ProgressEmitter:
+    """Create a ProgressEmitter that bridges to ctx.report_progress.
+
+    Used for single-task prompt() calls — runner's progress/total pass through directly.
+    """
+
+    async def _report(progress: float, total: float, message: str) -> None:
+        await ctx.report_progress(progress=progress, total=total, message=message)
+
+    return _report
+
+
+def _make_batch_progress_emitter(
+    ctx: Context, *, task_idx: int, task_count: int, label: str
+) -> ProgressEmitter:
+    """Create a ProgressEmitter that wraps runner progress with task-level counters.
+
+    The runner's progress/total are replaced with task_idx/task_count.
+    The runner's message is preserved with a task label prefix.
+
+    Used for multi-task batch_prompt() calls — hierarchical composition.
+    """
+
+    async def _report(progress: float, total: float, message: str) -> None:
+        await ctx.report_progress(
+            progress=task_idx,
+            total=task_count,
+            message=f"Task '{label}' ({task_idx}/{task_count}): {message}",
+        )
+
+    return _report
 
 
 async def _get_session_preferences(ctx: Context | None) -> SessionPreferences:
@@ -289,19 +323,29 @@ async def batch_prompt(
 
     labelled = _assign_labels(tasks)
     semaphore = asyncio.Semaphore(max_concurrency)
-    completed = 0
+    is_single_task = len(labelled) == 1
 
     if ctx:
         await ctx.info(f"Starting batch of {len(labelled)} tasks (concurrency={max_concurrency})")
 
-    async def _run_single(task: AgentTask) -> AgentTaskResult:
-        nonlocal completed
+    async def _run_single(idx: int, task: AgentTask) -> AgentTaskResult:
         async with semaphore:
             emitter = _make_mcp_emitter(ctx) if ctx else None
+            progress = None
+            if ctx:
+                if is_single_task:
+                    progress = _make_progress_emitter(ctx)
+                else:
+                    progress = _make_batch_progress_emitter(
+                        ctx,
+                        task_idx=idx + 1,
+                        task_count=len(labelled),
+                        label=task.label,  # type: ignore[arg-type]
+                    )
             try:
                 request = task.to_request()
                 runner = RunnerFactory.create(request.cli)
-                response = await runner.run(request, emitter=emitter)
+                response = await runner.run(request, emitter=emitter, progress=progress)
                 return AgentTaskResult(label=task.label, output=response.output)  # type: ignore[arg-type]
             except Exception as e:
                 if emitter:
@@ -309,16 +353,8 @@ async def batch_prompt(
                 else:
                     logger.exception("Task %r failed: %s", task.label, e)
                 return AgentTaskResult(label=task.label, error=str(e), error_type=type(e).__name__)  # type: ignore[arg-type]
-            finally:
-                completed += 1
-                if ctx:
-                    await ctx.report_progress(
-                        progress=completed,
-                        total=len(labelled),
-                        message=f"Completed task {completed}/{len(labelled)}: {task.label}",
-                    )
 
-    results = await asyncio.gather(*[_run_single(t) for t in labelled])
+    results = await asyncio.gather(*[_run_single(i, t) for i, t in enumerate(labelled)])
     response = MultiPromptResponse(results=list(results))
     if ctx:
         await ctx.info(f"Batch complete: {response.succeeded}/{response.total} succeeded")

@@ -18,6 +18,17 @@ class LogEmitter(Protocol):
     async def __call__(self, level: LogLevel, message: str) -> None: ...
 
 
+class ProgressEmitter(Protocol):
+    """Callback protocol for emitting structured progress from runners.
+
+    Any async callable matching (progress: float, total: float, message: str) -> None
+    satisfies this protocol. Runners accept an optional ProgressEmitter; server.py
+    provides one that bridges to FastMCP's ctx.report_progress().
+    """
+
+    async def __call__(self, progress: float, total: float, message: str) -> None: ...
+
+
 # Shared Annotated type aliases — single source of truth for field constraints.
 # Used across OperationalDefaults, SessionPreferences, PromptRequest, AgentTask.
 Timeout = Annotated[int | None, Field(ge=1)]

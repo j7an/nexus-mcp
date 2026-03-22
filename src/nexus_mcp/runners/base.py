@@ -34,7 +34,14 @@ from nexus_mcp.cli_detector import (
 from nexus_mcp.config import get_runner_defaults
 from nexus_mcp.exceptions import CLINotFoundError, ParseError, RetryableError, SubprocessError
 from nexus_mcp.process import run_subprocess
-from nexus_mcp.types import AgentResponse, ExecutionMode, LogEmitter, LogLevel, PromptRequest
+from nexus_mcp.types import (
+    AgentResponse,
+    ExecutionMode,
+    LogEmitter,
+    LogLevel,
+    ProgressEmitter,
+    PromptRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +54,13 @@ async def _default_log_emitter(level: LogLevel, message: str) -> None:
     getattr(logger, level)(message)
 
 
+async def _noop_progress(progress: float, total: float, message: str) -> None:
+    """No-op progress emitter for direct runner usage and tests.
+
+    Used when no MCP-aware progress emitter is provided.
+    """
+
+
 class CLIRunner(Protocol):
     """Protocol defining the interface for CLI agent runners.
 
@@ -54,12 +68,18 @@ class CLIRunner(Protocol):
     and returns an AgentResponse.
     """
 
-    async def run(self, request: PromptRequest, emitter: LogEmitter | None = None) -> AgentResponse:
+    async def run(
+        self,
+        request: PromptRequest,
+        emitter: LogEmitter | None = None,
+        progress: ProgressEmitter | None = None,
+    ) -> AgentResponse:
         """Execute CLI agent with given request.
 
         Args:
             request: Prompt request containing agent, prompt, and execution settings.
             emitter: Optional log emitter for client-visible logging.
+            progress: Optional progress emitter for structured progress reporting.
 
         Returns:
             AgentResponse containing agent output and metadata.
@@ -113,7 +133,12 @@ class AbstractRunner(ABC):
         self.default_model: str | None = defaults.model
         self.cli_path: str = self.AGENT_NAME
 
-    async def run(self, request: PromptRequest, emitter: LogEmitter | None = None) -> AgentResponse:
+    async def run(
+        self,
+        request: PromptRequest,
+        emitter: LogEmitter | None = None,
+        progress: ProgressEmitter | None = None,
+    ) -> AgentResponse:
         """Execute CLI agent with retry on transient errors.
 
         Wraps _execute() in a retry loop. RetryableError triggers exponential
@@ -123,6 +148,8 @@ class AbstractRunner(ABC):
             request: Prompt request with agent, prompt, execution mode, etc.
                      request.max_retries overrides the env-var default when set.
             emitter: Optional log emitter. When None, uses _default_log_emitter.
+            progress: Optional progress emitter for structured progress reporting.
+                      When None, uses _noop_progress.
 
         Returns:
             AgentResponse with parsed output and metadata.
@@ -133,6 +160,7 @@ class AbstractRunner(ABC):
             ParseError: If output parsing fails.
         """
         emit = emitter or _default_log_emitter
+        report = progress or _noop_progress
         max_attempts = (
             request.max_retries if request.max_retries is not None else self.default_max_attempts
         )
@@ -146,8 +174,9 @@ class AbstractRunner(ABC):
             request.retry_max_delay if request.retry_max_delay is not None else self.max_delay
         )
         for attempt in range(max_attempts):
+            await report(attempt + 1, max_attempts, f"Attempt {attempt + 1}/{max_attempts}")
             try:
-                return await self._execute(request, emit)
+                return await self._execute(request, emit, report)
             except RetryableError as e:
                 if attempt == max_attempts - 1:
                     raise
@@ -159,11 +188,18 @@ class AbstractRunner(ABC):
                     f"Retryable error (attempt {attempt + 1}/{max_attempts}),"
                     f" retrying in {delay:.1f}s: {e}",
                 )
+                await report(
+                    attempt + 1,
+                    max_attempts,
+                    f"Waiting {delay:.1f}s before retry {attempt + 2}/{max_attempts}",
+                )
                 await asyncio.sleep(delay)
         # Unreachable: loop always returns or raises — satisfies type checker
         raise AssertionError("unreachable: retry loop exited without result or exception")
 
-    async def _execute(self, request: PromptRequest, emit: LogEmitter) -> AgentResponse:
+    async def _execute(
+        self, request: PromptRequest, emit: LogEmitter, progress: ProgressEmitter
+    ) -> AgentResponse:
         """Execute CLI agent once using Template Method pattern.
 
         Template steps:
@@ -176,6 +212,7 @@ class AbstractRunner(ABC):
         Args:
             request: Prompt request with agent, prompt, execution mode, etc.
             emit: Log emitter for client-visible logging.
+            progress: Progress emitter for structured step-level reporting.
 
         Returns:
             AgentResponse with parsed output and metadata.
@@ -186,15 +223,18 @@ class AbstractRunner(ABC):
             ParseError: If output parsing fails (from parse_output()).
         """
         # Step 1: Build command
+        await progress(1, 5, "Building command")
         command = self.build_command(request)
 
         # Step 2: Execute subprocess
+        await progress(2, 5, "Executing subprocess")
         effective_timeout = request.timeout if request.timeout is not None else self.timeout
         await emit("info", f"Running {self.AGENT_NAME} with timeout={effective_timeout}s")
         result = await run_subprocess(command, timeout=effective_timeout)
 
         # Step 3: Error check with recovery attempt
         if result.returncode != 0:
+            await progress(3, 5, "Checking errors")
             recovered = self._recover_from_error(
                 result.stdout, result.stderr, result.returncode, command
             )
@@ -203,6 +243,7 @@ class AbstractRunner(ABC):
                     "warning",
                     f"Recovered response from non-zero exit code {result.returncode}",
                 )
+                await progress(5, 5, "Applying output limits")
                 limited = self._apply_output_limit(recovered, request)
                 if limited.metadata.get("truncated"):
                     await emit(
@@ -220,9 +261,11 @@ class AbstractRunner(ABC):
             )
 
         # Step 4: Parse output
+        await progress(4, 5, "Parsing output")
         response = self.parse_output(result.stdout, result.stderr)
 
         # Step 5: Apply output limiting (stays sync — no signature change)
+        await progress(5, 5, "Applying output limits")
         limited = self._apply_output_limit(response, request)
         if limited.metadata.get("truncated"):
             await emit(
