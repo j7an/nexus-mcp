@@ -156,35 +156,31 @@ def _make_mcp_emitter(ctx: Context) -> LogEmitter:
     return _emit
 
 
-def _make_progress_emitter(ctx: Context) -> ProgressEmitter:
+def _make_progress_emitter(
+    ctx: Context,
+    *,
+    task_idx: int | None = None,
+    task_count: int | None = None,
+    label: str | None = None,
+) -> ProgressEmitter:
     """Create a ProgressEmitter that bridges to ctx.report_progress.
 
-    Used for single-task prompt() calls — runner's progress/total pass through directly.
+    Single-task mode (default): runner's progress/total pass through directly.
+    Batch mode (task_idx + task_count set): wraps with task-level counters.
     """
+    if task_idx is not None and task_count is not None:
+        _idx, _count, _label = task_idx, task_count, label
 
-    async def _report(progress: float, total: float, message: str) -> None:
-        await ctx.report_progress(progress=progress, total=total, message=message)
+        async def _report(progress: float, total: float, message: str) -> None:
+            await ctx.report_progress(
+                progress=_idx,
+                total=_count,
+                message=f"Task '{_label}' ({_idx}/{_count}): {message}",
+            )
+    else:
 
-    return _report
-
-
-def _make_batch_progress_emitter(
-    ctx: Context, *, task_idx: int, task_count: int, label: str
-) -> ProgressEmitter:
-    """Create a ProgressEmitter that wraps runner progress with task-level counters.
-
-    The runner's progress/total are replaced with task_idx/task_count.
-    The runner's message is preserved with a task label prefix.
-
-    Used for multi-task batch_prompt() calls — hierarchical composition.
-    """
-
-    async def _report(progress: float, total: float, message: str) -> None:
-        await ctx.report_progress(
-            progress=task_idx,
-            total=task_count,
-            message=f"Task '{label}' ({task_idx}/{task_count}): {message}",
-        )
+        async def _report(progress: float, total: float, message: str) -> None:
+            await ctx.report_progress(progress=progress, total=total, message=message)
 
     return _report
 
@@ -301,11 +297,11 @@ async def batch_prompt(
                 if is_single_task:
                     progress = _make_progress_emitter(ctx)
                 else:
-                    progress = _make_batch_progress_emitter(
+                    progress = _make_progress_emitter(
                         ctx,
                         task_idx=idx + 1,
                         task_count=len(labelled),
-                        label=task.label,  # type: ignore[arg-type]
+                        label=task.label,
                     )
             try:
                 request = task.to_request()
