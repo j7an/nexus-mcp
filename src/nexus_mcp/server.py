@@ -18,13 +18,12 @@ going through the FunctionTool wrapper.
 """
 
 import asyncio
-import json
 import logging
 from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
-from pydantic import Field, ValidationError
+from pydantic import Field
 
 from nexus_mcp.cli_detector import detect_cli
 from nexus_mcp.config import get_runner_defaults, get_runner_models, get_tool_timeout
@@ -35,10 +34,16 @@ from nexus_mcp.middleware import (
     RequestLoggingMiddleware,
     TimingMiddleware,
 )
+from nexus_mcp.preferences import (
+    _apply_preferences,
+    _get_session_preferences,
+    clear_preferences,
+    get_preferences,
+    set_preferences,
+)
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import (
     DEFAULT_MAX_CONCURRENCY,
-    PREFERENCES_KEY,
     AgentTask,
     AgentTaskResult,
     ExecutionMode,
@@ -46,7 +51,6 @@ from nexus_mcp.types import (
     LogLevel,
     MultiPromptResponse,
     ProgressEmitter,
-    SessionPreferences,
 )
 
 
@@ -152,76 +156,33 @@ def _make_mcp_emitter(ctx: Context) -> LogEmitter:
     return _emit
 
 
-def _make_progress_emitter(ctx: Context) -> ProgressEmitter:
+def _make_progress_emitter(
+    ctx: Context,
+    *,
+    task_idx: int | None = None,
+    task_count: int | None = None,
+    label: str | None = None,
+) -> ProgressEmitter:
     """Create a ProgressEmitter that bridges to ctx.report_progress.
 
-    Used for single-task prompt() calls — runner's progress/total pass through directly.
+    Single-task mode (default): runner's progress/total pass through directly.
+    Batch mode (task_idx + task_count set): wraps with task-level counters.
     """
+    if task_idx is not None and task_count is not None:
+        _idx, _count, _label = task_idx, task_count, label
 
-    async def _report(progress: float, total: float, message: str) -> None:
-        await ctx.report_progress(progress=progress, total=total, message=message)
+        async def _report(progress: float, total: float, message: str) -> None:
+            await ctx.report_progress(
+                progress=_idx,
+                total=_count,
+                message=f"Task '{_label}' ({_idx}/{_count}): {message}",
+            )
+    else:
+
+        async def _report(progress: float, total: float, message: str) -> None:
+            await ctx.report_progress(progress=progress, total=total, message=message)
 
     return _report
-
-
-def _make_batch_progress_emitter(
-    ctx: Context, *, task_idx: int, task_count: int, label: str
-) -> ProgressEmitter:
-    """Create a ProgressEmitter that wraps runner progress with task-level counters.
-
-    The runner's progress/total are replaced with task_idx/task_count.
-    The runner's message is preserved with a task label prefix.
-
-    Used for multi-task batch_prompt() calls — hierarchical composition.
-    """
-
-    async def _report(progress: float, total: float, message: str) -> None:
-        await ctx.report_progress(
-            progress=task_idx,
-            total=task_count,
-            message=f"Task '{label}' ({task_idx}/{task_count}): {message}",
-        )
-
-    return _report
-
-
-async def _get_session_preferences(ctx: Context | None) -> SessionPreferences:
-    """Read session preferences from ctx state, returning defaults when unset or ctx is None."""
-    if ctx is None:
-        return SessionPreferences()
-    raw = await ctx.get_state(PREFERENCES_KEY)
-    if raw is None:
-        return SessionPreferences()
-    try:
-        return SessionPreferences(**raw)  # reconstruct from dict after JSON round-trip
-    except (ValidationError, TypeError) as e:
-        raise ToolError(f"Session preferences are corrupted and cannot be loaded: {e}") from e
-
-
-def _apply_preferences(task: AgentTask, prefs: SessionPreferences) -> AgentTask:
-    """Fill in None fields on a task from session preferences.
-
-    Returns the same task object if no updates are needed, otherwise a model_copy.
-    Primary resolution happens in prompt(); this is the safety net for batch_prompt tasks.
-    """
-    updates: dict[str, Any] = {}
-    if task.execution_mode is None:
-        updates["execution_mode"] = prefs.execution_mode or "default"
-    if task.model is None and prefs.model is not None:
-        updates["model"] = prefs.model
-    if task.max_retries is None and prefs.max_retries is not None:
-        updates["max_retries"] = prefs.max_retries
-    if task.output_limit is None and prefs.output_limit is not None:
-        updates["output_limit"] = prefs.output_limit
-    if task.timeout is None and prefs.timeout is not None:
-        updates["timeout"] = prefs.timeout
-    if task.retry_base_delay is None and prefs.retry_base_delay is not None:
-        updates["retry_base_delay"] = prefs.retry_base_delay
-    if task.retry_max_delay is None and prefs.retry_max_delay is not None:
-        updates["retry_max_delay"] = prefs.retry_max_delay
-    if updates:
-        return task.model_copy(update=updates)
-    return task
 
 
 def _next_available_label(base: str, reserved: set[str]) -> str:
@@ -336,11 +297,11 @@ async def batch_prompt(
                 if is_single_task:
                     progress = _make_progress_emitter(ctx)
                 else:
-                    progress = _make_batch_progress_emitter(
+                    progress = _make_progress_emitter(
                         ctx,
                         task_idx=idx + 1,
                         task_count=len(labelled),
-                        label=task.label,  # type: ignore[arg-type]
+                        label=task.label,
                     )
             try:
                 request = task.to_request()
@@ -454,212 +415,6 @@ async def prompt(
         raise ToolError(task_result.formatted_error)
     assert task_result.output is not None  # guaranteed: error is None, so output was set
     return task_result.output
-
-
-async def set_preferences(
-    execution_mode: ExecutionMode | None = None,
-    model: str | None = None,
-    max_retries: int | None = None,
-    output_limit: int | None = None,
-    timeout: int | None = None,
-    retry_base_delay: float | None = None,
-    retry_max_delay: float | None = None,
-    elicit: bool | None = None,
-    confirm_yolo: bool | None = None,
-    confirm_vague_prompt: bool | None = None,
-    confirm_high_retries: bool | None = None,
-    confirm_large_batch: bool | None = None,
-    clear_execution_mode: bool = False,
-    clear_model: bool = False,
-    clear_max_retries: bool = False,
-    clear_output_limit: bool = False,
-    clear_timeout: bool = False,
-    clear_retry_base_delay: bool = False,
-    clear_retry_max_delay: bool = False,
-    clear_elicit: bool = False,
-    clear_confirm_yolo: bool = False,
-    clear_confirm_vague_prompt: bool = False,
-    clear_confirm_high_retries: bool = False,
-    clear_confirm_large_batch: bool = False,
-    ctx: Context | None = None,
-) -> str:
-    """Set session-scoped preferences that apply to subsequent prompt/batch_prompt calls.
-
-    Preferences persist for the duration of the MCP session. Call again to update,
-    or use clear_preferences to reset all fields at once.
-
-    To clear a single field while keeping others, pass the corresponding clear_* flag:
-        set_preferences(clear_model=True)  # clears model, keeps execution_mode
-
-    Args:
-        execution_mode: Default execution mode for this session ('default' or 'yolo').
-            None retains the current session value (use clear_execution_mode=True to reset).
-        model: Default model name for this session (e.g. 'gemini-2.5-flash').
-            None retains the current session value (use clear_model=True to reset).
-        max_retries: Default max retry attempts for transient errors.
-            None retains the current session value (use clear_max_retries=True to reset).
-        output_limit: Default max output bytes per response.
-            None retains the current session value (use clear_output_limit=True to reset).
-        timeout: Default subprocess timeout in seconds.
-            None retains the current session value (use clear_timeout=True to reset).
-        retry_base_delay: Default base delay seconds for exponential backoff.
-            None retains the current session value (use clear_retry_base_delay=True to reset).
-        retry_max_delay: Default max delay cap seconds for exponential backoff.
-            None retains the current session value (use clear_retry_max_delay=True to reset).
-        clear_execution_mode: If True, resets execution_mode to None regardless of the
-            execution_mode argument.
-        clear_model: If True, resets model to None regardless of the model argument.
-        clear_max_retries: If True, resets max_retries to None regardless of the argument.
-        clear_output_limit: If True, resets output_limit to None regardless of the argument.
-        clear_timeout: If True, resets timeout to None regardless of the argument.
-        clear_retry_base_delay: If True, resets retry_base_delay to None.
-        clear_retry_max_delay: If True, resets retry_max_delay to None.
-        ctx: MCP context (auto-injected by FastMCP).
-
-    Returns:
-        Confirmation string with the active preferences as JSON.
-    """
-    if ctx is None:
-        raise ToolError("set_preferences requires an active session context")
-    existing = await _get_session_preferences(ctx)
-
-    new_execution_mode: ExecutionMode | None
-    if clear_execution_mode:
-        new_execution_mode = None
-    elif execution_mode is not None:
-        new_execution_mode = execution_mode
-    else:
-        new_execution_mode = existing.execution_mode
-
-    new_model: str | None
-    if clear_model:
-        new_model = None
-    elif model is not None:
-        new_model = model
-    else:
-        new_model = existing.model
-
-    new_max_retries: int | None
-    if clear_max_retries:
-        new_max_retries = None
-    elif max_retries is not None:
-        new_max_retries = max_retries
-    else:
-        new_max_retries = existing.max_retries
-
-    new_output_limit: int | None
-    if clear_output_limit:
-        new_output_limit = None
-    elif output_limit is not None:
-        new_output_limit = output_limit
-    else:
-        new_output_limit = existing.output_limit
-
-    new_timeout: int | None
-    if clear_timeout:
-        new_timeout = None
-    elif timeout is not None:
-        new_timeout = timeout
-    else:
-        new_timeout = existing.timeout
-
-    new_retry_base_delay: float | None
-    if clear_retry_base_delay:
-        new_retry_base_delay = None
-    elif retry_base_delay is not None:
-        new_retry_base_delay = retry_base_delay
-    else:
-        new_retry_base_delay = existing.retry_base_delay
-
-    new_retry_max_delay: float | None
-    if clear_retry_max_delay:
-        new_retry_max_delay = None
-    elif retry_max_delay is not None:
-        new_retry_max_delay = retry_max_delay
-    else:
-        new_retry_max_delay = existing.retry_max_delay
-
-    new_elicit: bool | None
-    if clear_elicit:
-        new_elicit = None
-    elif elicit is not None:
-        new_elicit = elicit
-    else:
-        new_elicit = existing.elicit
-
-    new_confirm_yolo: bool | None
-    if clear_confirm_yolo:
-        new_confirm_yolo = None
-    elif confirm_yolo is not None:
-        new_confirm_yolo = confirm_yolo
-    else:
-        new_confirm_yolo = existing.confirm_yolo
-
-    new_confirm_vague_prompt: bool | None
-    if clear_confirm_vague_prompt:
-        new_confirm_vague_prompt = None
-    elif confirm_vague_prompt is not None:
-        new_confirm_vague_prompt = confirm_vague_prompt
-    else:
-        new_confirm_vague_prompt = existing.confirm_vague_prompt
-
-    new_confirm_high_retries: bool | None
-    if clear_confirm_high_retries:
-        new_confirm_high_retries = None
-    elif confirm_high_retries is not None:
-        new_confirm_high_retries = confirm_high_retries
-    else:
-        new_confirm_high_retries = existing.confirm_high_retries
-
-    new_confirm_large_batch: bool | None
-    if clear_confirm_large_batch:
-        new_confirm_large_batch = None
-    elif confirm_large_batch is not None:
-        new_confirm_large_batch = confirm_large_batch
-    else:
-        new_confirm_large_batch = existing.confirm_large_batch
-
-    merged = SessionPreferences(
-        execution_mode=new_execution_mode,
-        model=new_model,
-        max_retries=new_max_retries,
-        output_limit=new_output_limit,
-        timeout=new_timeout,
-        retry_base_delay=new_retry_base_delay,
-        retry_max_delay=new_retry_max_delay,
-        elicit=new_elicit,
-        confirm_yolo=new_confirm_yolo,
-        confirm_vague_prompt=new_confirm_vague_prompt,
-        confirm_high_retries=new_confirm_high_retries,
-        confirm_large_batch=new_confirm_large_batch,
-    )
-    await ctx.set_state(PREFERENCES_KEY, merged.model_dump())
-    return f"Preferences set: {json.dumps(merged.model_dump())}"
-
-
-async def get_preferences(ctx: Context | None = None) -> dict[str, Any]:
-    """Return the current session preferences.
-
-    Returns:
-        Dict with 'execution_mode', 'model', 'max_retries', 'output_limit', and 'timeout'
-        keys (None when unset).
-    """
-    if ctx is None:
-        raise ToolError("get_preferences requires an active session context")
-    prefs = await _get_session_preferences(ctx)
-    return prefs.model_dump()
-
-
-async def clear_preferences(ctx: Context | None = None) -> str:
-    """Clear all session preferences, reverting to per-call defaults.
-
-    Returns:
-        Confirmation string.
-    """
-    if ctx is None:
-        raise ToolError("clear_preferences requires an active session context")
-    await ctx.delete_state(PREFERENCES_KEY)
-    return "Preferences cleared"
 
 
 # Inject CLI names as enum into tool schemas before registration freezes them.

@@ -7,7 +7,6 @@ import pytest
 from fastmcp import Context
 
 from nexus_mcp.server import (
-    _make_batch_progress_emitter,
     _make_progress_emitter,
     batch_prompt,
     prompt,
@@ -47,7 +46,7 @@ class TestMakeBatchProgressEmitter:
     async def test_batch_emitter_replaces_progress_total(self):
         """Batch emitter should use task_idx/task_count, not runner's progress/total."""
         ctx = AsyncMock(spec=Context)
-        emitter = _make_batch_progress_emitter(ctx, task_idx=2, task_count=5, label="summarize")
+        emitter = _make_progress_emitter(ctx, task_idx=2, task_count=5, label="summarize")
 
         await emitter(3, 5, "Parsing output")
 
@@ -60,7 +59,7 @@ class TestMakeBatchProgressEmitter:
     async def test_batch_emitter_preserves_runner_message(self):
         """Batch emitter should include runner's original message after prefix."""
         ctx = AsyncMock(spec=Context)
-        emitter = _make_batch_progress_emitter(ctx, task_idx=1, task_count=3, label="analyze")
+        emitter = _make_progress_emitter(ctx, task_idx=1, task_count=3, label="analyze")
 
         await emitter(1, 1, "Attempt 1/1")
 

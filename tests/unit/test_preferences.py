@@ -6,15 +6,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastmcp.exceptions import ToolError
 
-from nexus_mcp.server import (
+from nexus_mcp.preferences import (
     _apply_preferences,
     _get_session_preferences,
-    batch_prompt,
     clear_preferences,
     get_preferences,
-    prompt,
     set_preferences,
 )
+from nexus_mcp.server import batch_prompt, prompt
 from nexus_mcp.types import AgentTask, SessionPreferences
 from tests.fixtures import make_agent_response, make_session_preferences
 
