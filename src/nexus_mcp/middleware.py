@@ -14,8 +14,12 @@ import logging
 from time import perf_counter
 
 import mcp.types as mt
+from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools.tool import ToolResult
+from pydantic import ValidationError
+
+from nexus_mcp.exceptions import CLINotFoundError, UnsupportedAgentError
 
 logger = logging.getLogger(__name__)
 
@@ -101,3 +105,32 @@ class RequestLoggingMiddleware(Middleware):
         except Exception as e:
             logger.info("Tool '%s' failed: %s: %s", tool_name, type(e).__name__, e)
             raise
+
+
+class ErrorNormalizationMiddleware(Middleware):
+    """Centralized exception-to-ToolError mapping.
+
+    Catches exceptions escaping tool functions and converts them to
+    consistent ToolError responses. ToolError itself passes through
+    unchanged. Unknown exceptions are logged with full traceback.
+
+    Registered outermost so it catches errors from all downstream
+    middleware and the tool handler.
+    """
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, ToolResult],
+    ) -> ToolResult:
+        try:
+            return await call_next(context)
+        except ToolError:
+            raise
+        except (CLINotFoundError, UnsupportedAgentError) as e:
+            raise ToolError(str(e)) from e
+        except ValidationError as e:
+            raise ToolError(f"Invalid input: {e}") from e
+        except Exception as e:
+            logger.exception("Unexpected error in tool '%s'", context.message.name)
+            raise ToolError(f"Internal error: {type(e).__name__}: {e}") from e

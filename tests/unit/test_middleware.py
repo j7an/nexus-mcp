@@ -14,6 +14,9 @@ import mcp.types as mt
 import pytest
 from fastmcp.exceptions import ToolError
 from fastmcp.tools.tool import ToolResult
+from pydantic import ValidationError
+
+from nexus_mcp.exceptions import CLINotFoundError, UnsupportedAgentError
 
 
 @dataclass(frozen=True)
@@ -200,3 +203,87 @@ class TestRequestLoggingMiddleware:
         assert "execution_mode" in caplog.text
         assert "yolo" in caplog.text
         assert "gemini-2.5-flash" in caplog.text
+
+
+class TestErrorNormalizationMiddleware:
+    """Tests for ErrorNormalizationMiddleware."""
+
+    async def test_successful_call_passes_through(self):
+        """Successful tool calls are returned unmodified."""
+        from nexus_mcp.middleware import ErrorNormalizationMiddleware
+
+        mw = ErrorNormalizationMiddleware()
+        ctx = _make_context("prompt")
+        expected = _make_tool_result("success")
+        call_next = AsyncMock(return_value=expected)
+
+        result = await mw.on_call_tool(ctx, call_next)
+
+        assert result is expected
+
+    async def test_tool_error_passes_through(self):
+        """ToolError is re-raised unchanged (already normalized)."""
+        from nexus_mcp.middleware import ErrorNormalizationMiddleware
+
+        mw = ErrorNormalizationMiddleware()
+        ctx = _make_context("prompt")
+        call_next = AsyncMock(side_effect=ToolError("already clean"))
+
+        with pytest.raises(ToolError, match="already clean"):
+            await mw.on_call_tool(ctx, call_next)
+
+    async def test_cli_not_found_becomes_tool_error(self):
+        """CLINotFoundError is mapped to ToolError with clean message."""
+        from nexus_mcp.middleware import ErrorNormalizationMiddleware
+
+        mw = ErrorNormalizationMiddleware()
+        ctx = _make_context("prompt")
+        call_next = AsyncMock(side_effect=CLINotFoundError("codex"))
+
+        with pytest.raises(ToolError, match="CLI not found in PATH: codex"):
+            await mw.on_call_tool(ctx, call_next)
+
+    async def test_unsupported_agent_becomes_tool_error(self):
+        """UnsupportedAgentError is mapped to ToolError."""
+        from nexus_mcp.middleware import ErrorNormalizationMiddleware
+
+        mw = ErrorNormalizationMiddleware()
+        ctx = _make_context("prompt")
+        call_next = AsyncMock(side_effect=UnsupportedAgentError("unknown_cli"))
+
+        with pytest.raises(ToolError, match="Unsupported agent: unknown_cli"):
+            await mw.on_call_tool(ctx, call_next)
+
+    async def test_validation_error_becomes_tool_error(self):
+        """Pydantic ValidationError is mapped to ToolError with 'Invalid input' prefix."""
+        from nexus_mcp.middleware import ErrorNormalizationMiddleware
+
+        mw = ErrorNormalizationMiddleware()
+        ctx = _make_context("set_preferences")
+
+        # Trigger a real ValidationError from pydantic
+        try:
+            from nexus_mcp.types import SessionPreferences
+
+            SessionPreferences(max_retries=-1)  # ge=1 constraint
+        except ValidationError as real_ve:
+            call_next = AsyncMock(side_effect=real_ve)
+
+        with pytest.raises(ToolError, match="Invalid input"):
+            await mw.on_call_tool(ctx, call_next)
+
+    async def test_unexpected_exception_becomes_internal_error(self, caplog):
+        """Unknown exceptions become 'Internal error' ToolError and are logged."""
+        from nexus_mcp.middleware import ErrorNormalizationMiddleware
+
+        mw = ErrorNormalizationMiddleware()
+        ctx = _make_context("prompt")
+        call_next = AsyncMock(side_effect=RuntimeError("something broke"))
+
+        with (
+            caplog.at_level(logging.ERROR, logger="nexus_mcp.middleware"),
+            pytest.raises(ToolError, match="Internal error: RuntimeError: something broke"),
+        ):
+            await mw.on_call_tool(ctx, call_next)
+
+        assert "Unexpected error in tool 'prompt'" in caplog.text
