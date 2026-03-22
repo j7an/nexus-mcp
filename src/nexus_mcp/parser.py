@@ -8,6 +8,7 @@ NDJSON event stream format.
 
 import contextlib
 import json
+from collections.abc import Callable
 from typing import Any
 
 
@@ -36,6 +37,33 @@ def _find_balanced_span(
     return None
 
 
+def _extract_last_json(
+    text: str,
+    open_char: str,
+    close_char: str,
+    check: Callable[[Any], Any],
+) -> Any | None:
+    """Find and parse the last JSON value matching check() in text.
+
+    Scans right-to-left through close_char positions using bracket-depth
+    matching. Each candidate is parsed with json.loads and validated by check().
+    Returns the first match, or None if no valid match is found.
+    """
+    if not text:
+        return None
+    search_end = len(text)
+    while True:
+        span = _find_balanced_span(text, open_char, close_char, search_end)
+        if span is None:
+            return None
+        start, last_close = span
+        with contextlib.suppress(json.JSONDecodeError, ValueError, RecursionError):
+            parsed = json.loads(text[start : last_close + 1])
+            if check(parsed):
+                return parsed
+        search_end = last_close
+
+
 def extract_last_json_object(text: str) -> dict[str, Any] | None:
     """Find and parse the last JSON object in a multi-line string.
 
@@ -43,32 +71,13 @@ def extract_last_json_object(text: str) -> dict[str, Any] | None:
     block. Handles CLI patterns of appending a JSON error block at the end of
     stderr that may contain log lines and stack traces.
 
-    Scans rightward-to-left through '}' positions. If the first candidate
-    fails to parse (e.g. '}' appears inside a JSON string value), retries
-    with the next candidate — the same retry strategy used by extract_last_json_array.
-
     Args:
         text: String that may contain JSON, possibly mixed with other content.
 
     Returns:
         Parsed dict if a valid JSON object is found, None otherwise.
     """
-    if not text:
-        return None
-
-    search_end = len(text)
-    while True:
-        span = _find_balanced_span(text, "{", "}", search_end)
-        if span is None:
-            return None
-
-        start, last_close = span
-        with contextlib.suppress(json.JSONDecodeError, ValueError, RecursionError):
-            parsed = json.loads(text[start : last_close + 1])
-            if isinstance(parsed, dict):
-                return parsed
-
-        search_end = last_close
+    return _extract_last_json(text, "{", "}", lambda p: isinstance(p, dict))
 
 
 def parse_ndjson_events(stdout: str) -> str | None:
@@ -140,20 +149,7 @@ def extract_last_json_list(text: str) -> list[Any] | None:
     Returns:
         Parsed list if a non-empty JSON array is found, None otherwise.
     """
-    if not text:
-        return None
-
-    search_end = len(text)
-    while True:
-        span = _find_balanced_span(text, "[", "]", search_end)
-        if span is None:
-            return None
-        start, last_close = span
-        with contextlib.suppress(json.JSONDecodeError, ValueError, RecursionError):
-            parsed = json.loads(text[start : last_close + 1])
-            if isinstance(parsed, list) and parsed:
-                return parsed
-        search_end = last_close
+    return _extract_last_json(text, "[", "]", lambda p: isinstance(p, list) and p)
 
 
 def extract_last_json_array(text: str) -> dict[str, Any] | None:
@@ -170,19 +166,10 @@ def extract_last_json_array(text: str) -> dict[str, Any] | None:
     Returns:
         First element of the parsed array if it's a dict, None otherwise.
     """
-    if not text:
-        return None
-
-    search_end = len(text)
-    while True:
-        span = _find_balanced_span(text, "[", "]", search_end)
-        if span is None:
-            return None
-
-        start, last_close = span
-        with contextlib.suppress(json.JSONDecodeError, ValueError, RecursionError):
-            parsed = json.loads(text[start : last_close + 1])
-            if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
-                return parsed[0]
-
-        search_end = last_close
+    result = _extract_last_json(
+        text,
+        "[",
+        "]",
+        lambda p: isinstance(p, list) and p and isinstance(p[0], dict),
+    )
+    return result[0] if result else None
