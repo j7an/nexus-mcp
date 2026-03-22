@@ -1,6 +1,6 @@
 [project]
 name = "nexus-mcp"
-version = "0.8.1"
+version = "0.8.2"
 description = "Model Context Protocol server for AI CLI agents"
 readme = "README.md"
 authors = [
