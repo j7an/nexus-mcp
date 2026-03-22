@@ -28,6 +28,7 @@ from pydantic import Field, ValidationError
 
 from nexus_mcp.cli_detector import detect_cli
 from nexus_mcp.config import get_runner_defaults, get_runner_models, get_tool_timeout
+from nexus_mcp.icons import SERVER_ICONS, TOOL_CONFIG_ICONS, TOOL_EXEC_ICONS
 from nexus_mcp.middleware import (
     ErrorNormalizationMiddleware,
     RequestLoggingMiddleware,
@@ -112,7 +113,7 @@ def _inject_cli_enum() -> None:
     AgentTask.model_rebuild(force=True)
 
 
-mcp = FastMCP("nexus-mcp", instructions=build_server_instructions())
+mcp = FastMCP("nexus-mcp", instructions=build_server_instructions(), icons=SERVER_ICONS)
 
 # Middleware executes outermost → innermost on request, reverse on response.
 # Order: ErrorNormalization (catch all) → Timing (measure) → RequestLogging (log entry/exit)
@@ -536,8 +537,8 @@ _inject_cli_enum()
 # passes task=True, the call goes through Docket instead (subprocess-level
 # timeout applies). Both prompt and batch_prompt support either path.
 _tool_timeout = get_tool_timeout()
-mcp.tool(task=True, timeout=_tool_timeout)(batch_prompt)
-mcp.tool(task=True, timeout=_tool_timeout)(prompt)
-mcp.tool()(set_preferences)
-mcp.tool()(get_preferences)
-mcp.tool()(clear_preferences)
+mcp.tool(task=True, timeout=_tool_timeout, icons=TOOL_EXEC_ICONS)(batch_prompt)
+mcp.tool(task=True, timeout=_tool_timeout, icons=TOOL_EXEC_ICONS)(prompt)
+mcp.tool(icons=TOOL_CONFIG_ICONS)(set_preferences)
+mcp.tool(icons=TOOL_CONFIG_ICONS)(get_preferences)
+mcp.tool(icons=TOOL_CONFIG_ICONS)(clear_preferences)
