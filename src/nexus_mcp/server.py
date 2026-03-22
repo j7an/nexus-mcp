@@ -198,6 +198,17 @@ async def _get_session_preferences(ctx: Context | None) -> SessionPreferences:
         raise ToolError(f"Session preferences are corrupted and cannot be loaded: {e}") from e
 
 
+_APPLY_FIELDS = (
+    "execution_mode",
+    "model",
+    "max_retries",
+    "output_limit",
+    "timeout",
+    "retry_base_delay",
+    "retry_max_delay",
+)
+
+
 def _apply_preferences(task: AgentTask, prefs: SessionPreferences) -> AgentTask:
     """Fill in None fields on a task from session preferences.
 
@@ -205,23 +216,14 @@ def _apply_preferences(task: AgentTask, prefs: SessionPreferences) -> AgentTask:
     Primary resolution happens in prompt(); this is the safety net for batch_prompt tasks.
     """
     updates: dict[str, Any] = {}
-    if task.execution_mode is None:
-        updates["execution_mode"] = prefs.execution_mode or "default"
-    if task.model is None and prefs.model is not None:
-        updates["model"] = prefs.model
-    if task.max_retries is None and prefs.max_retries is not None:
-        updates["max_retries"] = prefs.max_retries
-    if task.output_limit is None and prefs.output_limit is not None:
-        updates["output_limit"] = prefs.output_limit
-    if task.timeout is None and prefs.timeout is not None:
-        updates["timeout"] = prefs.timeout
-    if task.retry_base_delay is None and prefs.retry_base_delay is not None:
-        updates["retry_base_delay"] = prefs.retry_base_delay
-    if task.retry_max_delay is None and prefs.retry_max_delay is not None:
-        updates["retry_max_delay"] = prefs.retry_max_delay
-    if updates:
-        return task.model_copy(update=updates)
-    return task
+    for field in _APPLY_FIELDS:
+        if getattr(task, field) is None:
+            pref_val = getattr(prefs, field)
+            if field == "execution_mode":
+                updates[field] = pref_val or "default"
+            elif pref_val is not None:
+                updates[field] = pref_val
+    return task.model_copy(update=updates) if updates else task
 
 
 def _next_available_label(base: str, reserved: set[str]) -> str:
