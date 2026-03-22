@@ -39,6 +39,7 @@ from nexus_mcp.types import (
     ExecutionMode,
     LogEmitter,
     LogLevel,
+    ProgressEmitter,
     PromptRequest,
 )
 
@@ -160,7 +161,7 @@ class AbstractRunner(ABC):
         )
         for attempt in range(max_attempts):
             try:
-                return await self._execute(request, emit)
+                return await self._execute(request, emit, _noop_progress)
             except RetryableError as e:
                 if attempt == max_attempts - 1:
                     raise
@@ -176,7 +177,9 @@ class AbstractRunner(ABC):
         # Unreachable: loop always returns or raises — satisfies type checker
         raise AssertionError("unreachable: retry loop exited without result or exception")
 
-    async def _execute(self, request: PromptRequest, emit: LogEmitter) -> AgentResponse:
+    async def _execute(
+        self, request: PromptRequest, emit: LogEmitter, progress: ProgressEmitter
+    ) -> AgentResponse:
         """Execute CLI agent once using Template Method pattern.
 
         Template steps:
@@ -189,6 +192,7 @@ class AbstractRunner(ABC):
         Args:
             request: Prompt request with agent, prompt, execution mode, etc.
             emit: Log emitter for client-visible logging.
+            progress: Progress emitter for structured step-level reporting.
 
         Returns:
             AgentResponse with parsed output and metadata.
@@ -199,15 +203,18 @@ class AbstractRunner(ABC):
             ParseError: If output parsing fails (from parse_output()).
         """
         # Step 1: Build command
+        await progress(1, 5, "Building command")
         command = self.build_command(request)
 
         # Step 2: Execute subprocess
+        await progress(2, 5, "Executing subprocess")
         effective_timeout = request.timeout if request.timeout is not None else self.timeout
         await emit("info", f"Running {self.AGENT_NAME} with timeout={effective_timeout}s")
         result = await run_subprocess(command, timeout=effective_timeout)
 
         # Step 3: Error check with recovery attempt
         if result.returncode != 0:
+            await progress(3, 5, "Checking errors")
             recovered = self._recover_from_error(
                 result.stdout, result.stderr, result.returncode, command
             )
@@ -216,6 +223,7 @@ class AbstractRunner(ABC):
                     "warning",
                     f"Recovered response from non-zero exit code {result.returncode}",
                 )
+                await progress(5, 5, "Applying output limits")
                 limited = self._apply_output_limit(recovered, request)
                 if limited.metadata.get("truncated"):
                     await emit(
@@ -233,9 +241,11 @@ class AbstractRunner(ABC):
             )
 
         # Step 4: Parse output
+        await progress(4, 5, "Parsing output")
         response = self.parse_output(result.stdout, result.stderr)
 
         # Step 5: Apply output limiting (stays sync — no signature change)
+        await progress(5, 5, "Applying output limits")
         limited = self._apply_output_limit(response, request)
         if limited.metadata.get("truncated"):
             await emit(
