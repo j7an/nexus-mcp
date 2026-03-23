@@ -14,7 +14,7 @@ import pytest
 from fastmcp.exceptions import ToolError
 
 from nexus_mcp.elicitation import ElicitationGuard
-from tests.fixtures import GEMINI_JSON_RESPONSE, create_mock_process
+from tests.fixtures import GEMINI_JSON_RESPONSE, create_mock_process, strip_runner_header
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +45,7 @@ class TestElicitationGracefulSkip:
         )
 
         assert result.is_error is False
-        assert result.data == "test output"
+        assert strip_runner_header(result.data) == "test output"
 
     async def test_prompt_without_cli_and_elicit_false_errors(self, mcp_client):
         """prompt without cli and elicit=False raises ToolError about cli being required."""

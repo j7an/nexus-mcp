@@ -22,6 +22,7 @@ from tests.fixtures import (
     create_mock_process,
     gemini_error_json,
     gemini_json,
+    strip_runner_header,
 )
 
 
@@ -122,7 +123,7 @@ class TestPromptProtocol:
         result = await mcp_client.call_tool("prompt", {"cli": "gemini", "prompt": "say hello"})
 
         assert result.is_error is False
-        assert result.data == "hello from e2e"
+        assert strip_runner_header(result.data) == "hello from e2e"
 
     async def test_task_true_lifecycle(self, mock_subprocess, mcp_client):
         """task=True returns a ToolTask; awaiting it resolves to the final output."""
@@ -134,7 +135,7 @@ class TestPromptProtocol:
         result = await task
 
         assert result.is_error is False
-        assert result.data == "task result"
+        assert strip_runner_header(result.data) == "task result"
 
     async def test_model_parameter_reaches_subprocess(self, mock_subprocess, mcp_client):
         """model parameter survives JSON-RPC round-trip and appears in subprocess args."""
@@ -168,7 +169,7 @@ class TestPromptProtocol:
         result = await mcp_client.call_tool("prompt", {"cli": "gemini", "prompt": "noisy test"})
 
         assert result.is_error is False
-        assert result.data == "test output"
+        assert strip_runner_header(result.data) == "test output"
 
     @pytest.mark.parametrize(
         ("error_code", "error_message", "error_status"),
@@ -200,7 +201,7 @@ class TestPromptProtocol:
         )
 
         assert result.is_error is False
-        assert result.data == "ok after retry"
+        assert strip_runner_header(result.data) == "ok after retry"
         assert mock_subprocess.call_count == 2
 
     async def test_opencode_success_returns_parsed_ndjson(self, mock_subprocess, mcp_client):
@@ -208,7 +209,7 @@ class TestPromptProtocol:
         mock_subprocess.return_value = create_mock_process(stdout=OPENCODE_NDJSON_RESPONSE)
         result = await mcp_client.call_tool("prompt", {"cli": "opencode", "prompt": "say hello"})
         assert result.is_error is False
-        assert result.data == "test output"
+        assert strip_runner_header(result.data) == "test output"
 
     async def test_context_parameter_survives_json_rpc(self, mock_subprocess, mcp_client):
         """context dict survives JSON-RPC round-trip; call succeeds (context is pass-through)."""
@@ -224,7 +225,7 @@ class TestPromptProtocol:
         )
 
         assert result.is_error is False
-        assert result.data == "ok"
+        assert strip_runner_header(result.data) == "ok"
 
 
 # ---------------------------------------------------------------------------

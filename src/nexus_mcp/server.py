@@ -62,6 +62,10 @@ def build_server_instructions() -> str:
     without needing a separate tool call.
     """
     lines = ["# nexus-mcp — CLI Agent Router", ""]
+    lines.append("## Important: Do not pre-fill `cli` or `model`")
+    lines.append("Leave `cli` and `model` empty so the user can choose interactively.")
+    lines.append("Only set them when the user explicitly names a runner or model.")
+    lines.append("")
     lines.append("## Available Runners")
     lines.append("")
 
@@ -282,6 +286,11 @@ async def batch_prompt(
             if t.cli is None:
                 raise ToolError("cli is required on all tasks when no context available")
 
+    def _metadata_header(task: AgentTask) -> str:
+        """Build a short metadata line so the AI knows which runner handled the task."""
+        model_part = task.model or "default"
+        return f"[cli: {task.cli} | model: {model_part} | mode: {task.execution_mode}]"
+
     labelled = _assign_labels(tasks)
     semaphore = asyncio.Semaphore(max_concurrency)
     is_single_task = len(labelled) == 1
@@ -307,7 +316,9 @@ async def batch_prompt(
                 request = task.to_request()
                 runner = RunnerFactory.create(request.cli)
                 response = await runner.run(request, emitter=emitter, progress=progress)
-                return AgentTaskResult(label=task.label, output=response.output)  # type: ignore[arg-type]
+                header = _metadata_header(task)
+                output = f"{header}\n\n{response.output}"
+                return AgentTaskResult(label=task.label, output=output)  # type: ignore[arg-type]
             except Exception as e:
                 if emitter:
                     await emitter("error", f"Task '{task.label}' failed: {e}")
@@ -343,11 +354,11 @@ async def prompt(
     This prevents timeouts for long operations (YOLO mode: 2-5 minutes).
 
     Args:
-        cli: CLI runner name (e.g., "gemini")
+        cli: CLI runner name (e.g., "gemini"). None triggers interactive selection.
         prompt: Prompt text to send to the runner
         context: Optional context metadata
         execution_mode: 'default' (safe) or 'yolo'. None inherits session preference.
-        model: Optional model name. None inherits session preference or uses CLI default.
+        model: Model name. None triggers interactive selection or uses CLI default.
         max_retries: Max retry attempts for transient errors (None inherits session preference).
         output_limit: Max output bytes (None inherits session preference or uses env default).
         timeout: Subprocess timeout seconds (None inherits session preference or uses env default).
@@ -382,6 +393,7 @@ async def prompt(
         if ctx
         else None
     )
+    selections: dict[str, str] = {}
     if guard:
         resolved = await guard.check_prompt(
             cli=cli,
@@ -394,6 +406,7 @@ async def prompt(
         resolved_model = resolved.model
         resolved_mode = resolved.execution_mode
         prompt = resolved.prompt_text
+        selections = resolved.selections
     elif cli is None:
         raise ToolError("cli is required")
 
@@ -414,7 +427,15 @@ async def prompt(
     if task_result.error:
         raise ToolError(task_result.formatted_error)
     assert task_result.output is not None  # guaranteed: error is None, so output was set
-    return task_result.output
+
+    # Annotate per-field using elicitation selections.
+    output = task_result.output
+    field_map = {"cli": cli, "model": resolved_model or "default", "mode": resolved_mode}
+    for field, value in field_map.items():
+        status = selections.get(field)
+        if status:
+            output = output.replace(f"{field}: {value}", f"{field}: {value} ({status})", 1)
+    return output
 
 
 # Inject CLI names as enum into tool schemas before registration freezes them.

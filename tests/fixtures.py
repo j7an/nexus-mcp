@@ -152,6 +152,26 @@ OPENCODE_NOISY_STDOUT = (
 PING_PROMPT = "Reply with exactly the word 'pong'"
 
 
+def strip_runner_header(output: str) -> str:
+    """Strip the [cli: ...] metadata header prepended by the server.
+
+    Server output format:
+        [cli: gemini | model: default | mode: default]
+
+        <actual runner output>
+
+    Also handles the elicitation-annotated variant:
+        [cli (user-selected cli, model): opencode | model: minimax | mode: default]
+
+    Returns only the runner output after the header and blank line separator.
+    """
+    if output.startswith("[cli"):
+        idx = output.find("]\n\n")
+        if idx != -1:
+            return output[idx + 3 :]
+    return output
+
+
 # ---------------------------------------------------------------------------
 # CLI detection mock helpers
 # ---------------------------------------------------------------------------
