@@ -12,7 +12,7 @@ import pytest
 from fastmcp.exceptions import ToolError
 
 from nexus_mcp.server import prompt
-from tests.fixtures import CODEX_NDJSON_RESPONSE, create_mock_process
+from tests.fixtures import CODEX_NDJSON_RESPONSE, create_mock_process, strip_runner_header
 
 
 def _codex_ndjson(text: str) -> str:
@@ -45,7 +45,7 @@ class TestPromptCodexPipeline:
 
         result = await prompt(cli="codex", prompt="ping")
 
-        assert result == "pong"
+        assert strip_runner_header(result) == "pong"
         assert mock_subprocess.call_count == 1
         args = list(mock_subprocess.call_args.args)
         assert "exec" in args
@@ -85,7 +85,7 @@ class TestPromptCodexPipeline:
 
         result = await prompt(cli="codex", prompt="test")
 
-        assert result == "pong"
+        assert strip_runner_header(result) == "pong"
 
     async def test_429_retries_then_succeeds(self, mock_subprocess, fast_retry_sleep):
         """HTTP 429 in stderr triggers retry; second attempt succeeds."""
@@ -97,7 +97,7 @@ class TestPromptCodexPipeline:
 
         result = await prompt(cli="codex", prompt="test", max_retries=2)
 
-        assert result == "pong"
+        assert strip_runner_header(result) == "pong"
         assert mock_subprocess.call_count == 2
 
     async def test_multiple_agent_messages_joined(self, mock_subprocess):
@@ -112,4 +112,4 @@ class TestPromptCodexPipeline:
 
         result = await prompt(cli="codex", prompt="test")
 
-        assert result == "part1\n\npart2"
+        assert strip_runner_header(result) == "part1\n\npart2"

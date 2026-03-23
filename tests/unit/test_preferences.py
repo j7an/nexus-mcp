@@ -15,7 +15,7 @@ from nexus_mcp.preferences import (
 )
 from nexus_mcp.server import batch_prompt, prompt
 from nexus_mcp.types import AgentTask, SessionPreferences
-from tests.fixtures import make_agent_response, make_session_preferences
+from tests.fixtures import make_agent_response, make_session_preferences, strip_runner_header
 
 _PREFS_KEY = "nexus:preferences"
 
@@ -772,7 +772,7 @@ class TestPromptPreferenceFallback:
         """prompt() with ctx=None falls back to defaults without raising."""
         _setup_mock_runner(mock_factory, output="ok")
         result = await prompt(cli="gemini", prompt="test", ctx=None)
-        assert result == "ok"
+        assert strip_runner_header(result) == "ok"
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_session_max_retries_used_when_no_explicit(self, mock_factory, ctx):

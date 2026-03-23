@@ -32,6 +32,7 @@ from tests.fixtures import (
     create_mock_process,
     make_agent_response,
     make_agent_task,
+    strip_runner_header,
 )
 
 
@@ -68,7 +69,7 @@ class TestPrompt:
             prompt="Test prompt",
         )
 
-        assert result == "Agent response"
+        assert strip_runner_header(result) == "Agent response"
         mock_factory.create.assert_called_once_with("gemini")
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.prompt == "Test prompt"
@@ -309,7 +310,9 @@ class TestBatchPrompt:
 
         assert result.succeeded == 1
         assert result.failed == 1
-        ok_result = next(r for r in result.results if r.output == "good output")
+        ok_result = next(
+            r for r in result.results if strip_runner_header(r.output or "") == "good output"
+        )
         assert ok_result is not None
 
     @patch("nexus_mcp.server.RunnerFactory")
@@ -358,7 +361,7 @@ class TestBatchPrompt:
         tasks = [make_agent_task(prompt=f"p{i}") for i in range(3)]
         result = await batch_prompt(tasks=tasks)
 
-        outputs = [r.output for r in result.results]
+        outputs = [strip_runner_header(r.output or "") for r in result.results]
         assert outputs == ["result-p0", "result-p1", "result-p2"]
 
     @patch("nexus_mcp.server.RunnerFactory")

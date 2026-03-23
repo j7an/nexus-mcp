@@ -19,6 +19,7 @@ from tests.fixtures import (
     CLAUDE_NOISY_STDOUT,
     create_mock_process,
     make_agent_task,
+    strip_runner_header,
 )
 from tests.fixtures import (
     claude_error_json as _claude_error_json,
@@ -63,7 +64,7 @@ class TestPromptClaudePipeline:
 
         result = await prompt(cli="claude", prompt="Say hello")
 
-        assert result == "Hello from Claude"
+        assert strip_runner_header(result) == "Hello from Claude"
         assert mock_subprocess.call_count == 1
         args = list(mock_subprocess.call_args.args)
         assert "-p" in args
@@ -114,7 +115,7 @@ class TestPromptClaudePipeline:
 
         result = await prompt(cli="claude", prompt="test", max_retries=2)
 
-        assert result == "ok after retry"
+        assert strip_runner_header(result) == "ok after retry"
         assert mock_subprocess.call_count == 2
 
     async def test_recovery_from_nonzero_exit(self, mock_subprocess):
@@ -125,7 +126,7 @@ class TestPromptClaudePipeline:
 
         result = await prompt(cli="claude", prompt="test")
 
-        assert result == "recovered output"
+        assert strip_runner_header(result) == "recovered output"
 
     async def test_noisy_stdout_parsed(self, mock_subprocess):
         """Log lines before JSON → still parsed correctly via fallback."""
@@ -133,7 +134,7 @@ class TestPromptClaudePipeline:
 
         result = await prompt(cli="claude", prompt="test")
 
-        assert result == "test output"
+        assert strip_runner_header(result) == "test output"
 
     async def test_exhausted_retries_503(self, mock_subprocess, fast_retry_sleep):
         """HTTP 503 that always fails → exhausts all retries → ToolError with [RetryableError]."""

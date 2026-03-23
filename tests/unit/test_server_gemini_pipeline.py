@@ -15,7 +15,12 @@ import pytest
 from fastmcp.exceptions import ToolError
 
 from nexus_mcp.server import batch_prompt, prompt
-from tests.fixtures import GEMINI_NOISY_STDOUT, create_mock_process, make_agent_task
+from tests.fixtures import (
+    GEMINI_NOISY_STDOUT,
+    create_mock_process,
+    make_agent_task,
+    strip_runner_header,
+)
 
 # ---------------------------------------------------------------------------
 # JSON response builders
@@ -55,7 +60,7 @@ class TestPromptGeminiPipeline:
 
         result = await prompt(cli="gemini", prompt="Say hello")
 
-        assert result == "Hello from Gemini"
+        assert strip_runner_header(result) == "Hello from Gemini"
         assert mock_subprocess.call_count == 1
         args = list(mock_subprocess.call_args.args)
         assert "-p" in args
@@ -110,7 +115,7 @@ class TestPromptGeminiPipeline:
 
         result = await prompt(cli="gemini", prompt="test", max_retries=2)
 
-        assert result == "ok after retry"
+        assert strip_runner_header(result) == "ok after retry"
         assert mock_subprocess.call_count == 2
 
     async def test_noisy_stdout_parses_correctly(self, mock_subprocess):
@@ -119,7 +124,7 @@ class TestPromptGeminiPipeline:
 
         result = await prompt(cli="gemini", prompt="test")
 
-        assert result == "test output"
+        assert strip_runner_header(result) == "test output"
 
     async def test_recovery_from_nonzero_exit_with_valid_json(self, mock_subprocess):
         """Non-zero exit with valid response JSON → recovery path → output returned."""
@@ -129,7 +134,7 @@ class TestPromptGeminiPipeline:
 
         result = await prompt(cli="gemini", prompt="test")
 
-        assert result == "recovered output"
+        assert strip_runner_header(result) == "recovered output"
 
     async def test_503_exhausts_retries_raises_tool_error(self, mock_subprocess, fast_retry_sleep):
         """HTTP 503 that always fails → exhausts all retries → ToolError with [RetryableError]."""

@@ -5,6 +5,7 @@ execution mode, prompt) before a tool call proceeds. Falls back gracefully when
 the client does not support elicitation.
 """
 
+import dataclasses
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -36,6 +37,10 @@ type ElicitResult = (
 )
 
 
+SELECTED = "user-selected"
+DECLINED = "declined"
+
+
 @dataclass(frozen=True)
 class ResolvedParams:
     """Fully-resolved parameters after elicitation."""
@@ -44,6 +49,7 @@ class ResolvedParams:
     model: str | None
     execution_mode: ExecutionMode
     prompt_text: str
+    selections: dict[str, str] = dataclasses.field(default_factory=dict)
 
 
 class ElicitationGuard:
@@ -134,6 +140,7 @@ class ElicitationGuard:
         resolved_model = model
         resolved_mode = execution_mode
         resolved_prompt = prompt_text
+        selections: dict[str, str] = {}
 
         # Trigger #1: CLI disambiguation
         if resolved_cli is None:
@@ -145,6 +152,7 @@ class ElicitationGuard:
                 raise ToolError("cli is required — elicitation was declined or unavailable")
             assert isinstance(result, AcceptedElicitation)
             resolved_cli = str(result.data)
+            selections["cli"] = SELECTED
 
         # Trigger #2: Model selection
         if resolved_model is None and resolved_cli:
@@ -157,6 +165,9 @@ class ElicitationGuard:
                 if result is not None and result.action == "accept":
                     assert isinstance(result, AcceptedElicitation)
                     resolved_model = str(result.data)
+                    selections["model"] = SELECTED
+                else:
+                    selections["model"] = DECLINED
 
         # Trigger #3: YOLO confirmation
         if resolved_mode == "yolo" and self._prefs.confirm_yolo is not False:
@@ -168,8 +179,10 @@ class ElicitationGuard:
                 pass  # elicitation unavailable, proceed
             elif result.action == "accept":
                 await self._auto_suppress("confirm_yolo")
+                selections["mode"] = SELECTED
             else:
                 resolved_mode = "default"
+                selections["mode"] = DECLINED
                 logger.warning("YOLO mode declined, downgrading to default")
 
         # Trigger #4: Vague prompt check (no auto-suppress)
@@ -185,6 +198,9 @@ class ElicitationGuard:
             if result is not None and result.action == "accept":
                 assert isinstance(result, AcceptedElicitation)
                 resolved_prompt = str(result.data)
+                selections["prompt"] = SELECTED
+            else:
+                selections["prompt"] = DECLINED
 
         # resolved_cli is guaranteed non-None here: either it was provided,
         # or Trigger #1 set it (raising ToolError if it couldn't).
@@ -194,6 +210,7 @@ class ElicitationGuard:
             model=resolved_model,
             execution_mode=resolved_mode,
             prompt_text=resolved_prompt,
+            selections=selections,
         )
 
     async def check_batch(

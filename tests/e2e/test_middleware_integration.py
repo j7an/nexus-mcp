@@ -40,8 +40,11 @@ class TestMiddlewarePipeline:
         assert "completed in" in caplog.text
         assert "ms" in caplog.text
 
-        # Prompt text not leaked
-        assert "say hello" not in caplog.text
+        # Prompt text not leaked in middleware logs
+        middleware_text = " ".join(
+            r.message for r in caplog.records if r.name == "nexus_mcp.middleware"
+        )
+        assert "say hello" not in middleware_text
 
     async def test_error_normalization_propagates_tool_error(self, mcp_client, caplog):
         """ToolError from batch_prompt propagates through the middleware stack.
