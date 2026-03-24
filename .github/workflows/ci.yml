@@ -9,6 +9,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   update-lockfile:
     if: github.actor == 'dependabot[bot]'
@@ -16,10 +18,14 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - name: Harden runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ github.head_ref }}
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       - run: uv lock
       - name: Commit updated lockfile
         env:
@@ -48,6 +54,8 @@ jobs:
     needs: [update-lockfile]
     if: ${{ !cancelled() && needs.update-lockfile.result != 'failure' }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     continue-on-error: ${{ matrix.python-version == '3.14' }}
     strategy:
       fail-fast: false
@@ -55,7 +63,11 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v6
+      - name: Harden runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ github.actor == 'dependabot[bot]' && github.head_ref || '' }}
           fetch-depth: 0
@@ -72,8 +84,14 @@ jobs:
     needs: [update-lockfile]
     if: ${{ !cancelled() && needs.update-lockfile.result != 'failure' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6
+      - name: Harden runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ github.actor == 'dependabot[bot]' && github.head_ref || '' }}
       - uses: ./.github/actions/setup-uv
@@ -86,8 +104,14 @@ jobs:
     needs: [update-lockfile]
     if: ${{ !cancelled() && needs.update-lockfile.result != 'failure' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6
+      - name: Harden runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ github.actor == 'dependabot[bot]' && github.head_ref || '' }}
       - uses: ./.github/actions/setup-uv
