@@ -160,6 +160,29 @@ def test_subprocess_error_str_does_not_truncate_short_output():
     assert short_stderr in result
 
 
+def test_subprocess_error_truncation_preserves_tail():
+    """Head+tail truncation preserves the end of output where CLI errors typically appear."""
+    # Simulate a Node.js stack trace: error message at the END
+    head = "verbose startup log " * 30  # 600 chars of noise
+    tail = "Error: GEMINI_API_KEY not set"
+    long_stderr = head + tail
+    err = SubprocessError("Command failed", stderr=long_stderr)
+    result = str(err)
+    assert tail in result, "Tail of stderr (where CLI errors appear) must be preserved"
+    assert "..." in result or "[truncated]" in result
+
+
+def test_subprocess_error_truncation_shows_head_and_tail():
+    """Truncated output includes both the beginning and end of the original text."""
+    text = "".join(f"{i:04d}_" for i in range(200))  # "0000_0001_0002_..."
+    err = SubprocessError("Command failed", stderr=text)
+    result = str(err)
+    # Head should start with the beginning
+    assert "0000_" in result
+    # Tail should end with the last segment
+    assert "0199_" in result
+
+
 def test_subprocess_error_str_preserves_full_output_in_attributes():
     """Truncation in __str__ does not affect the stored stderr/stdout attributes."""
     long_stderr = "e" * 600

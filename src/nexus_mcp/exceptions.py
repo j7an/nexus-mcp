@@ -50,7 +50,8 @@ class SubprocessError(NexusMCPError):
 
     def _truncate(self, text: str) -> str:
         if len(text) > self._MAX_OUTPUT_DISPLAY:
-            return text[: self._MAX_OUTPUT_DISPLAY] + "[truncated]"
+            half = self._MAX_OUTPUT_DISPLAY // 2
+            return text[:half] + "...[truncated]..." + text[-half:]
         return text
 
     def __str__(self) -> str:

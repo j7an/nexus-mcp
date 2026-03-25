@@ -136,7 +136,9 @@ def _read_runner_env_defaults(runner_name: str) -> OperationalDefaults:
         raw = os.getenv(f"NEXUS_{prefix}_{key}")
         if raw is not None:
             with contextlib.suppress(ValueError):
-                kwargs[field] = parse(raw)
+                v = parse(raw)
+                if v > 0:
+                    kwargs[field] = v
 
     for key, field in (
         ("RETRY_BASE_DELAY", "retry_base_delay"),
