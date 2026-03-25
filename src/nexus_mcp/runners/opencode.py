@@ -190,23 +190,18 @@ class OpenCodeRunner(AbstractRunner):
         returncode: int,
         command: list[str] | None = None,
     ) -> None:
-        """Extract and raise a structured API error from OpenCode output.
+        """Extract and raise a structured API error from OpenCode output."""
+        self._try_extract_ndjson_error(stdout, stderr, returncode, command)
+        self._try_extract_legacy_error(stdout, stderr, returncode, command)
 
-        Checks two formats in order:
-        1. NDJSON error event in stdout: {"type":"error","error":{"name":"...","data":{...}}}
-        2. Legacy JSON in stderr/stdout: {"error":{"code":...,"message":"..."}}
-
-        Args:
-            stdout: Subprocess stdout; scanned for NDJSON error events first.
-            stderr: Subprocess stderr; checked for legacy error JSON.
-            returncode: Exit code (passed through to SubprocessError).
-            command: The CLI command that was run (passed through to SubprocessError).
-
-        Raises:
-            RetryableError: If error code/statusCode is 429 or 503.
-            SubprocessError: If a non-retryable structured error is found.
-        """
-        # 1. Scan stdout NDJSON for error events
+    def _try_extract_ndjson_error(
+        self,
+        stdout: str,
+        stderr: str,
+        returncode: int,
+        command: list[str] | None = None,
+    ) -> None:
+        """Scan stdout NDJSON for error events and raise structured errors."""
         for raw_line in stdout.splitlines():
             line = raw_line.strip()
             if not line:
@@ -226,14 +221,18 @@ class OpenCodeRunner(AbstractRunner):
             if not isinstance(error_data, dict):
                 error_data = {}
             message = error_data.get("message", "unknown error")
-
-            # Use statusCode for retryability if present, else error name
             code = self._coerce_error_code(error_data.get("statusCode", name))
-
             error_msg = f"OpenCode API error {name}: {message}"
             self._raise_structured_error(error_msg, code, stdout, stderr, returncode, command)
 
-        # 2. Fallback: {"error": {"code": ..., "message": ...}} in stderr/stdout
+    def _try_extract_legacy_error(
+        self,
+        stdout: str,
+        stderr: str,
+        returncode: int,
+        command: list[str] | None = None,
+    ) -> None:
+        """Extract legacy {"error": {...}} JSON from stderr/stdout."""
         legacy: dict[str, object] | None = None
         for source in (stderr, stdout):
             candidate = extract_last_json_object(source)
