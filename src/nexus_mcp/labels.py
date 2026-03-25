@@ -4,6 +4,8 @@ Assigns unique labels to AgentTask objects, preserving explicit labels
 and auto-generating from CLI names with -N suffixes for collisions.
 """
 
+__all__ = ["assign_labels", "next_available_label"]
+
 from nexus_mcp.types import AgentTask
 
 

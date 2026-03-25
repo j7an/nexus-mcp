@@ -5,6 +5,8 @@ execution mode, prompt) before a tool call proceeds. Falls back gracefully when
 the client does not support elicitation.
 """
 
+__all__ = ["ElicitationGuard", "ResolvedParams"]
+
 import dataclasses
 import logging
 from dataclasses import dataclass

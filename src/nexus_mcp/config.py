@@ -6,6 +6,20 @@ Resolution order (highest → lowest priority):
   per-request → session prefs → per-runner env → global env → hardcoded
 """
 
+__all__ = [
+    "HARDCODED_DEFAULTS",
+    "get_global_output_limit",
+    "get_global_timeout",
+    "get_retry_max_attempts",
+    "get_retry_base_delay",
+    "get_retry_max_delay",
+    "get_tool_timeout",
+    "get_cli_detection_timeout",
+    "get_runner_defaults",
+    "get_runner_models",
+    "get_agent_env",
+]
+
 # Re-export resolution functions and HARDCODED_DEFAULTS so existing imports
 # continue to work. No circular import: config_resolver.py does NOT import
 # from config.py. HARDCODED_DEFAULTS is defined in config_resolver.py.

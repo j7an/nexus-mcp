@@ -4,6 +4,8 @@ Bridges FastMCP's Context logging/progress APIs to the LogEmitter and
 ProgressEmitter protocols consumed by runners.
 """
 
+__all__ = ["make_mcp_emitter", "make_progress_emitter"]
+
 import logging
 
 from fastmcp import Context

@@ -6,6 +6,13 @@ agent. The exception is parse_ndjson_events, which handles the Codex CLI's
 NDJSON event stream format.
 """
 
+__all__ = [
+    "extract_last_json_object",
+    "extract_last_json_list",
+    "extract_last_json_array",
+    "parse_ndjson_events",
+]
+
 import contextlib
 import json
 from collections.abc import Callable

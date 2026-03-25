@@ -7,6 +7,8 @@ Backoff formula (AWS-recommended full jitter):
     delay = random.uniform(0, min(max_delay, base_delay * 2^attempt))
 """
 
+__all__ = ["RetryMixin"]
+
 import asyncio
 import logging
 import random
