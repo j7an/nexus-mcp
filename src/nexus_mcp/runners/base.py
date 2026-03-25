@@ -12,16 +12,14 @@ Template Method pattern in AbstractRunner._execute():
 4. parse_output(stdout, stderr) → AgentResponse
 5. _apply_output_limit(response) → AgentResponse (truncate if needed)
 
-AbstractRunner.run() wraps _execute() in a retry loop:
+Retry logic lives in RetryMixin (runners/retry.py):
 - Retries on RetryableError with exponential backoff + full jitter
 - Non-retryable errors (SubprocessError, ParseError) propagate immediately
 - max_attempts from request.max_retries or NEXUS_RETRY_MAX_ATTEMPTS env var
 """
 
-import asyncio
 import contextlib
 import logging
-import random
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, NoReturn, Protocol
 
@@ -34,31 +32,18 @@ from nexus_mcp.cli_detector import (
 from nexus_mcp.config import get_runner_defaults
 from nexus_mcp.exceptions import CLINotFoundError, ParseError, RetryableError, SubprocessError
 from nexus_mcp.process import run_subprocess
+from nexus_mcp.runners.retry import RetryMixin
+from nexus_mcp.runners.retry import _default_log_emitter as _default_log_emitter  # re-export
+from nexus_mcp.runners.retry import _noop_progress as _noop_progress  # re-export
 from nexus_mcp.types import (
     AgentResponse,
     ExecutionMode,
     LogEmitter,
-    LogLevel,
     ProgressEmitter,
     PromptRequest,
 )
 
 logger = logging.getLogger(__name__)
-
-
-async def _default_log_emitter(level: LogLevel, message: str) -> None:
-    """Fallback emitter: delegates to Python's stdlib logger.
-
-    Used when no MCP-aware emitter is provided (direct runner usage, tests).
-    """
-    getattr(logger, level)(message)
-
-
-async def _noop_progress(progress: float, total: float, message: str) -> None:
-    """No-op progress emitter for direct runner usage and tests.
-
-    Used when no MCP-aware progress emitter is provided.
-    """
 
 
 class CLIRunner(Protocol):
@@ -91,7 +76,7 @@ class CLIRunner(Protocol):
         ...
 
 
-class AbstractRunner(ABC):
+class AbstractRunner(RetryMixin, ABC):
     """Abstract base class implementing Template Method pattern for CLI runners.
 
     Subclasses must define:
@@ -132,70 +117,6 @@ class AbstractRunner(ABC):
         self.output_limit: int = defaults.output_limit  # type: ignore[assignment]
         self.default_model: str | None = defaults.model
         self.cli_path: str = self.AGENT_NAME
-
-    async def run(
-        self,
-        request: PromptRequest,
-        emitter: LogEmitter | None = None,
-        progress: ProgressEmitter | None = None,
-    ) -> AgentResponse:
-        """Execute CLI agent with retry on transient errors.
-
-        Wraps _execute() in a retry loop. RetryableError triggers exponential
-        backoff with full jitter. All other exceptions propagate immediately.
-
-        Args:
-            request: Prompt request with agent, prompt, execution mode, etc.
-                     request.max_retries overrides the env-var default when set.
-            emitter: Optional log emitter. When None, uses _default_log_emitter.
-            progress: Optional progress emitter for structured progress reporting.
-                      When None, uses _noop_progress.
-
-        Returns:
-            AgentResponse with parsed output and metadata.
-
-        Raises:
-            RetryableError: If all retry attempts are exhausted.
-            SubprocessError: If CLI fails with a non-retryable error code.
-            ParseError: If output parsing fails.
-        """
-        emit = emitter or _default_log_emitter
-        report = progress or _noop_progress
-        max_attempts = (
-            request.max_retries if request.max_retries is not None else self.default_max_attempts
-        )
-        # Resolve per-request delay overrides once before the loop (concurrency-safe: avoids
-        # mutating self.base_delay/max_delay which are shared across concurrent requests).
-        # IMPORTANT: use `is not None`, NOT `or` — 0.0 is a valid value (instant backoff).
-        effective_base_delay = (
-            request.retry_base_delay if request.retry_base_delay is not None else self.base_delay
-        )
-        effective_max_delay = (
-            request.retry_max_delay if request.retry_max_delay is not None else self.max_delay
-        )
-        for attempt in range(max_attempts):
-            await report(attempt + 1, max_attempts, f"Attempt {attempt + 1}/{max_attempts}")
-            try:
-                return await self._execute(request, emit, report)
-            except RetryableError as e:
-                if attempt == max_attempts - 1:
-                    raise
-                delay = self._compute_backoff(
-                    attempt, e.retry_after, effective_base_delay, effective_max_delay
-                )
-                await emit(
-                    "warning",
-                    f"Retryable error (attempt {attempt + 1}/{max_attempts}),"
-                    f" retrying in {delay:.1f}s: {e}",
-                )
-                await report(
-                    attempt + 1,
-                    max_attempts,
-                    f"Waiting {delay:.1f}s before retry {attempt + 2}/{max_attempts}",
-                )
-                await asyncio.sleep(delay)
-        # Unreachable: loop always returns or raises — satisfies type checker
-        raise AssertionError("unreachable: retry loop exited without result or exception")
 
     async def _execute(
         self, request: PromptRequest, emit: LogEmitter, progress: ProgressEmitter
@@ -274,38 +195,6 @@ class AbstractRunner(ABC):
                 f" -> {limited.metadata['truncated_size_bytes']} bytes",
             )
         return limited
-
-    def _compute_backoff(
-        self,
-        attempt: int,
-        retry_after: float | None,
-        base_delay: float | None = None,
-        max_delay: float | None = None,
-    ) -> float:
-        """Compute exponential backoff delay with full jitter.
-
-        Uses AWS-recommended full jitter formula:
-            delay = random.uniform(0, min(max_delay, base_delay * 2^attempt))
-
-        If retry_after hint is provided, uses max(computed, retry_after) to
-        respect the server's suggested wait time.
-
-        Args:
-            attempt: Zero-based attempt index (0 = first retry after first failure).
-            retry_after: Optional server-suggested wait time in seconds.
-            base_delay: Override base delay (None falls back to self.base_delay).
-            max_delay: Override max delay cap (None falls back to self.max_delay).
-
-        Returns:
-            Delay in seconds to wait before the next attempt.
-        """
-        bd = base_delay if base_delay is not None else self.base_delay
-        md = max_delay if max_delay is not None else self.max_delay
-        cap = min(md, bd * (2**attempt))
-        computed = random.uniform(0, cap)
-        if retry_after is not None:
-            return max(computed, retry_after)
-        return computed
 
     def _apply_output_limit(self, response: AgentResponse, request: PromptRequest) -> AgentResponse:
         """Truncate output if it exceeds the configured byte limit.

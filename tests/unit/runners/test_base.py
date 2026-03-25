@@ -313,7 +313,7 @@ class TestRetryLoop:
         runner.max_delay = 60.0
 
         # attempt=0: cap = min(60, 2 * 2^0) = 2 → delay in [0, 2]
-        with patch("nexus_mcp.runners.base.random.uniform", return_value=1.5) as mock_uniform:
+        with patch("nexus_mcp.runners.retry.random.uniform", return_value=1.5) as mock_uniform:
             delay = runner._compute_backoff(0, retry_after=None)
 
         mock_uniform.assert_called_once_with(0, 2.0)
@@ -324,7 +324,7 @@ class TestRetryLoop:
         runner.base_delay = 2.0
         runner.max_delay = 60.0
 
-        with patch("nexus_mcp.runners.base.random.uniform", return_value=0.5):
+        with patch("nexus_mcp.runners.retry.random.uniform", return_value=0.5):
             delay = runner._compute_backoff(0, retry_after=30.0)
 
         # computed=0.5, retry_after=30 → max(0.5, 30) = 30
@@ -335,7 +335,7 @@ class TestRetryLoop:
         runner.base_delay = 2.0
         runner.max_delay = 60.0
 
-        with patch("nexus_mcp.runners.base.random.uniform", return_value=1.8):
+        with patch("nexus_mcp.runners.retry.random.uniform", return_value=1.8):
             delay = runner._compute_backoff(0, retry_after=0.1)
 
         # computed=1.8, retry_after=0.1 → max(1.8, 0.1) = 1.8
