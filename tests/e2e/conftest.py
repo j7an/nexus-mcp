@@ -62,6 +62,6 @@ def fast_retry_sleep(monkeypatch):
     busy-spin and starve the event loop, hanging the test indefinitely.
     """
     monkeypatch.setattr(
-        "nexus_mcp.runners.base.AbstractRunner._compute_backoff",
+        "nexus_mcp.runners.retry.RetryMixin._compute_backoff",
         lambda self, attempt, retry_after, *_args, **_kwargs: 0.0,
     )

@@ -5,6 +5,8 @@ execution mode, prompt) before a tool call proceeds. Falls back gracefully when
 the client does not support elicitation.
 """
 
+__all__ = ["ElicitationGuard", "ResolvedParams"]
+
 import dataclasses
 import logging
 from dataclasses import dataclass
@@ -102,6 +104,80 @@ class ElicitationGuard:
         validated = SessionPreferences(**current)
         await self._ctx.set_state(PREFERENCES_KEY, validated.model_dump())
 
+    # ------------------------------------------------------------------
+    # Single-prompt validators
+    # ------------------------------------------------------------------
+
+    async def _validate_cli(self, cli: str | None) -> tuple[str, dict[str, str]]:
+        """Resolve CLI agent via elicitation if not provided."""
+        if cli is not None:
+            return cli, {}
+        result = await self._try_elicit(
+            "Which CLI agent should handle this?",
+            self._installed_clis,
+        )
+        if result is None or result.action != "accept":
+            raise ToolError("cli is required — elicitation was declined or unavailable")
+        assert isinstance(result, AcceptedElicitation)
+        return str(result.data), {"cli": SELECTED}
+
+    async def _validate_model(
+        self, model: str | None, cli: str
+    ) -> tuple[str | None, dict[str, str]]:
+        """Resolve model via elicitation if multiple models available."""
+        if model is not None:
+            return model, {}
+        models = get_runner_models(cli)
+        if len(models) <= 1:
+            return model, {}
+        result = await self._try_elicit(
+            f"Which {cli} model? (decline to use default)",
+            list(models),
+        )
+        if result is not None and result.action == "accept":
+            assert isinstance(result, AcceptedElicitation)
+            return str(result.data), {"model": SELECTED}
+        return model, {"model": DECLINED}
+
+    async def _validate_execution_mode(
+        self, mode: ExecutionMode, cli: str
+    ) -> tuple[ExecutionMode, dict[str, str]]:
+        """Confirm YOLO mode via elicitation, downgrade to default if declined."""
+        if mode != "yolo" or self._prefs.confirm_yolo is False:
+            return mode, {}
+        result = await self._try_elicit(
+            f"YOLO mode will auto-approve all actions in {cli}. Confirm?",
+            None,
+        )
+        if result is None:
+            return mode, {}
+        if result.action == "accept":
+            await self._auto_suppress("confirm_yolo")
+            return mode, {"mode": SELECTED}
+        logger.warning("YOLO mode declined, downgrading to default")
+        return "default", {"mode": DECLINED}
+
+    async def _validate_prompt(self, prompt_text: str) -> tuple[str, dict[str, str]]:
+        """Offer elaboration for very short prompts."""
+        if (
+            len(prompt_text.strip()) >= _VAGUE_PROMPT_THRESHOLD
+            or self._prefs.confirm_vague_prompt is False
+        ):
+            return prompt_text, {}
+        result = await self._try_elicit(
+            f"Your prompt is very short ({len(prompt_text.strip())} chars): "
+            f'"{prompt_text}"\nWould you like to elaborate?',
+            str,
+        )
+        if result is not None and result.action == "accept":
+            assert isinstance(result, AcceptedElicitation)
+            return str(result.data), {"prompt": SELECTED}
+        return prompt_text, {"prompt": DECLINED}
+
+    # ------------------------------------------------------------------
+    # Public: single-prompt resolution
+    # ------------------------------------------------------------------
+
     async def check_prompt(
         self,
         cli: str | None,
@@ -110,101 +186,26 @@ class ElicitationGuard:
         prompt_text: str,
         elicit: bool = True,
     ) -> ResolvedParams:
-        """Resolve all parameters, eliciting missing ones interactively.
-
-        Args:
-            cli: CLI agent name, or None to trigger disambiguation.
-            model: Model name, or None to trigger selection.
-            execution_mode: Execution mode ("default" or "yolo").
-            prompt_text: The prompt text; short prompts trigger elaboration.
-            elicit: If False, skip all elicitation and raise on missing params.
-
-        Returns:
-            ResolvedParams with all fields populated.
-
-        Raises:
-            ToolError: If a required parameter is missing and elicitation is
-                unavailable, declined, or disabled.
-        """
+        """Resolve all parameters, eliciting missing ones interactively."""
         if not elicit:
             if cli is None:
                 raise ToolError("cli is required when elicitation is disabled")
             return ResolvedParams(
-                cli=cli,
-                model=model,
-                execution_mode=execution_mode,
-                prompt_text=prompt_text,
+                cli=cli, model=model, execution_mode=execution_mode, prompt_text=prompt_text
             )
 
-        resolved_cli = cli
-        resolved_model = model
-        resolved_mode = execution_mode
-        resolved_prompt = prompt_text
-        selections: dict[str, str] = {}
+        resolved_cli, sel = await self._validate_cli(cli)
+        selections = dict(sel)
 
-        # Trigger #1: CLI disambiguation
-        if resolved_cli is None:
-            result = await self._try_elicit(
-                "Which CLI agent should handle this?",
-                self._installed_clis,
-            )
-            if result is None or result.action != "accept":
-                raise ToolError("cli is required — elicitation was declined or unavailable")
-            assert isinstance(result, AcceptedElicitation)
-            resolved_cli = str(result.data)
-            selections["cli"] = SELECTED
+        resolved_model, sel = await self._validate_model(model, resolved_cli)
+        selections.update(sel)
 
-        # Trigger #2: Model selection
-        if resolved_model is None and resolved_cli:
-            models = get_runner_models(resolved_cli)
-            if len(models) > 1:
-                result = await self._try_elicit(
-                    f"Which {resolved_cli} model? (decline to use default)",
-                    list(models),
-                )
-                if result is not None and result.action == "accept":
-                    assert isinstance(result, AcceptedElicitation)
-                    resolved_model = str(result.data)
-                    selections["model"] = SELECTED
-                else:
-                    selections["model"] = DECLINED
+        resolved_mode, sel = await self._validate_execution_mode(execution_mode, resolved_cli)
+        selections.update(sel)
 
-        # Trigger #3: YOLO confirmation
-        if resolved_mode == "yolo" and self._prefs.confirm_yolo is not False:
-            result = await self._try_elicit(
-                f"YOLO mode will auto-approve all actions in {resolved_cli}. Confirm?",
-                None,
-            )
-            if result is None:
-                pass  # elicitation unavailable, proceed
-            elif result.action == "accept":
-                await self._auto_suppress("confirm_yolo")
-                selections["mode"] = SELECTED
-            else:
-                resolved_mode = "default"
-                selections["mode"] = DECLINED
-                logger.warning("YOLO mode declined, downgrading to default")
+        resolved_prompt, sel = await self._validate_prompt(prompt_text)
+        selections.update(sel)
 
-        # Trigger #4: Vague prompt check (no auto-suppress)
-        if (
-            len(resolved_prompt.strip()) < _VAGUE_PROMPT_THRESHOLD
-            and self._prefs.confirm_vague_prompt is not False
-        ):
-            result = await self._try_elicit(
-                f"Your prompt is very short ({len(resolved_prompt.strip())} chars): "
-                f'"{resolved_prompt}"\nWould you like to elaborate?',
-                str,
-            )
-            if result is not None and result.action == "accept":
-                assert isinstance(result, AcceptedElicitation)
-                resolved_prompt = str(result.data)
-                selections["prompt"] = SELECTED
-            else:
-                selections["prompt"] = DECLINED
-
-        # resolved_cli is guaranteed non-None here: either it was provided,
-        # or Trigger #1 set it (raising ToolError if it couldn't).
-        assert resolved_cli is not None
         return ResolvedParams(
             cli=resolved_cli,
             model=resolved_model,
@@ -213,89 +214,80 @@ class ElicitationGuard:
             selections=selections,
         )
 
-    async def check_batch(
-        self,
-        tasks: list[Any],
-        elicit: bool = True,
-    ) -> list[Any]:
-        """Resolve parameters for a batch of tasks with aggregated elicitation.
+    # ------------------------------------------------------------------
+    # Batch validators
+    # ------------------------------------------------------------------
 
-        Three aggregated triggers fire at most once per batch (not once per task):
-        1. YOLO confirmation — if any tasks have execution_mode="yolo" and
-           confirm_yolo is not False. Accept → auto_suppress. Decline → downgrade
-           all yolo tasks to default.
-        2. CLI disambiguation — if any tasks have cli=None. Accept → set all
-           None-cli tasks to chosen CLI. Decline → raise ToolError.
-        3. Vague prompt advisory — if any tasks have short prompts and
-           confirm_vague_prompt is not False. Decline does NOT block.
-
-        When elicit=False, validates all tasks have cli set (raises ToolError if not).
-
-        Args:
-            tasks: List of AgentTask objects to resolve.
-            elicit: If False, skip all elicitation and raise on missing params.
-
-        Returns:
-            List of resolved task objects.
-
-        Raises:
-            ToolError: If cli is missing and elicitation is disabled, declined, or
-                unavailable; or if final validation fails.
-        """
-        if not elicit:
-            for task in tasks:
-                if task.cli is None:
-                    raise ToolError("cli is required on all tasks when elicitation is disabled")
+    async def _batch_confirm_yolo(self, tasks: list[Any]) -> list[Any]:
+        """Aggregated YOLO confirmation for batch tasks."""
+        yolo_indices = [i for i, t in enumerate(tasks) if t.execution_mode == "yolo"]
+        if not yolo_indices or self._prefs.confirm_yolo is False:
             return tasks
-
+        count = len(yolo_indices)
+        result = await self._try_elicit(
+            f"YOLO mode will auto-approve all actions for {count} task(s). Confirm?",
+            None,
+        )
+        if result is None:
+            return tasks
+        if result.action == "accept":
+            await self._auto_suppress("confirm_yolo")
+            return tasks
         resolved = list(tasks)
+        for i in yolo_indices:
+            resolved[i] = resolved[i].model_copy(update={"execution_mode": "default"})
+        logger.warning("YOLO mode declined for batch, downgrading %d task(s) to default", count)
+        return resolved
 
-        # Trigger #1: YOLO confirmation (aggregated)
-        yolo_indices = [i for i, t in enumerate(resolved) if t.execution_mode == "yolo"]
-        if yolo_indices and self._prefs.confirm_yolo is not False:
-            count = len(yolo_indices)
-            result = await self._try_elicit(
-                f"YOLO mode will auto-approve all actions for {count} task(s). Confirm?",
-                None,
-            )
-            if result is None:
-                pass  # elicitation unavailable, proceed
-            elif result.action == "accept":
-                await self._auto_suppress("confirm_yolo")
-            else:
-                # Downgrade all YOLO tasks to default
-                for i in yolo_indices:
-                    resolved[i] = resolved[i].model_copy(update={"execution_mode": "default"})
-                logger.warning(
-                    "YOLO mode declined for batch, downgrading %d task(s) to default", count
-                )
+    async def _batch_resolve_cli(self, tasks: list[Any]) -> list[Any]:
+        """Aggregated CLI disambiguation for batch tasks."""
+        none_cli_indices = [i for i, t in enumerate(tasks) if t.cli is None]
+        if not none_cli_indices:
+            return tasks
+        result = await self._try_elicit(
+            f"Which CLI agent should handle {len(none_cli_indices)} task(s) with no CLI set?",
+            self._installed_clis,
+        )
+        if result is None or result.action != "accept":
+            raise ToolError("cli is required — elicitation was declined or unavailable")
+        assert isinstance(result, AcceptedElicitation)
+        chosen_cli = str(result.data)
+        resolved = list(tasks)
+        for i in none_cli_indices:
+            resolved[i] = resolved[i].model_copy(update={"cli": chosen_cli})
+        return resolved
 
-        # Trigger #2: CLI disambiguation (aggregated)
-        none_cli_indices = [i for i, t in enumerate(resolved) if t.cli is None]
-        if none_cli_indices:
-            result = await self._try_elicit(
-                f"Which CLI agent should handle {len(none_cli_indices)} task(s) with no CLI set?",
-                self._installed_clis,
-            )
-            if result is None or result.action != "accept":
-                raise ToolError("cli is required — elicitation was declined or unavailable")
-            assert isinstance(result, AcceptedElicitation)
-            chosen_cli = str(result.data)
-            for i in none_cli_indices:
-                resolved[i] = resolved[i].model_copy(update={"cli": chosen_cli})
-
-        # Trigger #3: Vague prompt advisory (aggregated)
+    async def _batch_warn_vague_prompts(self, tasks: list[Any]) -> None:
+        """Advisory-only: warn about short prompts in batch. Does not modify tasks."""
         vague_indices = [
-            i for i, t in enumerate(resolved) if len(t.prompt.strip()) < _VAGUE_PROMPT_THRESHOLD
+            i for i, t in enumerate(tasks) if len(t.prompt.strip()) < _VAGUE_PROMPT_THRESHOLD
         ]
         if vague_indices and self._prefs.confirm_vague_prompt is not False:
             await self._try_elicit(
                 f"{len(vague_indices)} task(s) have very short prompts. Consider elaborating.",
                 None,
             )
-            # Advisory only — result does not affect tasks
 
-        # Final validation: all tasks must have cli resolved
+    # ------------------------------------------------------------------
+    # Public: batch resolution
+    # ------------------------------------------------------------------
+
+    async def check_batch(
+        self,
+        tasks: list[Any],
+        elicit: bool = True,
+    ) -> list[Any]:
+        """Resolve parameters for a batch of tasks with aggregated elicitation."""
+        if not elicit:
+            for task in tasks:
+                if task.cli is None:
+                    raise ToolError("cli is required on all tasks when elicitation is disabled")
+            return tasks
+
+        resolved = await self._batch_confirm_yolo(tasks)
+        resolved = await self._batch_resolve_cli(resolved)
+        await self._batch_warn_vague_prompts(resolved)
+
         for task in resolved:
             if task.cli is None:
                 raise ToolError("cli is required on all tasks — at least one task has no CLI set")

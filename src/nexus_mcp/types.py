@@ -3,6 +3,24 @@ from typing import Annotated, Any, Literal, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
+__all__ = [
+    "ExecutionMode",
+    "LogLevel",
+    "LogEmitter",
+    "ProgressEmitter",
+    "OperationalDefaults",
+    "SessionPreferences",
+    "PromptRequest",
+    "AgentResponse",
+    "SubprocessResult",
+    "AgentTask",
+    "AgentTaskResult",
+    "MultiPromptResponse",
+    "DEFAULT_MAX_CONCURRENCY",
+    "MAX_PROMPT_LENGTH",
+    "PREFERENCES_KEY",
+]
+
 type ExecutionMode = Literal["default", "yolo"]
 type LogLevel = Literal["debug", "info", "warning", "error"]
 

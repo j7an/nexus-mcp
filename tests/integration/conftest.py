@@ -57,14 +57,8 @@ def codex_runner(codex_cli_available: str) -> CodexRunner:  # noqa: ARG001
 
     Fresh instance per test to avoid state leakage between tests.
     Depends on codex_cli_available to skip if CLI is absent.
-
-    Uses gpt-5.2 as the default model because the Codex CLI's built-in
-    default (gpt-5.3-codex) is not supported on standard ChatGPT accounts,
-    and o4-mini is no longer supported on ChatGPT-authenticated accounts.
     """
-    runner = CodexRunner()
-    runner.default_model = "gpt-5.2"
-    return runner
+    return CodexRunner()
 
 
 @pytest.fixture(scope="session")

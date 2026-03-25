@@ -12,15 +12,15 @@ import pytest
 from fastmcp.exceptions import ToolError
 
 from nexus_mcp.config import get_tool_timeout
+from nexus_mcp.emitters import make_mcp_emitter
 from nexus_mcp.exceptions import (
     ParseError,
     SubprocessError,
     UnsupportedAgentError,
 )
+from nexus_mcp.labels import assign_labels
 from nexus_mcp.server import (
-    _assign_labels,
     _inject_cli_enum,
-    _make_mcp_emitter,
     batch_prompt,
     build_server_instructions,
     mcp,
@@ -219,25 +219,25 @@ class TestToolTimeoutRegistration:
 
 
 class TestAssignLabels:
-    """Tests for the _assign_labels() pure helper."""
+    """Tests for the assign_labels() pure helper."""
 
     def test_single_task_gets_agent_name(self):
         """A single unlabeled task gets its agent name as label."""
         tasks = [make_agent_task(cli="gemini")]
-        result = _assign_labels(tasks)
+        result = assign_labels(tasks)
         assert result[0].label == "gemini"
 
     def test_two_identical_agents_get_suffixes(self):
         """Two tasks with the same agent get 'agent' and 'agent-2'."""
         tasks = [make_agent_task(cli="gemini"), make_agent_task(cli="gemini")]
-        result = _assign_labels(tasks)
+        result = assign_labels(tasks)
         assert result[0].label == "gemini"
         assert result[1].label == "gemini-2"
 
     def test_three_identical_agents_get_suffixes(self):
         """Three tasks with the same agent get 'agent', 'agent-2', 'agent-3'."""
         tasks = [make_agent_task(cli="gemini") for _ in range(3)]
-        result = _assign_labels(tasks)
+        result = assign_labels(tasks)
         assert result[0].label == "gemini"
         assert result[1].label == "gemini-2"
         assert result[2].label == "gemini-3"
@@ -245,7 +245,7 @@ class TestAssignLabels:
     def test_explicit_label_preserved(self):
         """An explicit label is kept as-is, not overwritten."""
         tasks = [make_agent_task(cli="gemini", label="my-task")]
-        result = _assign_labels(tasks)
+        result = assign_labels(tasks)
         assert result[0].label == "my-task"
 
     def test_explicit_label_blocks_auto_name(self):
@@ -254,29 +254,29 @@ class TestAssignLabels:
             make_agent_task(cli="gemini", label="gemini"),
             make_agent_task(cli="gemini"),
         ]
-        result = _assign_labels(tasks)
+        result = assign_labels(tasks)
         assert result[0].label == "gemini"
         assert result[1].label == "gemini-2"
 
     def test_mixed_agents_no_suffix(self):
         """Different agents don't get suffixes when there are no collisions."""
         tasks = [make_agent_task(cli="gemini"), make_agent_task(cli="codex")]
-        result = _assign_labels(tasks)
+        result = assign_labels(tasks)
         assert result[0].label == "gemini"
         assert result[1].label == "codex"
 
     def test_returns_new_list_does_not_mutate(self):
-        """_assign_labels() returns a new list; input tasks are unchanged."""
+        """assign_labels() returns a new list; input tasks are unchanged."""
         tasks = [make_agent_task(cli="gemini")]
         assert tasks[0].label is None
-        result = _assign_labels(tasks)
+        result = assign_labels(tasks)
         assert tasks[0].label is None  # original unchanged
         assert result is not tasks
         assert result[0] is not tasks[0]
 
     def test_empty_list_returns_empty(self):
         """An empty input list returns an empty list."""
-        assert _assign_labels([]) == []
+        assert assign_labels([]) == []
 
 
 class TestBatchPrompt:
@@ -719,13 +719,13 @@ class TestEmitterWiring:
 
 
 class TestMakeMcpEmitter:
-    """_make_mcp_emitter creates a dual-output emitter."""
+    """make_mcp_emitter creates a dual-output emitter."""
 
     async def test_info_calls_both_ctx_and_logger(self, ctx):
         """Info level calls ctx.info() and logger.info()."""
-        emitter = _make_mcp_emitter(ctx)
+        emitter = make_mcp_emitter(ctx)
 
-        with patch("nexus_mcp.server.logger") as mock_logger:
+        with patch("nexus_mcp.emitters.logger") as mock_logger:
             await emitter("info", "test message")
 
         ctx.info.assert_awaited_once_with("test message")
@@ -733,9 +733,9 @@ class TestMakeMcpEmitter:
 
     async def test_warning_calls_both_ctx_and_logger(self, ctx):
         """Warning level calls ctx.warning() and logger.warning()."""
-        emitter = _make_mcp_emitter(ctx)
+        emitter = make_mcp_emitter(ctx)
 
-        with patch("nexus_mcp.server.logger") as mock_logger:
+        with patch("nexus_mcp.emitters.logger") as mock_logger:
             await emitter("warning", "retry warning")
 
         ctx.warning.assert_awaited_once_with("retry warning")
@@ -743,9 +743,9 @@ class TestMakeMcpEmitter:
 
     async def test_error_calls_ctx_and_logger_with_exc_info(self, ctx):
         """Error level calls ctx.error() and logger.error(exc_info=True)."""
-        emitter = _make_mcp_emitter(ctx)
+        emitter = make_mcp_emitter(ctx)
 
-        with patch("nexus_mcp.server.logger") as mock_logger:
+        with patch("nexus_mcp.emitters.logger") as mock_logger:
             await emitter("error", "task failed")
 
         ctx.error.assert_awaited_once_with("task failed")
@@ -753,9 +753,9 @@ class TestMakeMcpEmitter:
 
     async def test_debug_calls_both_ctx_and_logger(self, ctx):
         """Debug level calls ctx.debug() and logger.debug()."""
-        emitter = _make_mcp_emitter(ctx)
+        emitter = make_mcp_emitter(ctx)
 
-        with patch("nexus_mcp.server.logger") as mock_logger:
+        with patch("nexus_mcp.emitters.logger") as mock_logger:
             await emitter("debug", "debug message")
 
         ctx.debug.assert_awaited_once_with("debug message")

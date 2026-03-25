@@ -4,6 +4,17 @@ All exceptions inherit from NexusMCPError, which inherits from Exception.
 Each concrete exception stores context attributes for debugging.
 """
 
+__all__ = [
+    "NexusMCPError",
+    "SubprocessError",
+    "SubprocessTimeoutError",
+    "RetryableError",
+    "ParseError",
+    "CLINotFoundError",
+    "UnsupportedAgentError",
+    "ConfigurationError",
+]
+
 
 class NexusMCPError(Exception):
     """Base exception for all nexus-mcp errors.

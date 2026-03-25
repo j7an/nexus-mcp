@@ -1,4 +1,6 @@
 # src/nexus_mcp/process.py
+__all__ = ["run_subprocess"]
+
 import asyncio  # ← REQUIRED: Module-level import for mock patching to work (see Step 7 warning)
 
 from nexus_mcp.exceptions import SubprocessError, SubprocessTimeoutError
