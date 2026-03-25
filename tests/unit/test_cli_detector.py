@@ -1,6 +1,7 @@
 # tests/unit/test_cli_detector.py
 """Tests for CLI detection, version parsing, and capability checking."""
 
+import logging
 import subprocess
 from unittest.mock import Mock, patch
 
@@ -87,6 +88,32 @@ class TestGetCLIVersion:
         ):
             version = get_cli_version("gemini")
         assert version is None
+
+    def test_get_cli_version_logs_warning_on_oserror(self, caplog):
+        """OSError during version detection must emit a warning, not fail silently."""
+        with (
+            caplog.at_level(logging.WARNING, logger="nexus_mcp.cli_detector"),
+            patch(
+                "nexus_mcp.cli_detector.subprocess.run",
+                side_effect=FileNotFoundError("gemini"),
+            ),
+        ):
+            version = get_cli_version("gemini")
+        assert version is None
+        assert any("gemini" in r.message for r in caplog.records)
+
+    def test_get_cli_version_logs_warning_on_timeout(self, caplog):
+        """TimeoutExpired during version detection must emit a warning."""
+        with (
+            caplog.at_level(logging.WARNING, logger="nexus_mcp.cli_detector"),
+            patch(
+                "nexus_mcp.cli_detector.subprocess.run",
+                side_effect=subprocess.TimeoutExpired("gemini", 10),
+            ),
+        ):
+            version = get_cli_version("gemini")
+        assert version is None
+        assert any("gemini" in r.message for r in caplog.records)
 
     def test_get_cli_version_unknown_cli_returns_none(self):
         """Unknown CLI name: subprocess succeeds but parse_version returns None.

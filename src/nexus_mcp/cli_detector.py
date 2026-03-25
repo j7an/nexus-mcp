@@ -9,6 +9,7 @@ Provides:
 - get_cli_capabilities(): Aggregate capabilities for a CLI + version
 """
 
+import logging
 import re
 import shutil
 import subprocess
@@ -17,6 +18,8 @@ from dataclasses import dataclass
 from packaging import version as pkg_version
 
 from nexus_mcp.config import get_cli_detection_timeout
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +55,7 @@ def get_cli_version(cli_name: str) -> str | None:
             result.stderr, cli=cli_name
         )
     except (OSError, subprocess.TimeoutExpired):
-        pass
+        logger.warning("Failed to detect version for '%s'", cli_name, exc_info=True)
     return None
 
 

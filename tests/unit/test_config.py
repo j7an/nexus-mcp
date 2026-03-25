@@ -561,6 +561,36 @@ class TestReadRunnerEnvDefaults:
         result = _read_runner_env_defaults("codex")
         assert result.retry_base_delay is None  # negative → skipped
 
+    def test_zero_timeout_silently_skipped(self, monkeypatch):
+        """NEXUS_GEMINI_TIMEOUT=0 must not produce a zero-second timeout."""
+        monkeypatch.setenv("NEXUS_GEMINI_TIMEOUT", "0")
+        result = _read_runner_env_defaults("gemini")
+        assert result.timeout is None  # zero → skipped
+
+    def test_negative_timeout_silently_skipped(self, monkeypatch):
+        """Negative timeout must be silently skipped."""
+        monkeypatch.setenv("NEXUS_GEMINI_TIMEOUT", "-5")
+        result = _read_runner_env_defaults("gemini")
+        assert result.timeout is None
+
+    def test_negative_max_retries_silently_skipped(self, monkeypatch):
+        """NEXUS_GEMINI_MAX_RETRIES=-5 must not produce range(-5)."""
+        monkeypatch.setenv("NEXUS_GEMINI_MAX_RETRIES", "-5")
+        result = _read_runner_env_defaults("gemini")
+        assert result.max_retries is None
+
+    def test_zero_max_retries_silently_skipped(self, monkeypatch):
+        """NEXUS_GEMINI_MAX_RETRIES=0 must not produce range(0)."""
+        monkeypatch.setenv("NEXUS_GEMINI_MAX_RETRIES", "0")
+        result = _read_runner_env_defaults("gemini")
+        assert result.max_retries is None
+
+    def test_zero_output_limit_silently_skipped(self, monkeypatch):
+        """Zero output limit must be silently skipped."""
+        monkeypatch.setenv("NEXUS_GEMINI_OUTPUT_LIMIT", "0")
+        result = _read_runner_env_defaults("gemini")
+        assert result.output_limit is None
+
 
 # ---------------------------------------------------------------------------
 # Per-runner models
