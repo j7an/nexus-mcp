@@ -28,7 +28,9 @@ from pydantic import Field
 from nexus_mcp.cli_detector import detect_cli
 from nexus_mcp.config import get_runner_defaults, get_runner_models, get_tool_timeout
 from nexus_mcp.elicitation import ElicitationGuard
+from nexus_mcp.emitters import make_mcp_emitter, make_progress_emitter
 from nexus_mcp.icons import SERVER_ICONS, TOOL_CONFIG_ICONS, TOOL_EXEC_ICONS
+from nexus_mcp.labels import assign_labels
 from nexus_mcp.middleware import (
     ErrorNormalizationMiddleware,
     RequestLoggingMiddleware,
@@ -47,10 +49,7 @@ from nexus_mcp.types import (
     AgentTask,
     AgentTaskResult,
     ExecutionMode,
-    LogEmitter,
-    LogLevel,
     MultiPromptResponse,
-    ProgressEmitter,
 )
 
 
@@ -137,107 +136,6 @@ mcp.add_middleware(RequestLoggingMiddleware())
 logger = logging.getLogger(__name__)
 
 
-def _make_mcp_emitter(ctx: Context) -> LogEmitter:
-    """Create a LogEmitter that sends to both MCP client and Python logger.
-
-    Error-level messages use logger.error(exc_info=True) to preserve tracebacks
-    on stderr for server operators, while MCP clients get a clean message.
-    """
-    _ctx_methods = {
-        "debug": ctx.debug,
-        "info": ctx.info,
-        "warning": ctx.warning,
-        "error": ctx.error,
-    }
-
-    async def _emit(level: LogLevel, message: str) -> None:
-        await _ctx_methods[level](message)
-        if level == "error":
-            logger.error(message, exc_info=True)
-        else:
-            getattr(logger, level)(message)
-
-    return _emit
-
-
-def _make_progress_emitter(
-    ctx: Context,
-    *,
-    task_idx: int | None = None,
-    task_count: int | None = None,
-    label: str | None = None,
-) -> ProgressEmitter:
-    """Create a ProgressEmitter that bridges to ctx.report_progress.
-
-    Single-task mode (default): runner's progress/total pass through directly.
-    Batch mode (task_idx + task_count set): wraps with task-level counters.
-    """
-    if task_idx is not None and task_count is not None:
-        _idx, _count, _label = task_idx, task_count, label
-
-        async def _report(progress: float, total: float, message: str) -> None:
-            await ctx.report_progress(
-                progress=_idx,
-                total=_count,
-                message=f"Task '{_label}' ({_idx}/{_count}): {message}",
-            )
-    else:
-
-        async def _report(progress: float, total: float, message: str) -> None:
-            await ctx.report_progress(progress=progress, total=total, message=message)
-
-    return _report
-
-
-def _next_available_label(base: str, reserved: set[str]) -> str:
-    """Return the first available label derived from base, avoiding reserved names.
-
-    Returns base if available, otherwise base-2, base-3, etc.
-
-    Args:
-        base: Preferred label (typically cli name).
-        reserved: Set of already-taken labels.
-
-    Returns:
-        base if not reserved, otherwise base-N for the lowest N >= 2 not in reserved.
-    """
-    if base not in reserved:
-        return base
-    n = 2
-    while f"{base}-{n}" in reserved:
-        n += 1
-    return f"{base}-{n}"
-
-
-def _assign_labels(tasks: list[AgentTask]) -> list[AgentTask]:
-    """Assign unique labels to tasks, preserving explicit ones.
-
-    Two-pass algorithm:
-    1. Reserve all explicit labels
-    2. Auto-assign from cli name with -N suffixes for collisions
-
-    Args:
-        tasks: List of AgentTask objects (may have label=None).
-
-    Returns:
-        New list of AgentTask objects with label set on every item.
-        Input tasks are never mutated (model_copy() used throughout).
-    """
-    reserved = {t.label for t in tasks if t.label is not None}
-
-    result: list[AgentTask] = []
-    for task in tasks:
-        if task.label is not None:
-            result.append(task)
-            continue
-
-        label = _next_available_label(task.cli or "task", reserved)
-        reserved.add(label)
-        result.append(task.model_copy(update={"label": label}))
-
-    return result
-
-
 async def batch_prompt(
     *,
     tasks: list[AgentTask],
@@ -291,7 +189,7 @@ async def batch_prompt(
         model_part = task.model or "default"
         return f"[cli: {task.cli} | model: {model_part} | mode: {task.execution_mode}]"
 
-    labelled = _assign_labels(tasks)
+    labelled = assign_labels(tasks)
     semaphore = asyncio.Semaphore(max_concurrency)
     is_single_task = len(labelled) == 1
 
@@ -300,13 +198,13 @@ async def batch_prompt(
 
     async def _run_single(idx: int, task: AgentTask) -> AgentTaskResult:
         async with semaphore:
-            emitter = _make_mcp_emitter(ctx) if ctx else None
+            emitter = make_mcp_emitter(ctx) if ctx else None
             progress = None
             if ctx:
                 if is_single_task:
-                    progress = _make_progress_emitter(ctx)
+                    progress = make_progress_emitter(ctx)
                 else:
-                    progress = _make_progress_emitter(
+                    progress = make_progress_emitter(
                         ctx,
                         task_idx=idx + 1,
                         task_count=len(labelled),

@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastmcp import Context
 
+from nexus_mcp.emitters import make_progress_emitter
 from nexus_mcp.server import (
-    _make_progress_emitter,
     batch_prompt,
     prompt,
 )
@@ -16,12 +16,12 @@ from tests.fixtures import GEMINI_JSON_RESPONSE, create_mock_process
 
 
 class TestMakeProgressEmitter:
-    """Verify _make_progress_emitter bridges to ctx.report_progress."""
+    """Verify make_progress_emitter bridges to ctx.report_progress."""
 
     async def test_emitter_calls_ctx_report_progress(self):
         """Emitter should forward (progress, total, message) to ctx."""
         ctx = AsyncMock(spec=Context)
-        emitter = _make_progress_emitter(ctx)
+        emitter = make_progress_emitter(ctx)
 
         await emitter(2, 5, "Executing subprocess")
 
@@ -32,7 +32,7 @@ class TestMakeProgressEmitter:
     async def test_emitter_forwards_multiple_calls(self):
         """Multiple calls should each forward to ctx."""
         ctx = AsyncMock(spec=Context)
-        emitter = _make_progress_emitter(ctx)
+        emitter = make_progress_emitter(ctx)
 
         await emitter(1, 5, "Building command")
         await emitter(2, 5, "Executing subprocess")
@@ -46,7 +46,7 @@ class TestMakeBatchProgressEmitter:
     async def test_batch_emitter_replaces_progress_total(self):
         """Batch emitter should use task_idx/task_count, not runner's progress/total."""
         ctx = AsyncMock(spec=Context)
-        emitter = _make_progress_emitter(ctx, task_idx=2, task_count=5, label="summarize")
+        emitter = make_progress_emitter(ctx, task_idx=2, task_count=5, label="summarize")
 
         await emitter(3, 5, "Parsing output")
 
@@ -59,7 +59,7 @@ class TestMakeBatchProgressEmitter:
     async def test_batch_emitter_preserves_runner_message(self):
         """Batch emitter should include runner's original message after prefix."""
         ctx = AsyncMock(spec=Context)
-        emitter = _make_progress_emitter(ctx, task_idx=1, task_count=3, label="analyze")
+        emitter = make_progress_emitter(ctx, task_idx=1, task_count=3, label="analyze")
 
         await emitter(1, 1, "Attempt 1/1")
 
