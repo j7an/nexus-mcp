@@ -40,6 +40,9 @@ def ctx() -> AsyncMock:
     # By default, simulate a client that does not support elicitation.
     # Tests that need elicitation should configure mock.elicit explicitly.
     mock.elicit.side_effect = McpError(ErrorData(code=-32600, message="not supported"))
+    # Provide a backing store mock for persistent store helpers (store.py)
+    mock.fastmcp._state_store = AsyncMock()
+    mock.fastmcp._state_store.get.return_value = None
     return mock
 
 

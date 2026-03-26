@@ -1,4 +1,4 @@
-"""Session preference management for nexus-mcp.
+"""Persistent preference management for nexus-mcp.
 
 Provides three MCP tools (set/get/clear) and internal helpers for preference
 resolution in prompt/batch_prompt.
@@ -11,8 +11,9 @@ from fastmcp import Context
 from fastmcp.exceptions import ToolError
 from pydantic import ValidationError
 
+from nexus_mcp.store import delete_preferences as _delete_prefs
+from nexus_mcp.store import load_preferences, save_preferences
 from nexus_mcp.types import (
-    PREFERENCES_KEY,
     AgentTask,
     ExecutionMode,
     SessionPreferences,
@@ -20,10 +21,10 @@ from nexus_mcp.types import (
 
 
 async def _get_session_preferences(ctx: Context | None) -> SessionPreferences:
-    """Read session preferences from ctx state, returning defaults when unset or ctx is None."""
+    """Read preferences from persistent store, returning defaults when unset or ctx is None."""
     if ctx is None:
         return SessionPreferences()
-    raw = await ctx.get_state(PREFERENCES_KEY)
+    raw = await load_preferences(ctx)
     if raw is None:
         return SessionPreferences()
     try:
@@ -94,29 +95,29 @@ async def set_preferences(
     clear_confirm_large_batch: bool = False,
     ctx: Context | None = None,
 ) -> str:
-    """Set session-scoped preferences that apply to subsequent prompt/batch_prompt calls.
+    """Set persistent preferences that apply to subsequent prompt/batch_prompt calls.
 
-    Preferences persist for the duration of the MCP session. Call again to update,
+    Preferences persist across MCP sessions. Call again to update,
     or use clear_preferences to reset all fields at once.
 
     To clear a single field while keeping others, pass the corresponding clear_* flag:
         set_preferences(clear_model=True)  # clears model, keeps execution_mode
 
     Args:
-        execution_mode: Default execution mode for this session ('default' or 'yolo').
-            None retains the current session value (use clear_execution_mode=True to reset).
-        model: Default model name for this session (e.g. 'gemini-2.5-flash').
-            None retains the current session value (use clear_model=True to reset).
+        execution_mode: Default execution mode ('default' or 'yolo').
+            None retains the current value (use clear_execution_mode=True to reset).
+        model: Default model name (e.g. 'gemini-2.5-flash').
+            None retains the current value (use clear_model=True to reset).
         max_retries: Default max retry attempts for transient errors.
-            None retains the current session value (use clear_max_retries=True to reset).
+            None retains the current value (use clear_max_retries=True to reset).
         output_limit: Default max output bytes per response.
-            None retains the current session value (use clear_output_limit=True to reset).
+            None retains the current value (use clear_output_limit=True to reset).
         timeout: Default subprocess timeout in seconds.
-            None retains the current session value (use clear_timeout=True to reset).
+            None retains the current value (use clear_timeout=True to reset).
         retry_base_delay: Default base delay seconds for exponential backoff.
-            None retains the current session value (use clear_retry_base_delay=True to reset).
+            None retains the current value (use clear_retry_base_delay=True to reset).
         retry_max_delay: Default max delay cap seconds for exponential backoff.
-            None retains the current session value (use clear_retry_max_delay=True to reset).
+            None retains the current value (use clear_retry_max_delay=True to reset).
         clear_execution_mode: If True, resets execution_mode to None regardless of the
             execution_mode argument.
         clear_model: If True, resets model to None regardless of the model argument.
@@ -160,12 +161,12 @@ async def set_preferences(
             clear_confirm_large_batch, confirm_large_batch, existing.confirm_large_batch
         ),
     )
-    await ctx.set_state(PREFERENCES_KEY, merged.model_dump())
+    await save_preferences(ctx, merged.model_dump())
     return f"Preferences set: {json.dumps(merged.model_dump())}"
 
 
 async def get_preferences(ctx: Context | None = None) -> dict[str, Any]:
-    """Return the current session preferences.
+    """Return the current persistent preferences.
 
     Returns:
         Dict with 'execution_mode', 'model', 'max_retries', 'output_limit', and 'timeout'
@@ -178,12 +179,12 @@ async def get_preferences(ctx: Context | None = None) -> dict[str, Any]:
 
 
 async def clear_preferences(ctx: Context | None = None) -> str:
-    """Clear all session preferences, reverting to per-call defaults.
+    """Clear all persistent preferences, reverting to per-call defaults.
 
     Returns:
         Confirmation string.
     """
     if ctx is None:
         raise ToolError("clear_preferences requires an active session context")
-    await ctx.delete_state(PREFERENCES_KEY)
+    await _delete_prefs(ctx)
     return "Preferences cleared"

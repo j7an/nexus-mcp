@@ -765,6 +765,5 @@ class TestMakeMcpEmitter:
 class TestPromptElicitation:
     async def test_prompt_accepts_elicit_parameter(self, mock_cli_detection, mock_subprocess, ctx):
         mock_subprocess.return_value = create_mock_process(stdout=GEMINI_JSON_RESPONSE)
-        ctx.get_state.return_value = None
         result = await prompt(cli="gemini", prompt="Hello world test prompt", elicit=False, ctx=ctx)
         assert "test output" in result

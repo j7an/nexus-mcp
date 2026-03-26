@@ -6,10 +6,9 @@ Mock boundary: detect_cli, get_cli_version for runner detection.
 """
 
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import patch
 
 import pytest
-from fastmcp import Context
 from fastmcp.exceptions import ResourceError
 
 from nexus_mcp.resources import get_all_runners, get_config, get_preferences_resource, get_runner
@@ -115,17 +114,18 @@ class TestGetConfig:
 class TestGetPreferencesResource:
     """Tests for the nexus://preferences resource."""
 
-    async def test_session_preferences_returned(self, ctx):
+    @patch("nexus_mcp.preferences.load_preferences")
+    async def test_session_preferences_returned(self, mock_load, ctx):
         """When session has preferences, returns them with source='session'."""
-        ctx.get_state.return_value = {"execution_mode": "yolo", "model": "gemini-2.5-pro"}
+        mock_load.return_value = {"execution_mode": "yolo", "model": "gemini-2.5-pro"}
         result = json.loads(await get_preferences_resource(ctx=ctx))
         assert result["source"] == "session"
         assert result["preferences"]["execution_mode"] == "yolo"
         assert result["preferences"]["model"] == "gemini-2.5-pro"
 
-    async def test_empty_session_returns_session_source(self, ctx):
+    @patch("nexus_mcp.preferences.load_preferences", return_value=None)
+    async def test_empty_session_returns_session_source(self, _mock_load, ctx):
         """When session exists but no prefs set, returns empty prefs with source='session'."""
-        ctx.get_state.return_value = None
         result = json.loads(await get_preferences_resource(ctx=ctx))
         assert result["source"] == "session"
         assert result["preferences"]["execution_mode"] is None
@@ -138,9 +138,8 @@ class TestGetPreferencesResource:
         assert result["preferences"]["timeout"] is not None
         assert result["preferences"]["max_retries"] is not None
 
-    async def test_fallback_on_session_error(self):
+    @patch("nexus_mcp.preferences.load_preferences", side_effect=RuntimeError("store broken"))
+    async def test_fallback_on_session_error(self, _mock_load, ctx):
         """When _get_session_preferences raises, falls back to config defaults."""
-        broken_ctx = AsyncMock(spec=Context)
-        broken_ctx.get_state.side_effect = RuntimeError("session broken")
-        result = json.loads(await get_preferences_resource(ctx=broken_ctx))
+        result = json.loads(await get_preferences_resource(ctx=ctx))
         assert result["source"] == "defaults"
