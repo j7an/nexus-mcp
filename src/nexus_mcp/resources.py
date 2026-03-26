@@ -14,11 +14,12 @@ Resources:
 import json
 import logging
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ResourceError
 
 from nexus_mcp.cli_detector import detect_cli, get_cli_version
 from nexus_mcp.config import _get_merged_defaults, get_runner_defaults, get_runner_models
+from nexus_mcp.preferences import _get_session_preferences
 from nexus_mcp.runners.factory import RunnerFactory
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,56 @@ async def get_config() -> str:
     )
 
 
+async def get_preferences_resource(ctx: Context | None = None) -> str:
+    """Return current session preferences with config fallback.
+
+    Resource URI: nexus://preferences
+
+    If ctx is available and session preferences can be read, returns them
+    with source='session'. Otherwise falls back to resolved config defaults
+    with source='defaults'.
+    """
+    if ctx is None:
+        logger.debug("No context provided, falling back to config defaults")
+        defaults = _get_merged_defaults()
+        fallback = {
+            "execution_mode": defaults.execution_mode,
+            "model": defaults.model,
+            "max_retries": defaults.max_retries,
+            "output_limit": defaults.output_limit,
+            "timeout": defaults.timeout,
+            "retry_base_delay": defaults.retry_base_delay,
+            "retry_max_delay": defaults.retry_max_delay,
+            "elicit": None,
+            "confirm_yolo": None,
+            "confirm_vague_prompt": None,
+            "confirm_high_retries": None,
+            "confirm_large_batch": None,
+        }
+        return json.dumps({"source": "defaults", "preferences": fallback})
+    try:
+        prefs = await _get_session_preferences(ctx)
+        return json.dumps({"source": "session", "preferences": prefs.model_dump()})
+    except Exception:
+        logger.debug("Session preferences unavailable, falling back to config defaults")
+        defaults = _get_merged_defaults()
+        fallback = {
+            "execution_mode": defaults.execution_mode,
+            "model": defaults.model,
+            "max_retries": defaults.max_retries,
+            "output_limit": defaults.output_limit,
+            "timeout": defaults.timeout,
+            "retry_base_delay": defaults.retry_base_delay,
+            "retry_max_delay": defaults.retry_max_delay,
+            "elicit": None,
+            "confirm_yolo": None,
+            "confirm_vague_prompt": None,
+            "confirm_high_retries": None,
+            "confirm_large_batch": None,
+        }
+        return json.dumps({"source": "defaults", "preferences": fallback})
+
+
 def register_resources(mcp: FastMCP) -> None:
     """Register all MCP resources on the server.
 
@@ -107,3 +158,6 @@ def register_resources(mcp: FastMCP) -> None:
     mcp.resource("nexus://config", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS)(
         get_config
     )
+    mcp.resource(
+        "nexus://preferences", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS
+    )(get_preferences_resource)

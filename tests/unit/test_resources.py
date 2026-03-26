@@ -6,11 +6,13 @@ Mock boundary: detect_cli, get_cli_version for runner detection.
 """
 
 import json
+from unittest.mock import AsyncMock
 
 import pytest
+from fastmcp import Context
 from fastmcp.exceptions import ResourceError
 
-from nexus_mcp.resources import get_all_runners, get_config, get_runner
+from nexus_mcp.resources import get_all_runners, get_config, get_preferences_resource, get_runner
 
 RUNNER_INFO_KEYS = {
     "name",
@@ -108,3 +110,37 @@ class TestGetConfig:
         assert result["timeout"] == HARDCODED_DEFAULTS.timeout
         assert result["max_retries"] == HARDCODED_DEFAULTS.max_retries
         assert result["retry_base_delay"] == HARDCODED_DEFAULTS.retry_base_delay
+
+
+class TestGetPreferencesResource:
+    """Tests for the nexus://preferences resource."""
+
+    async def test_session_preferences_returned(self, ctx):
+        """When session has preferences, returns them with source='session'."""
+        ctx.get_state.return_value = {"execution_mode": "yolo", "model": "gemini-2.5-pro"}
+        result = json.loads(await get_preferences_resource(ctx=ctx))
+        assert result["source"] == "session"
+        assert result["preferences"]["execution_mode"] == "yolo"
+        assert result["preferences"]["model"] == "gemini-2.5-pro"
+
+    async def test_empty_session_returns_session_source(self, ctx):
+        """When session exists but no prefs set, returns empty prefs with source='session'."""
+        ctx.get_state.return_value = None
+        result = json.loads(await get_preferences_resource(ctx=ctx))
+        assert result["source"] == "session"
+        assert result["preferences"]["execution_mode"] is None
+
+    async def test_fallback_to_defaults_when_no_ctx(self):
+        """When ctx is None, falls back to config defaults with source='defaults'."""
+        result = json.loads(await get_preferences_resource(ctx=None))
+        assert result["source"] == "defaults"
+        # Config defaults have non-None values for operational fields
+        assert result["preferences"]["timeout"] is not None
+        assert result["preferences"]["max_retries"] is not None
+
+    async def test_fallback_on_session_error(self):
+        """When _get_session_preferences raises, falls back to config defaults."""
+        broken_ctx = AsyncMock(spec=Context)
+        broken_ctx.get_state.side_effect = RuntimeError("session broken")
+        result = json.loads(await get_preferences_resource(ctx=broken_ctx))
+        assert result["source"] == "defaults"
