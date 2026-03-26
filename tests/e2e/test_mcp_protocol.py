@@ -167,12 +167,21 @@ class TestServerInstructionsProtocol:
 
     async def test_instructions_contain_runner_names(self, mcp_client):
         """Server instructions mention all registered runner names."""
-        # FastMCP exposes instructions via the server info
         from nexus_mcp.server import mcp
 
         assert mcp.instructions is not None
         for name in ("claude", "codex", "gemini", "opencode"):
             assert name in mcp.instructions
+
+    async def test_instructions_contain_benchmark_urls(self, mcp_client):
+        """Server instructions include all four benchmark data source URLs."""
+        from nexus_mcp.server import mcp
+
+        assert mcp.instructions is not None
+        assert "https://artificialanalysis.ai/leaderboards/models" in mcp.instructions
+        assert "https://openrouter.ai/api/v1/models" in mcp.instructions
+        assert "https://lmarena.ai/?leaderboard" in mcp.instructions
+        assert "https://llm-stats.com" in mcp.instructions
 
 
 # ---------------------------------------------------------------------------

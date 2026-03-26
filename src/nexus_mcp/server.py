@@ -90,6 +90,16 @@ def build_server_instructions() -> str:
         lines.append(f"- Default timeout: {defaults.timeout}s")
         lines.append("")
 
+    lines.append("## Model Benchmark Data Sources")
+    lines.append("")
+    lines.append("Use these to inform runner and model selection (no API keys required):")
+    lines.append("")
+    lines.append("- Artificial Analysis: https://artificialanalysis.ai/leaderboards/models")
+    lines.append("- OpenRouter: https://openrouter.ai/api/v1/models")
+    lines.append("- Chatbot Arena: https://lmarena.ai/?leaderboard")
+    lines.append("- LLM Stats: https://llm-stats.com")
+    lines.append("")
+
     return "\n".join(lines)
 
 
