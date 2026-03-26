@@ -18,7 +18,6 @@ __all__ = [
     "MultiPromptResponse",
     "DEFAULT_MAX_CONCURRENCY",
     "MAX_PROMPT_LENGTH",
-    "PREFERENCES_KEY",
 ]
 
 type ExecutionMode = Literal["default", "yolo"]
@@ -104,7 +103,6 @@ class SessionPreferences(BaseModel):
 
 DEFAULT_MAX_CONCURRENCY = 3
 MAX_PROMPT_LENGTH = 131072  # 128KB character limit — conservative guard against ARG_MAX
-PREFERENCES_KEY = "nexus:preferences"
 
 
 class PromptRequest(BaseModel):
