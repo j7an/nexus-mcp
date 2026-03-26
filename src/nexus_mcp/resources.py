@@ -18,7 +18,7 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ResourceError
 
 from nexus_mcp.cli_detector import detect_cli, get_cli_version
-from nexus_mcp.config import get_runner_defaults, get_runner_models
+from nexus_mcp.config import _get_merged_defaults, get_runner_defaults, get_runner_models
 from nexus_mcp.runners.factory import RunnerFactory
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,28 @@ async def get_runner(cli: str) -> str:
     return json.dumps(_build_runner_info(cli))
 
 
+async def get_config() -> str:
+    """Return resolved operational config defaults.
+
+    Resource URI: nexus://config
+
+    Returns the fully merged defaults (hardcoded + env var overrides).
+    Excludes execution_mode and model (exposed via nexus://preferences).
+    """
+    defaults = _get_merged_defaults()
+    return json.dumps(
+        {
+            "timeout": defaults.timeout,
+            "output_limit": defaults.output_limit,
+            "max_retries": defaults.max_retries,
+            "retry_base_delay": defaults.retry_base_delay,
+            "retry_max_delay": defaults.retry_max_delay,
+            "tool_timeout": defaults.tool_timeout,
+            "cli_detection_timeout": defaults.cli_detection_timeout,
+        }
+    )
+
+
 def register_resources(mcp: FastMCP) -> None:
     """Register all MCP resources on the server.
 
@@ -82,3 +104,6 @@ def register_resources(mcp: FastMCP) -> None:
     mcp.resource(
         "nexus://runners/{cli}", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS
     )(get_runner)
+    mcp.resource("nexus://config", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS)(
+        get_config
+    )

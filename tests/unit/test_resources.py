@@ -10,7 +10,7 @@ import json
 import pytest
 from fastmcp.exceptions import ResourceError
 
-from nexus_mcp.resources import get_all_runners, get_runner
+from nexus_mcp.resources import get_all_runners, get_config, get_runner
 
 RUNNER_INFO_KEYS = {
     "name",
@@ -75,3 +75,36 @@ class TestGetRunner:
         assert result["installed"] is False
         assert result["path"] is None
         assert result["version"] is None
+
+
+CONFIG_KEYS = {
+    "timeout",
+    "output_limit",
+    "max_retries",
+    "retry_base_delay",
+    "retry_max_delay",
+    "tool_timeout",
+    "cli_detection_timeout",
+}
+
+
+class TestGetConfig:
+    """Tests for the nexus://config resource."""
+
+    async def test_returns_resolved_defaults(self):
+        result = json.loads(await get_config())
+        assert set(result.keys()) == CONFIG_KEYS
+
+    async def test_all_fields_non_null(self):
+        result = json.loads(await get_config())
+        for key, value in result.items():
+            assert value is not None, f"Config field {key!r} is None"
+
+    async def test_values_match_hardcoded_defaults(self):
+        """Without env var overrides, values match HARDCODED_DEFAULTS."""
+        from nexus_mcp.config_resolver import HARDCODED_DEFAULTS
+
+        result = json.loads(await get_config())
+        assert result["timeout"] == HARDCODED_DEFAULTS.timeout
+        assert result["max_retries"] == HARDCODED_DEFAULTS.max_retries
+        assert result["retry_base_delay"] == HARDCODED_DEFAULTS.retry_base_delay
