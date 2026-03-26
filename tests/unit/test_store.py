@@ -8,8 +8,12 @@ from fastmcp import Context
 from nexus_mcp.store import (
     PREFERENCES_COLLECTION,
     PREFERENCES_KEY,
+    TIERS_COLLECTION,
+    TIERS_KEY,
     delete_preferences,
+    load_model_tiers,
     load_preferences,
+    save_model_tiers,
     save_preferences,
 )
 
@@ -103,3 +107,42 @@ class TestRoundTrip:
         store.get.return_value = None
         result = await load_preferences(ctx)
         assert result is None
+
+
+class TestModelTierStorage:
+    async def test_load_returns_none_when_empty(self):
+        store = AsyncMock()
+        store.get.return_value = None
+        ctx = _make_ctx_with_store(store)
+        result = await load_model_tiers(ctx)
+        assert result is None
+        store.get.assert_awaited_once_with(key=TIERS_KEY, collection=TIERS_COLLECTION)
+
+    async def test_load_returns_saved_tiers(self):
+        store = AsyncMock()
+        state_value = AsyncMock()
+        state_value.value = {"gemini-2.5-flash": "quick", "gemini-2.5-pro": "thorough"}
+        store.get.return_value = state_value
+        ctx = _make_ctx_with_store(store)
+        result = await load_model_tiers(ctx)
+        assert result == {"gemini-2.5-flash": "quick", "gemini-2.5-pro": "thorough"}
+
+    async def test_save_calls_put_with_correct_args(self):
+        store = AsyncMock()
+        ctx = _make_ctx_with_store(store)
+        tiers = {"model-a": "quick"}
+        await save_model_tiers(ctx, tiers)
+        store.put.assert_awaited_once_with(
+            key=TIERS_KEY, value={"value": tiers}, collection=TIERS_COLLECTION
+        )
+
+    async def test_save_then_load_round_trip(self):
+        store = AsyncMock()
+        ctx = _make_ctx_with_store(store)
+        tiers = {"gemini-flash": "quick", "gpt-5.2": "standard"}
+        await save_model_tiers(ctx, tiers)
+        state_value = AsyncMock()
+        state_value.value = tiers
+        store.get.return_value = state_value
+        result = await load_model_tiers(ctx)
+        assert result == tiers

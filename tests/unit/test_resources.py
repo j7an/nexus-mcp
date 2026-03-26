@@ -22,6 +22,7 @@ RUNNER_INFO_KEYS = {
     "default_model",
     "supported_modes",
     "default_timeout",
+    "unclassified_models",
 }
 
 
@@ -76,6 +77,112 @@ class TestGetRunner:
         assert result["installed"] is False
         assert result["path"] is None
         assert result["version"] is None
+
+
+class TestRunnerModelTierEnrichment:
+    """Tests for model tier enrichment in runner resources."""
+
+    async def test_models_are_objects_with_name_and_tier(self, mock_cli_detection):
+        result = json.loads(await get_all_runners())
+        for runner in result["runners"]:
+            for model in runner["models"]:
+                assert isinstance(model, dict)
+                assert "name" in model
+                assert "tier" in model
+                assert model["tier"] in ("quick", "standard", "thorough")
+
+    async def test_tier_matches_heuristic_when_no_saved_tiers(self, mock_cli_detection):
+        from nexus_mcp.tiers import get_model_tier
+
+        result = json.loads(await get_all_runners())
+        gemini = next(r for r in result["runners"] if r["name"] == "gemini")
+        for model_obj in gemini["models"]:
+            expected_tier = get_model_tier(model_obj["name"])
+            assert model_obj["tier"] == expected_tier
+
+    async def test_unclassified_models_listed(self, mock_cli_detection):
+        result = json.loads(await get_all_runners())
+        for runner in result["runners"]:
+            assert "unclassified_models" in runner
+            assert isinstance(runner["unclassified_models"], list)
+
+    async def test_single_runner_has_enriched_models(self, mock_cli_detection):
+        result = json.loads(await get_runner("gemini"))
+        for model in result["models"]:
+            assert isinstance(model, dict)
+            assert "name" in model
+            assert "tier" in model
+
+    @patch(
+        "nexus_mcp.resources.get_runner_models",
+        return_value=["gemini-2.5-flash", "gemini-2.5-pro"],
+    )
+    async def test_saved_tiers_override_heuristic(self, _mock_models, mock_cli_detection):
+        """When saved tiers are provided, they take precedence over heuristics."""
+        from nexus_mcp.resources import _build_runner_info
+
+        # Without saved tiers, flash is "quick" by heuristic
+        info_default = _build_runner_info("gemini")
+        flash_default = next(m for m in info_default["models"] if m["name"] == "gemini-2.5-flash")
+        assert flash_default["tier"] == "quick"
+
+        # With saved tiers, flash overridden to "thorough"
+        saved = {"gemini-2.5-flash": "thorough"}
+        info_saved = _build_runner_info("gemini", saved_tiers=saved)
+        flash_saved = next(m for m in info_saved["models"] if m["name"] == "gemini-2.5-flash")
+        assert flash_saved["tier"] == "thorough"
+
+    @patch(
+        "nexus_mcp.resources.get_runner_models",
+        return_value=["gemini-2.5-flash", "gemini-2.5-pro"],
+    )
+    async def test_saved_tier_model_not_in_unclassified(self, _mock_models, mock_cli_detection):
+        """Models with saved tiers should NOT appear in unclassified_models."""
+        from nexus_mcp.resources import _build_runner_info
+
+        saved = {"gemini-2.5-flash": "quick", "gemini-2.5-pro": "thorough"}
+        info = _build_runner_info("gemini", saved_tiers=saved)
+        for name in saved:
+            assert name not in info["unclassified_models"]
+
+    @patch("nexus_mcp.resources.load_model_tiers", side_effect=RuntimeError("store broken"))
+    async def test_store_failure_falls_back_to_heuristics(self, mock_load, mock_cli_detection, ctx):
+        """When load_model_tiers raises, resource still returns with heuristic tiers."""
+        result = json.loads(await get_all_runners(ctx=ctx))
+        assert "runners" in result
+        for runner in result["runners"]:
+            for model in runner["models"]:
+                assert "tier" in model
+
+    @patch(
+        "nexus_mcp.resources.get_runner_models",
+        return_value=["gemini-2.5-flash", "gemini-2.5-pro"],
+    )
+    @patch("nexus_mcp.resources.load_model_tiers")
+    async def test_get_all_runners_with_ctx_loads_saved_tiers(
+        self, mock_load, _mock_models, mock_cli_detection, ctx
+    ):
+        """When ctx is provided, saved tiers are loaded and used."""
+        mock_load.return_value = {"gemini-2.5-flash": "thorough"}
+        result = json.loads(await get_all_runners(ctx=ctx))
+        mock_load.assert_awaited_once_with(ctx)
+        gemini = next(r for r in result["runners"] if r["name"] == "gemini")
+        flash = next(m for m in gemini["models"] if m["name"] == "gemini-2.5-flash")
+        assert flash["tier"] == "thorough"
+
+    @patch(
+        "nexus_mcp.resources.get_runner_models",
+        return_value=["gemini-2.5-flash", "gemini-2.5-pro"],
+    )
+    @patch("nexus_mcp.resources.load_model_tiers")
+    async def test_get_runner_with_ctx_loads_saved_tiers(
+        self, mock_load, _mock_models, mock_cli_detection, ctx
+    ):
+        """get_runner() also uses saved tiers when ctx is provided."""
+        mock_load.return_value = {"gemini-2.5-flash": "thorough"}
+        result = json.loads(await get_runner("gemini", ctx=ctx))
+        flash = next(m for m in result["models"] if m["name"] == "gemini-2.5-flash")
+        assert flash["tier"] == "thorough"
 
 
 CONFIG_KEYS = {

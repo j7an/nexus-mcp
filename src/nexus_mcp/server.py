@@ -46,6 +46,7 @@ from nexus_mcp.preferences import (
 )
 from nexus_mcp.resources import register_resources
 from nexus_mcp.runners.factory import RunnerFactory
+from nexus_mcp.store import load_model_tiers, save_model_tiers
 from nexus_mcp.types import (
     DEFAULT_MAX_CONCURRENCY,
     AgentTask,
@@ -88,6 +89,16 @@ def build_server_instructions() -> str:
         lines.append(f"- Execution modes: {modes}")
         lines.append(f"- Default timeout: {defaults.timeout}s")
         lines.append("")
+
+    lines.append("## Model Benchmark Data Sources")
+    lines.append("")
+    lines.append("Use these to inform runner and model selection (no API keys required):")
+    lines.append("")
+    lines.append("- Artificial Analysis: https://artificialanalysis.ai/leaderboards/models")
+    lines.append("- OpenRouter: https://openrouter.ai/api/v1/models")
+    lines.append("- Chatbot Arena: https://lmarena.ai/?leaderboard")
+    lines.append("- LLM Stats: https://llm-stats.com")
+    lines.append("")
 
     return "\n".join(lines)
 
@@ -338,6 +349,50 @@ async def prompt(
     return output
 
 
+async def set_model_tiers(
+    *,
+    tiers: dict[str, str],
+    ctx: Context | None = None,
+) -> str:
+    """Save model tier classifications.
+
+    Client sends sampling/benchmark results; server persists to backing store.
+    Overwrites any previously saved tiers entirely.
+
+    Args:
+        tiers: Mapping of model name to tier ('quick', 'standard', 'thorough').
+        ctx: MCP context (auto-injected by FastMCP).
+
+    Returns:
+        Confirmation string with the number of tiers saved.
+    """
+    if ctx is None:
+        raise ToolError("set_model_tiers requires an active session context")
+    await save_model_tiers(ctx, tiers)
+    return f"Model tiers saved: {len(tiers)} model(s) classified"
+
+
+async def get_model_tiers(
+    *,
+    ctx: Context | None = None,
+) -> dict[str, str]:
+    """Return saved model tier classifications.
+
+    Returns all persisted tier classifications. Returns an empty dict
+    if no tiers have been saved yet.
+
+    Args:
+        ctx: MCP context (auto-injected by FastMCP).
+
+    Returns:
+        Dict mapping model names to tiers ('quick', 'standard', 'thorough').
+    """
+    if ctx is None:
+        raise ToolError("get_model_tiers requires an active session context")
+    result = await load_model_tiers(ctx)
+    return result or {}
+
+
 # Inject CLI names as enum into tool schemas before registration freezes them.
 _inject_cli_enum()
 
@@ -384,6 +439,20 @@ _CLEAR_PREFS_ANNOTATIONS = ToolAnnotations(
     idempotentHint=True,
     openWorldHint=False,
 )
+_SET_TIERS_ANNOTATIONS = ToolAnnotations(
+    title="Set Model Tiers",
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+_GET_TIERS_ANNOTATIONS = ToolAnnotations(
+    title="Get Model Tiers",
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
 
 mcp.tool(
     task=True, timeout=_tool_timeout, icons=TOOL_EXEC_ICONS, annotations=_BATCH_EXEC_ANNOTATIONS
@@ -394,6 +463,8 @@ mcp.tool(task=True, timeout=_tool_timeout, icons=TOOL_EXEC_ICONS, annotations=_E
 mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_SET_PREFS_ANNOTATIONS)(set_preferences)
 mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_GET_PREFS_ANNOTATIONS)(get_preferences)
 mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_CLEAR_PREFS_ANNOTATIONS)(clear_preferences)
+mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_SET_TIERS_ANNOTATIONS)(set_model_tiers)
+mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_GET_TIERS_ANNOTATIONS)(get_model_tiers)
 
 # Register MCP resources (read-only data endpoints).
 register_resources(mcp)

@@ -77,9 +77,20 @@ class TestReadRunnersResource:
             "default_model",
             "supported_modes",
             "default_timeout",
+            "unclassified_models",
         }
         for runner in data["runners"]:
             assert set(runner.keys()) == expected_keys
+
+    async def test_models_are_enriched_with_tier_data(self, mcp_client):
+        contents = await mcp_client.read_resource("nexus://runners")
+        data = json.loads(contents[0].text)
+        for runner in data["runners"]:
+            for model in runner["models"]:
+                assert isinstance(model, dict)
+                assert "name" in model
+                assert "tier" in model
+                assert model["tier"] in ("quick", "standard", "thorough")
 
 
 @pytest.mark.e2e

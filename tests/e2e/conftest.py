@@ -15,7 +15,7 @@ import pytest
 from fastmcp import Client
 
 from nexus_mcp.server import mcp
-from nexus_mcp.store import PREFERENCES_COLLECTION, PREFERENCES_KEY
+from nexus_mcp.store import PREFERENCES_COLLECTION, PREFERENCES_KEY, TIERS_COLLECTION, TIERS_KEY
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +31,17 @@ async def _clean_preferences_store():
     yield
     with contextlib.suppress(Exception):
         await store.delete(key=PREFERENCES_KEY, collection=PREFERENCES_COLLECTION)
+
+
+@pytest.fixture(autouse=True)
+async def _clean_tiers_store():
+    """Clear persisted tier data between E2E tests."""
+    store = mcp._state_store
+    with contextlib.suppress(Exception):
+        await store.delete(key=TIERS_KEY, collection=TIERS_COLLECTION)
+    yield
+    with contextlib.suppress(Exception):
+        await store.delete(key=TIERS_KEY, collection=TIERS_COLLECTION)
 
 
 @pytest.fixture(autouse=True)

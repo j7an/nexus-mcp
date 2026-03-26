@@ -44,8 +44,8 @@ def _extract_prompt_from_args(args: tuple) -> str:
 class TestToolDiscovery:
     """Verify MCP tool registration via list_tools() JSON-RPC call."""
 
-    async def test_list_tools_returns_all_five(self, mcp_client):
-        """list_tools() returns exactly 5 registered tools."""
+    async def test_list_tools_returns_all_seven(self, mcp_client):
+        """list_tools() returns exactly 7 registered tools."""
         tools = await mcp_client.list_tools()
         names = {t.name for t in tools}
         assert names == {
@@ -54,6 +54,8 @@ class TestToolDiscovery:
             "set_preferences",
             "get_preferences",
             "clear_preferences",
+            "set_model_tiers",
+            "get_model_tiers",
         }
 
     async def test_prompt_schema_has_required_params(self, mcp_client):
@@ -142,6 +144,8 @@ class TestToolAnnotations:
             "set_preferences": "Set Session Preferences",
             "get_preferences": "Get Session Preferences",
             "clear_preferences": "Clear Session Preferences",
+            "set_model_tiers": "Set Model Tiers",
+            "get_model_tiers": "Get Model Tiers",
         }
         tools = await mcp_client.list_tools()
         for tool in tools:
@@ -163,12 +167,24 @@ class TestServerInstructionsProtocol:
 
     async def test_instructions_contain_runner_names(self, mcp_client):
         """Server instructions mention all registered runner names."""
-        # FastMCP exposes instructions via the server info
         from nexus_mcp.server import mcp
 
         assert mcp.instructions is not None
         for name in ("claude", "codex", "gemini", "opencode"):
             assert name in mcp.instructions
+
+    async def test_instructions_contain_benchmark_urls(self, mcp_client):
+        """Server instructions include all four benchmark data source URLs."""
+        from nexus_mcp.server import mcp
+
+        assert mcp.instructions is not None
+        # Check for full markdown lines to avoid CodeQL "incomplete URL substring" false positive
+        assert "- Artificial Analysis: https://artificialanalysis.ai/leaderboards/models" in (
+            mcp.instructions
+        )
+        assert "- OpenRouter: https://openrouter.ai/api/v1/models" in mcp.instructions
+        assert "- Chatbot Arena: https://lmarena.ai/?leaderboard" in mcp.instructions
+        assert "- LLM Stats: https://llm-stats.com" in mcp.instructions
 
 
 # ---------------------------------------------------------------------------

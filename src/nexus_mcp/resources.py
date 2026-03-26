@@ -21,16 +21,22 @@ from nexus_mcp.cli_detector import detect_cli, get_cli_version
 from nexus_mcp.config import _get_merged_defaults, get_runner_defaults, get_runner_models
 from nexus_mcp.preferences import _get_session_preferences
 from nexus_mcp.runners.factory import RunnerFactory
+from nexus_mcp.store import load_model_tiers
+from nexus_mcp.tiers import get_model_tier
 
 logger = logging.getLogger(__name__)
 
 _RESOURCE_ANNOTATIONS = {"readOnlyHint": True, "idempotentHint": True}
 
 
-def _build_runner_info(cli_name: str) -> dict[str, object]:
+def _build_runner_info(
+    cli_name: str,
+    saved_tiers: dict[str, str] | None = None,
+) -> dict[str, object]:
     """Build runner metadata dict for a single CLI.
 
     Aggregates data from RunnerFactory, cli_detector, and config modules.
+    Models are enriched with tier classification (saved or heuristic).
     """
     cli_info = detect_cli(cli_name)
     defaults = get_runner_defaults(cli_name)
@@ -38,28 +44,45 @@ def _build_runner_info(cli_name: str) -> dict[str, object]:
     models = get_runner_models(cli_name)
     version = get_cli_version(cli_name) if cli_info.found else None
 
+    enriched_models: list[dict[str, str]] = []
+    unclassified: list[str] = []
+    for model in models:
+        if saved_tiers and model in saved_tiers:
+            tier = saved_tiers[model]
+        else:
+            tier = get_model_tier(model)
+            unclassified.append(model)
+        enriched_models.append({"name": model, "tier": tier})
+
     return {
         "name": cli_name,
         "installed": cli_info.found,
         "path": cli_info.path,
         "version": version,
-        "models": list(models),
+        "models": enriched_models,
         "default_model": defaults.model,
         "supported_modes": list(runner_cls._SUPPORTED_MODES),
         "default_timeout": defaults.timeout,
+        "unclassified_models": unclassified,
     }
 
 
-async def get_all_runners() -> str:
+async def get_all_runners(ctx: Context | None = None) -> str:
     """Return all registered CLI runners with full details.
 
     Resource URI: nexus://runners
     """
-    runners = [_build_runner_info(name) for name in RunnerFactory.list_clis()]
+    saved_tiers: dict[str, str] | None = None
+    if ctx is not None:
+        try:
+            saved_tiers = await load_model_tiers(ctx)
+        except Exception:
+            logger.debug("Failed to load saved model tiers, using heuristics only")
+    runners = [_build_runner_info(name, saved_tiers) for name in RunnerFactory.list_clis()]
     return json.dumps({"runners": runners})
 
 
-async def get_runner(cli: str) -> str:
+async def get_runner(cli: str, ctx: Context | None = None) -> str:
     """Return details for a single CLI runner.
 
     Resource URI: nexus://runners/{cli}
@@ -69,7 +92,13 @@ async def get_runner(cli: str) -> str:
     """
     if cli not in RunnerFactory._REGISTRY:
         raise ResourceError(f"Unknown CLI runner: {cli!r}")
-    return json.dumps(_build_runner_info(cli))
+    saved_tiers: dict[str, str] | None = None
+    if ctx is not None:
+        try:
+            saved_tiers = await load_model_tiers(ctx)
+        except Exception:
+            logger.debug("Failed to load saved model tiers, using heuristics only")
+    return json.dumps(_build_runner_info(cli, saved_tiers))
 
 
 async def get_config() -> str:

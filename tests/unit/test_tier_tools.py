@@ -1,0 +1,44 @@
+"""Unit tests for set_model_tiers and get_model_tiers tools."""
+
+from unittest.mock import patch
+
+import pytest
+from fastmcp.exceptions import ToolError
+
+from nexus_mcp.server import get_model_tiers, set_model_tiers
+
+
+class TestSetModelTiers:
+    @patch("nexus_mcp.server.save_model_tiers")
+    async def test_saves_tiers_and_returns_confirmation(self, mock_save, ctx):
+        tiers = {"gemini-2.5-flash": "quick", "gemini-2.5-pro": "thorough"}
+        result = await set_model_tiers(tiers=tiers, ctx=ctx)
+        assert "2 model(s)" in result
+        mock_save.assert_awaited_once_with(ctx, tiers)
+
+    async def test_requires_context(self):
+        with pytest.raises(ToolError, match="requires.*context"):
+            await set_model_tiers(tiers={"a": "quick"}, ctx=None)
+
+    @patch("nexus_mcp.server.save_model_tiers")
+    async def test_empty_tiers_is_valid(self, mock_save, ctx):
+        result = await set_model_tiers(tiers={}, ctx=ctx)
+        assert "0 model(s)" in result
+        mock_save.assert_awaited_once_with(ctx, {})
+
+
+class TestGetModelTiers:
+    @patch("nexus_mcp.server.load_model_tiers")
+    async def test_returns_saved_tiers(self, mock_load, ctx):
+        mock_load.return_value = {"gemini-2.5-flash": "quick"}
+        result = await get_model_tiers(ctx=ctx)
+        assert result == {"gemini-2.5-flash": "quick"}
+
+    @patch("nexus_mcp.server.load_model_tiers", return_value=None)
+    async def test_returns_empty_dict_when_no_tiers(self, mock_load, ctx):
+        result = await get_model_tiers(ctx=ctx)
+        assert result == {}
+
+    async def test_requires_context(self):
+        with pytest.raises(ToolError, match="requires.*context"):
+            await get_model_tiers(ctx=None)
