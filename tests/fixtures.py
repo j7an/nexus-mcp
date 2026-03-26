@@ -195,8 +195,11 @@ def cli_detection_mocks():
     with (
         patch("nexus_mcp.runners.base.detect_cli") as mock_detect,
         patch("nexus_mcp.runners.base.get_cli_version", return_value="0.12.0"),
+        patch("nexus_mcp.resources.detect_cli") as mock_res_detect,
+        patch("nexus_mcp.resources.get_cli_version", return_value="0.12.0"),
     ):
         mock_detect.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
+        mock_res_detect.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
         yield mock_detect
     RunnerFactory.clear_cache()
 
