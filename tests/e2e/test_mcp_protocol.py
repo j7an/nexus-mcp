@@ -85,7 +85,75 @@ class TestToolDiscovery:
 
 
 # ---------------------------------------------------------------------------
-# Class 2: Server instructions protocol
+# Class 2: Tool annotations
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestToolAnnotations:
+    """Verify MCP tool annotations are set correctly on all tools."""
+
+    async def test_execution_tools_have_destructive_open_world_annotations(self, mcp_client):
+        """prompt and batch_prompt are destructive + open-world (they shell out to CLIs)."""
+        tools = await mcp_client.list_tools()
+        for name in ("prompt", "batch_prompt"):
+            tool = next(t for t in tools if t.name == name)
+            assert tool.annotations is not None, f"{name} missing annotations"
+            assert tool.annotations.readOnlyHint is False
+            assert tool.annotations.destructiveHint is True
+            assert tool.annotations.idempotentHint is False
+            assert tool.annotations.openWorldHint is True
+
+    async def test_get_preferences_is_read_only_and_idempotent(self, mcp_client):
+        """get_preferences is a pure read with no side effects."""
+        tools = await mcp_client.list_tools()
+        tool = next(t for t in tools if t.name == "get_preferences")
+        assert tool.annotations is not None
+        assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.destructiveHint is False
+        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.openWorldHint is False
+
+    async def test_set_preferences_is_idempotent_non_destructive(self, mcp_client):
+        """set_preferences merges state (non-destructive) and is idempotent."""
+        tools = await mcp_client.list_tools()
+        tool = next(t for t in tools if t.name == "set_preferences")
+        assert tool.annotations is not None
+        assert tool.annotations.readOnlyHint is False
+        assert tool.annotations.destructiveHint is False
+        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.openWorldHint is False
+
+    async def test_clear_preferences_is_destructive_and_idempotent(self, mcp_client):
+        """clear_preferences erases all state (destructive) but clearing twice is the same."""
+        tools = await mcp_client.list_tools()
+        tool = next(t for t in tools if t.name == "clear_preferences")
+        assert tool.annotations is not None
+        assert tool.annotations.readOnlyHint is False
+        assert tool.annotations.destructiveHint is True
+        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.openWorldHint is False
+
+    async def test_all_tools_have_titles(self, mcp_client):
+        """Every tool has a human-readable title set via annotations."""
+        expected_titles = {
+            "prompt": "Prompt CLI Agent",
+            "batch_prompt": "Batch Prompt CLI Agents",
+            "set_preferences": "Set Session Preferences",
+            "get_preferences": "Get Session Preferences",
+            "clear_preferences": "Clear Session Preferences",
+        }
+        tools = await mcp_client.list_tools()
+        for tool in tools:
+            assert tool.annotations is not None, f"{tool.name} missing annotations"
+            assert tool.annotations.title == expected_titles[tool.name], (
+                f"{tool.name}: expected title {expected_titles[tool.name]!r}, "
+                f"got {tool.annotations.title!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Class 3: Server instructions protocol
 # ---------------------------------------------------------------------------
 
 

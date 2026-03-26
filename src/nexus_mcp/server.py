@@ -23,6 +23,7 @@ from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from nexus_mcp.cli_detector import detect_cli
@@ -345,8 +346,50 @@ _inject_cli_enum()
 # passes task=True, the call goes through Docket instead (subprocess-level
 # timeout applies). Both prompt and batch_prompt support either path.
 _tool_timeout = get_tool_timeout()
-mcp.tool(task=True, timeout=_tool_timeout, icons=TOOL_EXEC_ICONS)(batch_prompt)
-mcp.tool(task=True, timeout=_tool_timeout, icons=TOOL_EXEC_ICONS)(prompt)
-mcp.tool(icons=TOOL_CONFIG_ICONS)(set_preferences)
-mcp.tool(icons=TOOL_CONFIG_ICONS)(get_preferences)
-mcp.tool(icons=TOOL_CONFIG_ICONS)(clear_preferences)
+
+# Annotations communicate behavioral hints to MCP clients (e.g. auto-approval decisions).
+_EXEC_ANNOTATIONS = ToolAnnotations(
+    title="Prompt CLI Agent",
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=False,
+    openWorldHint=True,
+)
+_BATCH_EXEC_ANNOTATIONS = ToolAnnotations(
+    title="Batch Prompt CLI Agents",
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=False,
+    openWorldHint=True,
+)
+_SET_PREFS_ANNOTATIONS = ToolAnnotations(
+    title="Set Session Preferences",
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+_GET_PREFS_ANNOTATIONS = ToolAnnotations(
+    title="Get Session Preferences",
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+_CLEAR_PREFS_ANNOTATIONS = ToolAnnotations(
+    title="Clear Session Preferences",
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+
+mcp.tool(
+    task=True, timeout=_tool_timeout, icons=TOOL_EXEC_ICONS, annotations=_BATCH_EXEC_ANNOTATIONS
+)(batch_prompt)
+mcp.tool(task=True, timeout=_tool_timeout, icons=TOOL_EXEC_ICONS, annotations=_EXEC_ANNOTATIONS)(
+    prompt
+)
+mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_SET_PREFS_ANNOTATIONS)(set_preferences)
+mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_GET_PREFS_ANNOTATIONS)(get_preferences)
+mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_CLEAR_PREFS_ANNOTATIONS)(clear_preferences)
