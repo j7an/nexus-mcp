@@ -50,3 +50,28 @@ async def delete_preferences(ctx: Context) -> None:
     """Delete preferences from persistent store."""
     store = _get_store(ctx)
     await store.delete(key=PREFERENCES_KEY, collection=PREFERENCES_COLLECTION)
+
+
+TIERS_COLLECTION = "nexus_tiers"
+TIERS_KEY = "model_tiers"
+
+
+async def load_model_tiers(ctx: Context) -> dict[str, str] | None:
+    """Load saved model tier classifications from the backing store.
+
+    Returns None if no tiers have been saved yet.
+    """
+    store = _get_store(ctx)
+    data = await store.get(key=TIERS_KEY, collection=TIERS_COLLECTION)
+    if data is None:
+        return None
+    return cast("dict[str, str]", data.value)
+
+
+async def save_model_tiers(ctx: Context, tiers: dict[str, str]) -> None:
+    """Save model tier classifications to the backing store.
+
+    Overwrites any previously saved tiers entirely.
+    """
+    store = _get_store(ctx)
+    await store.put(key=TIERS_KEY, value={"value": tiers}, collection=TIERS_COLLECTION)
