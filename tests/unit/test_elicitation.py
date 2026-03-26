@@ -25,8 +25,6 @@ from nexus_mcp.types import AgentTask, SessionPreferences
 def mock_ctx() -> AsyncMock:
     ctx = AsyncMock(spec=Context)
     ctx.elicit = AsyncMock()
-    ctx.get_state = AsyncMock(return_value=None)
-    ctx.set_state = AsyncMock()
     return ctx
 
 
@@ -264,14 +262,18 @@ class TestYoloConfirmation:
 
     async def test_fires_when_yolo(self, mock_ctx: AsyncMock, installed_clis: list[str]) -> None:
         mock_ctx.elicit.return_value = AcceptedElicitation(data={})
-        guard = ElicitationGuard(mock_ctx, installed_clis)
-        result = await guard.check_prompt(
-            cli="gemini",
-            model=None,
-            execution_mode="yolo",
-            prompt_text="explain quantum computing in depth",
-            elicit=True,
-        )
+        with (
+            patch("nexus_mcp.elicitation.load_preferences", return_value=None),
+            patch("nexus_mcp.elicitation.save_preferences"),
+        ):
+            guard = ElicitationGuard(mock_ctx, installed_clis)
+            result = await guard.check_prompt(
+                cli="gemini",
+                model=None,
+                execution_mode="yolo",
+                prompt_text="explain quantum computing in depth",
+                elicit=True,
+            )
         mock_ctx.elicit.assert_called_once()
         assert result.execution_mode == "yolo"
 
@@ -306,20 +308,22 @@ class TestYoloConfirmation:
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
         mock_ctx.elicit.return_value = AcceptedElicitation(data={})
-        mock_ctx.get_state.return_value = None
-        guard = ElicitationGuard(mock_ctx, installed_clis)
-        await guard.check_prompt(
-            cli="gemini",
-            model=None,
-            execution_mode="yolo",
-            prompt_text="explain quantum computing in depth",
-            elicit=True,
-        )
-        mock_ctx.set_state.assert_called_once()
-        call_args = mock_ctx.set_state.call_args
-        assert call_args[0][0] == "nexus:preferences"
-        saved = call_args[0][1]
-        assert saved["confirm_yolo"] is False
+        with (
+            patch("nexus_mcp.elicitation.load_preferences", return_value=None) as mock_load,
+            patch("nexus_mcp.elicitation.save_preferences") as mock_save,
+        ):
+            guard = ElicitationGuard(mock_ctx, installed_clis)
+            await guard.check_prompt(
+                cli="gemini",
+                model=None,
+                execution_mode="yolo",
+                prompt_text="explain quantum computing in depth",
+                elicit=True,
+            )
+            mock_load.assert_awaited_once()
+            mock_save.assert_awaited_once()
+            saved = mock_save.call_args.args[1]
+            assert saved["confirm_yolo"] is False
 
     async def test_suppressed_yolo_skips_elicitation(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
@@ -341,14 +345,18 @@ class TestYoloConfirmation:
     ) -> None:
         mock_ctx.elicit.return_value = AcceptedElicitation(data={})
         prefs = SessionPreferences(confirm_yolo=None)
-        guard = ElicitationGuard(mock_ctx, installed_clis, prefs=prefs)
-        await guard.check_prompt(
-            cli="gemini",
-            model=None,
-            execution_mode="yolo",
-            prompt_text="explain quantum computing in depth",
-            elicit=True,
-        )
+        with (
+            patch("nexus_mcp.elicitation.load_preferences", return_value=None),
+            patch("nexus_mcp.elicitation.save_preferences"),
+        ):
+            guard = ElicitationGuard(mock_ctx, installed_clis, prefs=prefs)
+            await guard.check_prompt(
+                cli="gemini",
+                model=None,
+                execution_mode="yolo",
+                prompt_text="explain quantum computing in depth",
+                elicit=True,
+            )
         mock_ctx.elicit.assert_called_once()
 
 
@@ -410,15 +418,16 @@ class TestVaguePromptCheck:
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
         mock_ctx.elicit.return_value = AcceptedElicitation(data="elaborated prompt text")
-        guard = ElicitationGuard(mock_ctx, installed_clis)
-        await guard.check_prompt(
-            cli="gemini",
-            model=None,
-            execution_mode="default",
-            prompt_text="explain QC",
-            elicit=True,
-        )
-        mock_ctx.set_state.assert_not_called()
+        with patch("nexus_mcp.elicitation.save_preferences") as mock_save:
+            guard = ElicitationGuard(mock_ctx, installed_clis)
+            await guard.check_prompt(
+                cli="gemini",
+                model=None,
+                execution_mode="default",
+                prompt_text="explain QC",
+                elicit=True,
+            )
+            mock_save.assert_not_awaited()
 
     async def test_explicit_suppress_skips_trigger(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
@@ -453,7 +462,6 @@ class TestBatchElicitation:
     ) -> None:
         """3 out of 5 YOLO tasks triggers a single elicit with count in message."""
         mock_ctx.elicit.return_value = AcceptedElicitation(data={})
-        mock_ctx.get_state.return_value = None
         tasks = [
             AgentTask(cli="gemini", prompt="do something useful here", execution_mode="yolo"),
             AgentTask(cli="gemini", prompt="do something useful here", execution_mode="yolo"),
@@ -461,8 +469,12 @@ class TestBatchElicitation:
             AgentTask(cli="gemini", prompt="do something useful here", execution_mode="default"),
             AgentTask(cli="gemini", prompt="do something useful here", execution_mode="default"),
         ]
-        guard = ElicitationGuard(mock_ctx, installed_clis)
-        await guard.check_batch(tasks, elicit=True)
+        with (
+            patch("nexus_mcp.elicitation.load_preferences", return_value=None),
+            patch("nexus_mcp.elicitation.save_preferences"),
+        ):
+            guard = ElicitationGuard(mock_ctx, installed_clis)
+            await guard.check_batch(tasks, elicit=True)
         mock_ctx.elicit.assert_called_once()
         call_message = mock_ctx.elicit.call_args.args[0]
         assert "3" in call_message

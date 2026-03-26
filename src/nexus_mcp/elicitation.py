@@ -22,7 +22,8 @@ from fastmcp.server.elicitation import (
 from mcp.shared.exceptions import McpError
 
 from nexus_mcp.config import get_runner_models
-from nexus_mcp.types import PREFERENCES_KEY, ExecutionMode, SessionPreferences
+from nexus_mcp.store import load_preferences, save_preferences
+from nexus_mcp.types import ExecutionMode, SessionPreferences
 
 logger = logging.getLogger(__name__)
 
@@ -97,12 +98,12 @@ class ElicitationGuard:
             return None
 
     async def _auto_suppress(self, pref_key: str) -> None:
-        """Persist a suppression flag into session state."""
-        raw = await self._ctx.get_state(PREFERENCES_KEY)
+        """Persist a suppression flag into the backing store."""
+        raw = await load_preferences(self._ctx)
         current = dict(raw) if raw else {}
         current[pref_key] = False
         validated = SessionPreferences(**current)
-        await self._ctx.set_state(PREFERENCES_KEY, validated.model_dump())
+        await save_preferences(self._ctx, validated.model_dump())
 
     # ------------------------------------------------------------------
     # Single-prompt validators
