@@ -22,6 +22,7 @@ RUNNER_INFO_KEYS = {
     "default_model",
     "supported_modes",
     "default_timeout",
+    "unclassified_models",
 }
 
 
@@ -76,6 +77,41 @@ class TestGetRunner:
         assert result["installed"] is False
         assert result["path"] is None
         assert result["version"] is None
+
+
+class TestRunnerModelTierEnrichment:
+    """Tests for model tier enrichment in runner resources."""
+
+    async def test_models_are_objects_with_name_and_tier(self, mock_cli_detection):
+        result = json.loads(await get_all_runners())
+        for runner in result["runners"]:
+            for model in runner["models"]:
+                assert isinstance(model, dict)
+                assert "name" in model
+                assert "tier" in model
+                assert model["tier"] in ("quick", "standard", "thorough")
+
+    async def test_tier_matches_heuristic_when_no_saved_tiers(self, mock_cli_detection):
+        from nexus_mcp.tiers import get_model_tier
+
+        result = json.loads(await get_all_runners())
+        gemini = next(r for r in result["runners"] if r["name"] == "gemini")
+        for model_obj in gemini["models"]:
+            expected_tier = get_model_tier(model_obj["name"])
+            assert model_obj["tier"] == expected_tier
+
+    async def test_unclassified_models_listed(self, mock_cli_detection):
+        result = json.loads(await get_all_runners())
+        for runner in result["runners"]:
+            assert "unclassified_models" in runner
+            assert isinstance(runner["unclassified_models"], list)
+
+    async def test_single_runner_has_enriched_models(self, mock_cli_detection):
+        result = json.loads(await get_runner("gemini"))
+        for model in result["models"]:
+            assert isinstance(model, dict)
+            assert "name" in model
+            assert "tier" in model
 
 
 CONFIG_KEYS = {
