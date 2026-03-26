@@ -268,17 +268,33 @@ class TestPreferencesValidation:
 
 
 @pytest.mark.e2e
-class TestSessionIsolation:
-    async def test_new_session_does_not_see_previous_session_preferences(self):
-        """Two sequential sessions are isolated: second session has no preferences."""
+class TestCrossSessionPersistence:
+    async def test_preferences_persist_across_sessions(self):
+        """Preferences set in session 1 are visible in session 2 (persistent store)."""
         # Session 1: set yolo preference
         async with Client(mcp) as client1:
             await client1.call_tool("set_preferences", {"execution_mode": "yolo"})
             r1 = await client1.call_tool("get_preferences", {})
             assert r1.data["execution_mode"] == "yolo"
-        mcp._lifespan_result_set = False  # FastMCP bug workaround
+        mcp._lifespan_result_set = False
 
-        # Session 2: no preferences set — should see defaults
+        # Session 2: should see session 1's preference
+        async with Client(mcp) as client2:
+            r2 = await client2.call_tool("get_preferences", {})
+            assert r2.data["execution_mode"] == "yolo"
+        mcp._lifespan_result_set = False
+
+    async def test_clear_preferences_then_new_session_sees_defaults(self):
+        """Clear in session 1 → session 2 sees None values."""
+        # Session 1: set then clear
+        async with Client(mcp) as client1:
+            await client1.call_tool("set_preferences", {"execution_mode": "yolo"})
+            await client1.call_tool("clear_preferences", {})
+            r1 = await client1.call_tool("get_preferences", {})
+            assert r1.data["execution_mode"] is None
+        mcp._lifespan_result_set = False
+
+        # Session 2: should see defaults (cleared)
         async with Client(mcp) as client2:
             r2 = await client2.call_tool("get_preferences", {})
             assert r2.data["execution_mode"] is None
