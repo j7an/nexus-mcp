@@ -51,8 +51,7 @@ def _build_runner_info(
             tier = saved_tiers[model]
         else:
             tier = get_model_tier(model)
-            if tier == "standard" and not (saved_tiers and model in saved_tiers):
-                unclassified.append(model)
+            unclassified.append(model)
         enriched_models.append({"name": model, "tier": tier})
 
     return {

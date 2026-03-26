@@ -178,10 +178,13 @@ class TestServerInstructionsProtocol:
         from nexus_mcp.server import mcp
 
         assert mcp.instructions is not None
-        assert "https://artificialanalysis.ai/leaderboards/models" in mcp.instructions
-        assert "https://openrouter.ai/api/v1/models" in mcp.instructions
-        assert "https://lmarena.ai/?leaderboard" in mcp.instructions
-        assert "https://llm-stats.com" in mcp.instructions
+        # Check for full markdown lines to avoid CodeQL "incomplete URL substring" false positive
+        assert "- Artificial Analysis: https://artificialanalysis.ai/leaderboards/models" in (
+            mcp.instructions
+        )
+        assert "- OpenRouter: https://openrouter.ai/api/v1/models" in mcp.instructions
+        assert "- Chatbot Arena: https://lmarena.ai/?leaderboard" in mcp.instructions
+        assert "- LLM Stats: https://llm-stats.com" in mcp.instructions
 
 
 # ---------------------------------------------------------------------------
