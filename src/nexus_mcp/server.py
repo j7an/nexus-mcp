@@ -44,6 +44,7 @@ from nexus_mcp.preferences import (
     get_preferences,
     set_preferences,
 )
+from nexus_mcp.prompts import register_prompts
 from nexus_mcp.resources import register_resources
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.store import load_model_tiers, save_model_tiers
@@ -468,3 +469,6 @@ mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_GET_TIERS_ANNOTATIONS)(get_model_
 
 # Register MCP resources (read-only data endpoints).
 register_resources(mcp)
+
+# Register MCP prompt templates (discoverable workflow scaffolds).
+register_prompts(mcp)
