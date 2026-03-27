@@ -67,17 +67,23 @@ def _build_runner_info(
     }
 
 
+async def _load_saved_tiers(ctx: Context | None) -> dict[str, str] | None:
+    """Load saved model tiers from context, returning None on failure or missing context."""
+    if ctx is None:
+        return None
+    try:
+        return await load_model_tiers(ctx)
+    except Exception:
+        logger.debug("Failed to load saved model tiers, using heuristics only")
+        return None
+
+
 async def get_all_runners(ctx: Context | None = None) -> str:
     """Return all registered CLI runners with full details.
 
     Resource URI: nexus://runners
     """
-    saved_tiers: dict[str, str] | None = None
-    if ctx is not None:
-        try:
-            saved_tiers = await load_model_tiers(ctx)
-        except Exception:
-            logger.debug("Failed to load saved model tiers, using heuristics only")
+    saved_tiers = await _load_saved_tiers(ctx)
     runners = [_build_runner_info(name, saved_tiers) for name in RunnerFactory.list_clis()]
     return json.dumps({"runners": runners})
 
@@ -92,12 +98,7 @@ async def get_runner(cli: str, ctx: Context | None = None) -> str:
     """
     if cli not in RunnerFactory._REGISTRY:
         raise ResourceError(f"Unknown CLI runner: {cli!r}")
-    saved_tiers: dict[str, str] | None = None
-    if ctx is not None:
-        try:
-            saved_tiers = await load_model_tiers(ctx)
-        except Exception:
-            logger.debug("Failed to load saved model tiers, using heuristics only")
+    saved_tiers = await _load_saved_tiers(ctx)
     return json.dumps(_build_runner_info(cli, saved_tiers))
 
 
@@ -132,45 +133,31 @@ async def get_preferences_resource(ctx: Context | None = None) -> str:
     with source='session'. Otherwise falls back to resolved config defaults
     with source='defaults'.
     """
-    if ctx is None:
+    if ctx is not None:
+        try:
+            prefs = await _get_session_preferences(ctx)
+            return json.dumps({"source": "session", "preferences": prefs.model_dump()})
+        except Exception:
+            logger.debug("Session preferences unavailable, falling back to config defaults")
+    else:
         logger.debug("No context provided, falling back to config defaults")
-        defaults = _get_merged_defaults()
-        fallback = {
-            "execution_mode": defaults.execution_mode,
-            "model": defaults.model,
-            "max_retries": defaults.max_retries,
-            "output_limit": defaults.output_limit,
-            "timeout": defaults.timeout,
-            "retry_base_delay": defaults.retry_base_delay,
-            "retry_max_delay": defaults.retry_max_delay,
-            "elicit": None,
-            "confirm_yolo": None,
-            "confirm_vague_prompt": None,
-            "confirm_high_retries": None,
-            "confirm_large_batch": None,
-        }
-        return json.dumps({"source": "defaults", "preferences": fallback})
-    try:
-        prefs = await _get_session_preferences(ctx)
-        return json.dumps({"source": "session", "preferences": prefs.model_dump()})
-    except Exception:
-        logger.debug("Session preferences unavailable, falling back to config defaults")
-        defaults = _get_merged_defaults()
-        fallback = {
-            "execution_mode": defaults.execution_mode,
-            "model": defaults.model,
-            "max_retries": defaults.max_retries,
-            "output_limit": defaults.output_limit,
-            "timeout": defaults.timeout,
-            "retry_base_delay": defaults.retry_base_delay,
-            "retry_max_delay": defaults.retry_max_delay,
-            "elicit": None,
-            "confirm_yolo": None,
-            "confirm_vague_prompt": None,
-            "confirm_high_retries": None,
-            "confirm_large_batch": None,
-        }
-        return json.dumps({"source": "defaults", "preferences": fallback})
+
+    defaults = _get_merged_defaults()
+    fallback = {
+        "execution_mode": defaults.execution_mode,
+        "model": defaults.model,
+        "max_retries": defaults.max_retries,
+        "output_limit": defaults.output_limit,
+        "timeout": defaults.timeout,
+        "retry_base_delay": defaults.retry_base_delay,
+        "retry_max_delay": defaults.retry_max_delay,
+        "elicit": None,
+        "confirm_yolo": None,
+        "confirm_vague_prompt": None,
+        "confirm_high_retries": None,
+        "confirm_large_batch": None,
+    }
+    return json.dumps({"source": "defaults", "preferences": fallback})
 
 
 def register_resources(mcp: FastMCP) -> None:

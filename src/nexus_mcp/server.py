@@ -54,6 +54,7 @@ from nexus_mcp.types import (
     AgentTaskResult,
     ExecutionMode,
     MultiPromptResponse,
+    SessionPreferences,
 )
 
 
@@ -150,6 +151,18 @@ mcp.add_middleware(RequestLoggingMiddleware())
 logger = logging.getLogger(__name__)
 
 
+def _resolve_elicit(elicit: bool | None, prefs: SessionPreferences) -> bool:
+    """Resolve the effective elicit flag from explicit arg and session preferences.
+
+    Priority: explicit argument > session preference > default (True).
+    """
+    if elicit is not None:
+        return elicit
+    if prefs.elicit is not None:
+        return prefs.elicit
+    return True
+
+
 async def batch_prompt(
     *,
     tasks: list[AgentTask],
@@ -183,9 +196,7 @@ async def batch_prompt(
     prefs = await _get_session_preferences(ctx)
     tasks = [_apply_preferences(t, prefs) for t in tasks]
 
-    resolved_elicit = (
-        elicit if elicit is not None else (prefs.elicit if prefs.elicit is not None else True)
-    )
+    resolved_elicit = _resolve_elicit(elicit, prefs)
     guard = (
         ElicitationGuard(ctx, installed_clis=list(RunnerFactory.list_clis()), prefs=prefs)
         if ctx
@@ -297,9 +308,7 @@ async def prompt(
         retry_max_delay if retry_max_delay is not None else prefs.retry_max_delay
     )
 
-    resolved_elicit = (
-        elicit if elicit is not None else (prefs.elicit if prefs.elicit is not None else True)
-    )
+    resolved_elicit = _resolve_elicit(elicit, prefs)
     guard = (
         ElicitationGuard(ctx, installed_clis=list(RunnerFactory.list_clis()), prefs=prefs)
         if ctx
