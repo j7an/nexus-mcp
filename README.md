@@ -9,9 +9,10 @@
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://pre-commit.com/)
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io/)
 
-A MCP server that enables AI models to invoke AI CLI agents (Gemini CLI, Codex, Claude Code, OpenCode) as
+An MCP server that enables AI models to invoke AI CLI agents (Gemini CLI, Codex, Claude Code, OpenCode) as
 tools. Provides parallel execution, automatic retries with exponential backoff, JSON-first response
-parsing, and structured output through five MCP tools.
+parsing, 10 discoverable prompt templates, model tier classification, and persistent preferences
+through seven MCP tools, four MCP resources, and ten MCP prompts.
 
 ## Use Cases
 
@@ -38,10 +39,13 @@ parallel rather than sequentially:
   spillover for outputs exceeding 50 KB
 - **Execution modes** — `default` (safe, no auto-approve), `yolo` (full auto-approve)
 - **CLI detection** — auto-detects binary path, version, and JSON output capability at startup
-- **Session preferences** — set defaults for execution mode, model, max retries, output limit, and timeout once per session; subsequent calls inherit them without repeating parameters
+- **Persistent preferences** — set defaults for execution mode, model, retries, output limit, and timeout; preferences persist across MCP sessions via the backing store (MemoryStore default, FileTreeStore/RedisStore for restart persistence)
+- **Prompt templates** — 10 discoverable workflow scaffolds (code review, debug, research, implement feature, etc.) via `list_prompts`/`get_prompt`; each returns structured messages with expert framing the client can use or ignore
+- **Model tier classification** — heuristic-based model classification into quick/standard/thorough tiers; clients can override with sampling or live benchmarks. The `nexus://runners` resource includes tier data per model
 - **Tool timeouts** — configurable safety timeout (default 15 min) cancels long-running tool calls to prevent the server from blocking indefinitely
 - **Client-visible logging** — runner events (retries, output truncation, error recovery) are sent to MCP clients via protocol notifications, not just server stderr
 - **Elicitation** — interactive parameter resolution via MCP elicitation; disambiguates missing CLI, offers model selection, confirms YOLO mode, and prompts for elaboration on vague prompts. Auto-detects client support and skips gracefully when unavailable. Suppression flags prevent repeat prompts within a session
+- **Benchmark data sources** — server instructions include URLs for Artificial Analysis, OpenRouter, Chatbot Arena, and LLM Stats so clients can fetch live model benchmarks without API keys
 - **Extensible** — implement `build_command` + `parse_output`, register in `RunnerFactory`
 
 | Agent | Status |
@@ -73,7 +77,8 @@ To update to the latest version:
 uvx --reinstall nexus-mcp
 ```
 
-### MCP Client Configuration
+<details>
+<summary><h3>MCP Client Configuration</h3></summary>
 
 **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
@@ -147,7 +152,10 @@ claude mcp add nexus-mcp \
 
 All `env` keys are optional — see [Configuration](#configuration) for the full list.
 
-### Setup for Development
+</details>
+
+<details>
+<summary><h3>Setup for Development</h3></summary>
 
 **Prerequisites:**
 - **Python 3.13+** ([download](https://www.python.org/downloads/))
@@ -184,6 +192,8 @@ uv run ruff check .              # Linting
 uv run python -m nexus_mcp
 ```
 
+</details>
+
 ## Usage
 
 Once nexus-mcp is configured in your MCP client, your AI assistant automatically sees its tools.
@@ -194,12 +204,12 @@ ask which runner to use. The server provides runner metadata (names, models, ava
 execution modes) in its connection instructions — no discovery call needed. The `cli` parameter
 includes a JSON schema enum listing valid runner names.
 
-### Fan out a research question (batch_prompt)
+<details>
+<summary><h3>Usage Examples</h3></summary>
 
-**You say to your AI assistant:**
-> "Get perspectives from Gemini, Codex, and OpenCode on transformer architectures — summary, limitations, and applications."
+#### Fan out a research question (batch_prompt)
 
-**Your AI assistant calls `batch_prompt` with the discovered runners:**
+**You say:** "Get perspectives from Gemini, Codex, and OpenCode on transformer architectures."
 
 ```json
 {
@@ -211,105 +221,51 @@ includes a JSON schema enum listing valid runner names.
 }
 ```
 
-### Code review from multiple angles (batch_prompt)
+#### Code review from multiple angles (batch_prompt)
 
-**You say to your AI assistant:**
-> "Have Gemini, Codex, and OpenCode each review this diff in parallel — I want three independent perspectives."
-
-**Your AI assistant calls `batch_prompt`:**
+**You say:** "Have Gemini, Codex, and OpenCode each review this diff in parallel."
 
 ```json
 {
   "tasks": [
-    { "cli": "gemini", "prompt": "Review this diff for security vulnerabilities and logic errors:\n\n<paste diff>", "label": "gemini-review" },
+    { "cli": "gemini", "prompt": "Review this diff for security vulnerabilities:\n\n<paste diff>", "label": "gemini-review" },
     { "cli": "codex", "prompt": "Review this diff for correctness and edge cases:\n\n<paste diff>", "label": "codex-review" },
     { "cli": "opencode", "prompt": "Review this diff for style and maintainability:\n\n<paste diff>", "label": "opencode-review" }
   ]
 }
 ```
 
-### Single-agent prompt (prompt)
+#### Single-agent prompt
 
-**You say to your AI assistant:**
-> "Ask Gemini Flash to explain the difference between TCP and UDP in simple terms."
-
-**Your AI assistant calls `prompt`:**
+**You say:** "Ask Gemini Flash to explain the difference between TCP and UDP."
 
 ```json
-{
-  "cli": "gemini",
-  "prompt": "Explain the difference between TCP and UDP in simple terms",
-  "model": "gemini-3-flash-preview"
-}
+{ "cli": "gemini", "prompt": "Explain the difference between TCP and UDP in simple terms", "model": "gemini-3-flash-preview" }
 ```
 
-**Or target Codex:**
+#### Elicitation (server picks the runner)
+
+**You say:** "Explain the CAP theorem using one of the available agents."
 
 ```json
-{
-  "cli": "codex",
-  "prompt": "Explain the difference between TCP and UDP in simple terms",
-  "model": "gpt-5.2"
-}
+{ "prompt": "Explain the CAP theorem in simple terms" }
 ```
 
-**Or OpenCode:**
+If the client supports MCP elicitation, the server asks which runner to use. Pass `"elicit": false` to skip.
+
+#### Persistent preferences
+
+**You say:** "Use YOLO mode with Gemini Flash from now on."
 
 ```json
-{
-  "cli": "opencode",
-  "prompt": "Explain the difference between TCP and UDP in simple terms",
-  "model": "ollama-cloud/kimi-k2.5"
-}
+{ "execution_mode": "yolo", "model": "gemini-3-flash-preview", "max_retries": 5 }
 ```
 
-### Letting the server pick the runner (elicitation)
+Subsequent calls inherit these settings. Preferences persist across MCP sessions until explicitly cleared.
 
-**You say to your AI assistant:**
-> "Explain the CAP theorem using one of the available agents."
+Fallback chain: **explicit parameter → saved preference → per-runner env → global env → hardcoded default**.
 
-**Your AI assistant calls `prompt` without specifying `cli`:**
-
-```json
-{
-  "prompt": "Explain the CAP theorem in simple terms"
-}
-```
-
-If the MCP client supports elicitation, the server asks which runner to use. If elicitation is unavailable, the server returns an error asking for `cli` to be specified. To skip elicitation for a specific call, pass `"elicit": false`.
-
-### Session preferences (set_preferences)
-
-**You say to your AI assistant:**
-> "For the rest of this session, use YOLO mode with Gemini Flash — I don't want to repeat those settings on every call."
-
-**Your AI assistant calls `set_preferences` once:**
-
-```json
-{
-  "execution_mode": "yolo",
-  "model": "gemini-3-flash-preview",
-  "max_retries": 5
-}
-```
-
-**Response:**
-```
-Preferences set: {"execution_mode": "yolo", "model": "gemini-3-flash-preview", "max_retries": 5, "output_limit": null, "timeout": null, "retry_base_delay": null, "retry_max_delay": null, "elicit": null, "confirm_yolo": null, "confirm_vague_prompt": null, "confirm_high_retries": null, "confirm_large_batch": null}
-```
-
-**Subsequent `prompt` and `batch_prompt` calls omit those fields — they inherit from the session:**
-
-```json
-{
-  "cli": "gemini",
-  "prompt": "Summarize the latest developments in Rust's async ecosystem"
-}
-```
-
-The fallback chain is: **explicit parameter → session preference → per-runner env → global env → hardcoded default**.
-To override for one call, pass the parameter directly — it takes precedence without changing the session.
-To clear a single preference, use `set_preferences` with the corresponding `clear_*` flag (e.g. `clear_model: true`). Other preferences are preserved.
+</details>
 
 ## MCP Tools
 
@@ -320,117 +276,184 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 |------|-------|-------------|
 | `batch_prompt` | Yes | Fan out prompts to multiple runners in parallel; returns `MultiPromptResponse` |
 | `prompt` | Yes | Single-runner convenience wrapper; routes to `batch_prompt` |
-| `set_preferences` | No | Set or selectively clear session defaults for execution mode, model, retries, timeouts, elicitation, and trigger suppression |
-| `get_preferences` | No | Retrieve current session preferences |
-| `clear_preferences` | No | Reset all session preferences |
+| `set_preferences` | No | Set or selectively clear persistent defaults for execution mode, model, retries, timeouts, elicitation, and trigger suppression |
+| `get_preferences` | No | Retrieve current preferences |
+| `clear_preferences` | No | Reset all preferences |
+| `set_model_tiers` | No | Save model tier classifications (client sends sampling/benchmark results; server persists) |
+| `get_model_tiers` | No | Retrieve saved model tier classifications |
 
-### `batch_prompt`
+<details>
+<summary><h3>Tool API Reference</h3></summary>
+
+#### `batch_prompt`
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `tasks` | Yes | — | List of task objects (see below) |
 | `max_concurrency` | No | `3` | Max parallel agent invocations |
-| `elicit` | No | session pref or `true` | Enable/disable interactive elicitation for this call |
+| `elicit` | No | pref or `true` | Enable/disable interactive elicitation for this call |
 
 **Task object fields:**
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `cli` | No | — | Runner name (e.g. `"gemini"`); if omitted and elicitation is enabled, the server asks which runner to use |
+| `cli` | No | — | Runner name (e.g. `"gemini"`); if omitted, elicitation asks which runner to use |
 | `prompt` | Yes | — | Prompt text |
-| `label` | No | auto | Display label for results (auto-assigned from runner name if omitted) |
+| `label` | No | auto | Display label for results |
 | `context` | No | `{}` | Optional context metadata dict |
-| `execution_mode` | No | session pref or `"default"` | `"default"` or `"yolo"` |
-| `model` | No | session pref or CLI default | Model name override |
-| `max_retries` | No | session pref or env default | Max retry attempts for transient errors |
-| `output_limit` | No | session pref or env default | Max output bytes before temp-file spillover |
-| `timeout` | No | session pref or env default | Subprocess timeout in seconds |
-| `retry_base_delay` | No | session pref or env default | Base delay seconds for exponential backoff |
-| `retry_max_delay` | No | session pref or env default | Max delay cap for backoff in seconds |
+| `execution_mode` | No | pref or `"default"` | `"default"` or `"yolo"` |
+| `model` | No | pref or CLI default | Model name override |
+| `max_retries` | No | pref or env default | Max retry attempts for transient errors |
+| `output_limit` | No | pref or env default | Max output bytes |
+| `timeout` | No | pref or env default | Subprocess timeout in seconds |
+| `retry_base_delay` | No | pref or env default | Base delay for exponential backoff |
+| `retry_max_delay` | No | pref or env default | Max delay cap for backoff |
 
-> **Note:** `elicit` is a batch-level parameter, not a per-task field. When enabled, the server runs a single upfront elicitation pass across all tasks (e.g., "3 of 5 tasks use YOLO mode — confirm?") rather than prompting per-task.
+> **Note:** `elicit` is a batch-level parameter. When enabled, the server runs a single upfront elicitation pass across all tasks rather than prompting per-task.
 
-### `prompt`
+#### `prompt`
 
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `cli` | No | — | Runner name; if omitted and elicitation is enabled, the server asks which runner to use |
-| `prompt` | Yes | — | Prompt text |
-| `context` | No | `{}` | Optional context metadata dict |
-| `execution_mode` | No | session pref or `"default"` | `"default"` or `"yolo"` |
-| `model` | No | session pref or CLI default | Model name override; if omitted and the runner has multiple models, elicitation may offer a choice |
-| `max_retries` | No | session pref or env default | Max retry attempts for transient errors |
-| `output_limit` | No | session pref or env default | Max output bytes before temp-file spillover |
-| `timeout` | No | session pref or env default | Subprocess timeout in seconds |
-| `retry_base_delay` | No | session pref or env default | Base delay seconds for exponential backoff |
-| `retry_max_delay` | No | session pref or env default | Max delay cap for backoff in seconds |
-| `elicit` | No | session pref or `true` | Enable/disable interactive elicitation for this call |
+Same parameters as a single task object in `batch_prompt`, plus `elicit` (batch-level in `batch_prompt`, per-call here).
 
-### `set_preferences`
+#### `set_preferences`
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `execution_mode` | No | — | `"default"` or `"yolo"` |
 | `model` | No | — | Model name (e.g. `"gemini-3-flash-preview"`) |
-| `max_retries` | No | — | Max total attempts including the first (≥1; 1 means run once, no retries) |
-| `output_limit` | No | — | Max output bytes before temp-file spillover (≥1) |
-| `timeout` | No | — | Subprocess timeout in seconds (≥1) |
-| `retry_base_delay` | No | — | Base delay seconds for exponential backoff (≥0) |
-| `retry_max_delay` | No | — | Max delay cap for backoff in seconds (≥0) |
-| `clear_execution_mode` | No | `false` | Clear execution mode (takes precedence if `execution_mode` is also provided) |
-| `clear_model` | No | `false` | Clear model (takes precedence if `model` is also provided) |
-| `clear_max_retries` | No | `false` | Clear max retries (takes precedence if `max_retries` is also provided) |
-| `clear_output_limit` | No | `false` | Clear output limit (takes precedence if `output_limit` is also provided) |
-| `clear_timeout` | No | `false` | Clear timeout (takes precedence if `timeout` is also provided) |
-| `clear_retry_base_delay` | No | `false` | Clear retry base delay |
-| `clear_retry_max_delay` | No | `false` | Clear retry max delay |
-| `elicit` | No | `true` | Enable/disable elicitation for the session. When `true` (default), the server may ask the client for missing parameters or confirmations |
-| `confirm_yolo` | No | `true` | Whether to prompt before YOLO mode. Set to `false` to skip the confirmation. Auto-set to `false` after first acceptance |
-| `confirm_vague_prompt` | No | `true` | Whether to prompt when prompts are very short. Set to `false` to skip. Not auto-suppressed |
-| `confirm_high_retries` | No | `true` | Whether to prompt when max_retries > 5. Set to `false` to skip. Auto-set to `false` after first acceptance |
-| `confirm_large_batch` | No | `true` | Whether to prompt when batch has > 5 tasks. Set to `false` to skip. Auto-set to `false` after first acceptance |
-| `clear_elicit` | No | `false` | Reset elicit to default (`true`) |
-| `clear_confirm_yolo` | No | `false` | Reset YOLO suppression (re-enables confirmation prompt) |
-| `clear_confirm_vague_prompt` | No | `false` | Reset vague prompt suppression |
-| `clear_confirm_high_retries` | No | `false` | Reset high retry suppression |
-| `clear_confirm_large_batch` | No | `false` | Reset large batch suppression |
+| `max_retries` | No | — | Max total attempts (≥1; 1 = no retries) |
+| `output_limit` | No | — | Max output bytes (≥1) |
+| `timeout` | No | — | Subprocess timeout seconds (≥1) |
+| `retry_base_delay` | No | — | Backoff base delay seconds (≥0) |
+| `retry_max_delay` | No | — | Backoff max delay seconds (≥0) |
+| `elicit` | No | `true` | Enable/disable elicitation |
+| `confirm_yolo` | No | `true` | Prompt before YOLO mode (auto-suppressed after first accept) |
+| `confirm_vague_prompt` | No | `true` | Prompt on very short prompts |
+| `confirm_high_retries` | No | `true` | Prompt when max_retries > 5 |
+| `confirm_large_batch` | No | `true` | Prompt when batch > 5 tasks |
+| `clear_*` | No | `false` | Clear any field individually (e.g. `clear_model: true`) |
 
-### `get_preferences`
+#### `get_preferences` / `clear_preferences`
 
-No parameters. Returns a dict with all preference fields (`null` when unset):
+`get_preferences` — no parameters, returns all fields (`null` when unset).
+`clear_preferences` — no parameters, resets all to `null`. Does **not** clear model tiers.
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `execution_mode` | `string \| null` | `"default"` or `"yolo"` |
-| `model` | `string \| null` | Model name |
-| `max_retries` | `int \| null` | Max total attempts |
-| `output_limit` | `int \| null` | Max output bytes |
-| `timeout` | `int \| null` | Subprocess timeout seconds |
-| `retry_base_delay` | `float \| null` | Backoff base delay |
-| `retry_max_delay` | `float \| null` | Backoff max delay |
-| `elicit` | `bool \| null` | Elicitation enabled |
-| `confirm_yolo` | `bool \| null` | YOLO confirmation enabled |
-| `confirm_vague_prompt` | `bool \| null` | Vague prompt check enabled |
-| `confirm_high_retries` | `bool \| null` | High retry warning enabled |
-| `confirm_large_batch` | `bool \| null` | Large batch confirmation enabled |
+#### `set_model_tiers`
 
-### `clear_preferences`
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `tiers` | Yes | — | Dict mapping model names to tiers (`"quick"`, `"standard"`, `"thorough"`) |
 
-No parameters. Resets all session preferences to `null`, including elicitation suppression flags (re-enables all confirmation prompts).
+Persists tier classifications. Clients typically call once via sampling or benchmark fetch.
 
-### Managing Session Preferences
+#### `get_model_tiers`
+
+No parameters. Returns saved tiers as `dict[str, str]`, or `{}` if none saved.
+
+</details>
+
+### Managing Preferences
 
 | Operation | Tool | Notes |
 |-----------|------|-------|
-| Set one or more fields | `set_preferences` | Pass only the fields you want to change |
-| Read current values | `get_preferences` | Returns all preference fields with `null` for unset |
-| Clear all fields | `clear_preferences` | Reverts to per-call defaults |
-| Clear one preference | `set_preferences` with the corresponding `clear_*: true` flag | Other preferences are preserved |
-| Suppress an elicitation prompt | `set_preferences` with `confirm_*: false` | Persists for the session; YOLO/batch/retry auto-suppress after first acceptance |
-| Re-enable a suppressed prompt | `set_preferences` with `clear_confirm_*: true` | Resets to default (prompts again) |
-| Disable all elicitation | `set_preferences` with `elicit: false` | Skips all interactive prompts for the session |
+| Set fields | `set_preferences` | Persists across sessions |
+| Read values | `get_preferences` | `null` for unset fields |
+| Clear all | `clear_preferences` | Does not clear model tiers |
+| Clear one field | `set_preferences` with `clear_*: true` | Others preserved |
+| Suppress elicitation | `set_preferences` with `confirm_*: false` | YOLO/batch/retry auto-suppress after accept |
+| Re-enable prompt | `set_preferences` with `clear_confirm_*: true` | Resets to default |
+| Save/read tiers | `set_model_tiers` / `get_model_tiers` | Persists across sessions |
 
-## Configuration
+## MCP Prompts
+
+Nexus MCP provides 10 discoverable prompt templates that clients can browse via `list_prompts()` and render via `get_prompt(name, args)`. Each prompt returns structured messages with expert framing — the client decides how (or whether) to use them.
+
+**Design principle:** Server informs, client decides. Prompts provide the scaffold (role, structure, methodology); the client decides runner, model, depth, and orchestration. Prompts are completely optional — existing `prompt`/`batch_prompt` tools work exactly as before.
+
+| Prompt | Tags | Parameters | Purpose |
+|--------|------|------------|---------|
+| `code_review` | analysis | `file`, `instructions` | Structured code review with findings by severity |
+| `debug` | analysis | `error`, `context`, `file` | Systematic diagnosis: reproduce, isolate, root cause, fix |
+| `quick_triage` | analysis | `description`, `file` | Fast assessment: what's wrong, severity, next step |
+| `research` | analysis | `topic`, `scope` | Structured research with source citations |
+| `second_opinion` | analysis | `original_output`, `question` | Independent review of another AI's output |
+| `implement_feature` | generation | `description`, `language`, `constraints` | Feature implementation with quality checklist |
+| `refactor` | generation | `file`, `goal`, `constraints` | Behavior-preserving restructuring |
+| `bulk_generate` | generation | `template`, `variables` | Expand template across variable sets |
+| `write_tests` | testing | `file`, `framework`, `coverage_goal` | Test generation with configurable coverage approach |
+| `compare_models` | comparison | `prompt`, `criteria` | Multi-runner comparison framework |
+
+<details>
+<summary><strong>Example — using a prompt template</strong></summary>
+
+```
+# 1. Client discovers available prompts
+list_prompts() → sees "code_review", "debug", "compare_models", etc.
+
+# 2. Client renders a prompt with arguments
+get_prompt("code_review", {file: "src/auth.py", instructions: "security vulnerabilities"})
+
+# 3. Server returns structured messages
+→ PromptResult(
+    messages=[
+      Message("You are a senior code reviewer...", role="assistant"),
+      Message("Review the file `src/auth.py`...\nFocus: security vulnerabilities\n...", role="user"),
+    ],
+    description="Code review of src/auth.py"
+  )
+
+# 4. Client feeds messages into prompt/batch_prompt with chosen runner+model
+prompt(cli="claude", prompt=<rendered messages>)
+```
+
+</details>
+
+## MCP Resources
+
+Read-only data endpoints that clients query for runner metadata, configuration, and preferences.
+
+| Resource URI | Description |
+|---|---|
+| `nexus://runners` | All registered CLI runners with models (enriched with tier data), modes, availability |
+| `nexus://runners/{cli}` | Single runner details by name (URI template) |
+| `nexus://config` | Resolved operational config defaults (timeouts, retries, output limits) |
+| `nexus://preferences` | Current preferences with config fallback |
+
+Models in `nexus://runners` include tier data: `{"name": "gemini-2.5-flash", "tier": "quick"}`. Tiers are `quick` (fast/cheap), `standard` (balanced), or `thorough` (max quality). Models with only heuristic tiers appear in `unclassified_models` — calling `set_model_tiers` moves them out.
+
+<details>
+<summary><strong>Model tier enrichment examples</strong></summary>
+
+**Before `set_model_tiers`** — all tiers are heuristic guesses, all models are unclassified:
+
+```json
+{
+  "models": [
+    {"name": "gemini-3.1-pro-preview", "tier": "thorough"},
+    {"name": "gemini-2.5-flash", "tier": "quick"},
+    {"name": "gemini-2.5-flash-lite", "tier": "quick"}
+  ],
+  "unclassified_models": ["gemini-3.1-pro-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+}
+```
+
+**After `set_model_tiers`** — saved tiers replace heuristics, classified models leave the list:
+
+```json
+{
+  "models": [
+    {"name": "gemini-3.1-pro-preview", "tier": "thorough"},
+    {"name": "gemini-2.5-flash", "tier": "quick"},
+    {"name": "gemini-2.5-flash-lite", "tier": "quick"}
+  ],
+  "unclassified_models": []
+}
+```
+
+</details>
+
+<details>
+<summary><h2>Configuration</h2></summary>
 
 ### Global Environment Variables
 
@@ -464,7 +487,10 @@ Valid `{AGENT}` values: `CLAUDE`, `CODEX`, `GEMINI`, `OPENCODE`
 
 Invalid per-runner values are silently ignored (the global or hardcoded default is used instead).
 
-## Development
+</details>
+
+<details>
+<summary><h2>Development</h2></summary>
 
 ### Testing
 
@@ -535,14 +561,23 @@ uv sync                       # Sync environment after changes
 nexus-mcp/
 ├── src/nexus_mcp/
 │   ├── __main__.py         # Entry point
-│   ├── server.py           # FastMCP server + tools
+│   ├── server.py           # FastMCP server + tools + prompt registration
 │   ├── types.py            # Pydantic models
 │   ├── exceptions.py       # Exception hierarchy
 │   ├── config.py           # Environment variable config
+│   ├── store.py            # Persistent backing store access (preferences + tiers)
+│   ├── tiers.py            # Heuristic model tier classification
 │   ├── elicitation.py      # ElicitationGuard — interactive parameter resolution
+│   ├── resources.py        # MCP resources (runners, config, preferences)
 │   ├── process.py          # Subprocess wrapper
 │   ├── parser.py           # JSON→text fallback parsing
 │   ├── cli_detector.py     # CLI binary detection + version checks
+│   ├── prompts/
+│   │   ├── __init__.py     # register_prompts(mcp) entry point
+│   │   ├── analysis.py     # code_review, debug, quick_triage, research, second_opinion
+│   │   ├── generation.py   # implement_feature, refactor, bulk_generate
+│   │   ├── testing.py      # write_tests
+│   │   └── comparison.py   # compare_models
 │   └── runners/
 │       ├── base.py         # Protocol + ABC
 │       ├── factory.py      # RunnerFactory
@@ -552,6 +587,7 @@ nexus-mcp/
 │       └── opencode.py     # OpenCodeRunner
 ├── tests/
 │   ├── unit/               # Fast, mocked tests
+│   │   └── prompts/        # Prompt template tests
 │   ├── e2e/                # End-to-end MCP protocol tests
 │   ├── integration/        # Real CLI tests
 │   └── fixtures.py         # Shared test utilities
@@ -560,6 +596,8 @@ nexus-mcp/
 ├── pyproject.toml          # Dependencies + tool config
 └── .pre-commit-config.yaml # Git hooks configuration
 ```
+
+</details>
 
 ## License
 
