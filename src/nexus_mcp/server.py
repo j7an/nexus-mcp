@@ -465,16 +465,44 @@ _GET_TIERS_ANNOTATIONS = ToolAnnotations(
 )
 
 mcp.tool(
-    task=True, timeout=_tool_timeout, icons=TOOL_EXEC_ICONS, annotations=_BATCH_EXEC_ANNOTATIONS
+    task=True,
+    timeout=_tool_timeout,
+    icons=TOOL_EXEC_ICONS,
+    annotations=_BATCH_EXEC_ANNOTATIONS,
+    tags={"agent-execution"},
 )(batch_prompt)
-mcp.tool(task=True, timeout=_tool_timeout, icons=TOOL_EXEC_ICONS, annotations=_EXEC_ANNOTATIONS)(
-    prompt
-)
-mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_SET_PREFS_ANNOTATIONS)(set_preferences)
-mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_GET_PREFS_ANNOTATIONS)(get_preferences)
-mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_CLEAR_PREFS_ANNOTATIONS)(clear_preferences)
-mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_SET_TIERS_ANNOTATIONS)(set_model_tiers)
-mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_GET_TIERS_ANNOTATIONS)(get_model_tiers)
+mcp.tool(
+    task=True,
+    timeout=_tool_timeout,
+    icons=TOOL_EXEC_ICONS,
+    annotations=_EXEC_ANNOTATIONS,
+    tags={"agent-execution"},
+)(prompt)
+mcp.tool(
+    icons=TOOL_CONFIG_ICONS,
+    annotations=_SET_PREFS_ANNOTATIONS,
+    tags={"configuration"},
+)(set_preferences)
+mcp.tool(
+    icons=TOOL_CONFIG_ICONS,
+    annotations=_GET_PREFS_ANNOTATIONS,
+    tags={"configuration"},
+)(get_preferences)
+mcp.tool(
+    icons=TOOL_CONFIG_ICONS,
+    annotations=_CLEAR_PREFS_ANNOTATIONS,
+    tags={"configuration"},
+)(clear_preferences)
+mcp.tool(
+    icons=TOOL_CONFIG_ICONS,
+    annotations=_SET_TIERS_ANNOTATIONS,
+    tags={"configuration"},
+)(set_model_tiers)
+mcp.tool(
+    icons=TOOL_CONFIG_ICONS,
+    annotations=_GET_TIERS_ANNOTATIONS,
+    tags={"configuration"},
+)(get_model_tiers)
 
 # Register MCP resources (read-only data endpoints).
 register_resources(mcp)
