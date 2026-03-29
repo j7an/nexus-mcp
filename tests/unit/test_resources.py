@@ -32,7 +32,7 @@ class TestGetAllRunners:
     async def test_returns_all_registered_runners(self, mock_cli_detection):
         result = json.loads(await get_all_runners())
         names = {r["name"] for r in result["runners"]}
-        assert names == {"claude", "codex", "gemini", "opencode"}
+        assert names == {"claude", "codex", "gemini", "opencode", "opencode_server"}
 
     async def test_json_structure_has_required_keys(self, mock_cli_detection):
         result = json.loads(await get_all_runners())
