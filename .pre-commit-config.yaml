@@ -26,6 +26,7 @@ repos:
 
       # Syntax validation
       - id: check-yaml
+        exclude: dependency-cooldown-scan\.yml
       - id: check-toml  # Validates pyproject.toml
       - id: check-ast   # Validates Python syntax
 

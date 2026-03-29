@@ -1,0 +1,35 @@
+name: Dependency Cool-Down
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  statuses: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    if: >
+      github.actor == 'dependabot[bot]' ||
+      github.actor == 'renovate[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2
+        with:
+          egress-policy: audit
+
+      - name: Set pending status
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gh api "repos/${REPOSITORY}/statuses/${HEAD_SHA}" \
+            -f state=pending \
+            -f context="dependency-cooldown / gate" \
+            -f description="Security cool-down: merge allowed after 5 days + exploit scan"
