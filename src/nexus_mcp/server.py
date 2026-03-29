@@ -19,8 +19,11 @@ going through the FunctionTool wrapper.
 """
 
 import asyncio
+import contextlib
 import json as _json
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
@@ -29,6 +32,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from nexus_mcp.cli_detector import detect_cli
+from nexus_mcp.compound_tools import register_compound_tools
 from nexus_mcp.config import get_runner_defaults, get_runner_models, get_tool_timeout
 from nexus_mcp.elicitation import ElicitationGuard
 from nexus_mcp.emitters import make_mcp_emitter, make_progress_emitter
@@ -39,6 +43,12 @@ from nexus_mcp.middleware import (
     ErrorNormalizationMiddleware,
     RequestLoggingMiddleware,
     TimingMiddleware,
+)
+from nexus_mcp.openapi_setup import setup_opencode_tools
+from nexus_mcp.opencode_resources import (
+    is_opencode_server_configured,
+    register_opencode_data_resources,
+    register_opencode_status_resource,
 )
 from nexus_mcp.preferences import (
     _apply_preferences,
@@ -142,7 +152,45 @@ def _inject_cli_enum() -> None:
     AgentTask.model_rebuild(force=True)
 
 
-mcp = FastMCP("nexus-mcp", instructions=build_server_instructions(), icons=SERVER_ICONS)
+@asynccontextmanager
+async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
+    """Conditionally register OpenCode tools based on server availability."""
+    register_opencode_status_resource(server)
+
+    if is_opencode_server_configured():
+        client = get_http_client()
+
+        server.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(
+            opencode_set_provider_auth
+        )
+        server.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(
+            opencode_update_config
+        )
+
+        healthy = await client.health_check()
+        if healthy:
+            await setup_opencode_tools(server, client)
+            register_compound_tools(server, client)
+            register_opencode_data_resources(server)
+            logger.info("OpenCode server tools registered (server healthy)")
+        else:
+            logger.warning("OpenCode server not reachable, mutation tools only")
+    else:
+        logger.warning("OpenCode server not configured (NEXUS_OPENCODE_SERVER_PASSWORD not set)")
+
+    yield
+
+    if is_opencode_server_configured():
+        with contextlib.suppress(Exception):
+            await get_http_client().close()
+
+
+mcp = FastMCP(
+    "nexus-mcp",
+    instructions=build_server_instructions(),
+    icons=SERVER_ICONS,
+    lifespan=_lifespan,
+)
 
 # Middleware executes outermost → innermost on request, reverse on response.
 # Order: ErrorNormalization (catch all) → Timing (measure) → RequestLogging (log entry/exit)
@@ -485,15 +533,6 @@ _CONFIG_OC_ANNOTATIONS = ToolAnnotations(
     idempotentHint=True,
     openWorldHint=True,
 )
-
-mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_set_provider_auth)
-mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_update_config)
-
-# Phase 1 visibility: tags are assigned above. The allowlist call
-# (mcp.enable(tags=..., only=True)) is deferred to Phase 2 when workspace/terminal
-# tools are added — currently all tools have Phase 1 tags, so gating has no effect.
-# Note: FastMCP's visibility wrapping interferes with tool.timeout monkeypatching
-# in E2E tests (TestToolTimeout). Investigate before enabling.
 
 # Register MCP resources (read-only data endpoints).
 register_resources(mcp)

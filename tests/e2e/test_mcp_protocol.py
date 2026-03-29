@@ -44,18 +44,16 @@ def _extract_prompt_from_args(args: tuple) -> str:
 class TestToolDiscovery:
     """Verify MCP tool registration via list_tools() JSON-RPC call."""
 
-    async def test_list_tools_returns_all_registered(self, mcp_client):
-        """list_tools() returns all registered tools."""
+    async def test_list_tools_returns_core_tools(self, mcp_client):
+        """list_tools() returns all core tools (OpenCode tools require server config)."""
         tools = await mcp_client.list_tools()
         names = {t.name for t in tools}
-        assert names == {
+        assert names >= {
             "prompt",
             "batch_prompt",
             "set_preferences",
             "clear_preferences",
             "set_model_tiers",
-            "opencode_set_provider_auth",
-            "opencode_update_config",
         }
 
     async def test_prompt_schema_has_required_params(self, mcp_client):
@@ -126,19 +124,19 @@ class TestToolAnnotations:
         assert tool.annotations.idempotentHint is True
         assert tool.annotations.openWorldHint is False
 
-    async def test_all_tools_have_titles(self, mcp_client):
-        """Every tool has a human-readable title set via annotations."""
+    async def test_core_tools_have_titles(self, mcp_client):
+        """Core tools have human-readable titles set via annotations."""
         expected_titles = {
             "prompt": "Prompt CLI Agent",
             "batch_prompt": "Batch Prompt CLI Agents",
             "set_preferences": "Set Session Preferences",
             "clear_preferences": "Clear Session Preferences",
             "set_model_tiers": "Set Model Tiers",
-            "opencode_set_provider_auth": "OpenCode Configuration",
-            "opencode_update_config": "OpenCode Configuration",
         }
         tools = await mcp_client.list_tools()
         for tool in tools:
+            if tool.name not in expected_titles:
+                continue
             assert tool.annotations is not None, f"{tool.name} missing annotations"
             assert tool.annotations.title == expected_titles[tool.name], (
                 f"{tool.name}: expected title {expected_titles[tool.name]!r}, "
@@ -501,3 +499,27 @@ class TestErrorHandlingProtocol:
             )
 
         assert mock_subprocess.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Class 7: Conditional registration
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestConditionalRegistration:
+    """Verify OpenCode tools are conditionally registered based on server availability."""
+
+    async def test_core_tools_always_present(self, mcp_client):
+        tools = await mcp_client.list_tools()
+        names = {t.name for t in tools}
+        assert "prompt" in names
+        assert "batch_prompt" in names
+        assert "set_preferences" in names
+        assert "clear_preferences" in names
+        assert "set_model_tiers" in names
+
+    async def test_opencode_status_resource_always_present(self, mcp_client):
+        resources = await mcp_client.list_resources()
+        uris = {str(r.uri) for r in resources}
+        assert "nexus://opencode" in uris
