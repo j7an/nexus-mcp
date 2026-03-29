@@ -267,13 +267,14 @@ jobs:
               DEPS="(no dependencies extracted from diff)"
             fi
 
-            # Build comment
+            # Build comment — table headers/separators stored in variables
+            # to avoid bare | at column 0 which breaks YAML block scalar parsing
             TOTAL=$((GHSA_TOTAL + OSV_TOTAL))
             if [ "$TOTAL" -gt 0 ]; then
               RESULTS_HEADER="**${TOTAL} advisory/ies found** — review before merging."
-              RESULTS_TABLE="| ID | Severity | Summary | Source |
-|----|----------|---------|--------|
-${SCAN_RESULTS}"
+              TABLE_HDR="| ID | Severity | Summary | Source |"
+              TABLE_SEP="|----|----------|---------|--------|"
+              RESULTS_TABLE="$(printf '%s\n%s\n%s' "$TABLE_HDR" "$TABLE_SEP" "$SCAN_RESULTS")"
               RESULTS_FOOTER="> Review the advisories above before deciding to merge."
             elif [ -n "$HAS_ERROR" ]; then
               # Do NOT post comment or update status on errors.
@@ -282,25 +283,22 @@ ${SCAN_RESULTS}"
               continue
             else
               RESULTS_HEADER="No known exploits found in GHSA or OSV databases."
-              RESULTS_TABLE="| Source | Vulnerabilities |
-|--------|----------------|
-| GitHub Advisory (GHSA) | 0 found |
-| OSV.dev | 0 found |"
+              TABLE_HDR="| Source | Vulnerabilities |"
+              TABLE_SEP="|--------|----------------|"
+              ROW1="| GitHub Advisory (GHSA) | 0 found |"
+              ROW2="| OSV.dev | 0 found |"
+              RESULTS_TABLE="$(printf '%s\n%s\n%s\n%s' "$TABLE_HDR" "$TABLE_SEP" "$ROW1" "$ROW2")"
               RESULTS_FOOTER="> This PR is now eligible for manual review and merge."
             fi
 
-            COMMENT_BODY="## Dependency Security Scan (5-Day Cool-Down Complete)
-
-**PR age:** ${AGE_DAYS} days, ${AGE_HOURS} hours
-**Packages scanned:** ${DEPS}
-
-### Results
-
-${RESULTS_HEADER}
-
-${RESULTS_TABLE}
-
-${RESULTS_FOOTER}"
+            COMMENT_BODY="$(printf '%s\n\n%s\n%s\n\n%s\n\n%s\n\n%s\n\n%s' \
+              "## Dependency Security Scan (5-Day Cool-Down Complete)" \
+              "**PR age:** ${AGE_DAYS} days, ${AGE_HOURS} hours" \
+              "**Packages scanned:** ${DEPS}" \
+              "### Results" \
+              "$RESULTS_HEADER" \
+              "$RESULTS_TABLE" \
+              "$RESULTS_FOOTER")"
 
             # Post comment and set status to success (human decides on exploits)
             gh pr comment "$PR_NUMBER" \

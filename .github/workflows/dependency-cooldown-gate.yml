@@ -1,4 +1,4 @@
-name: Dependency Cool-Down
+name: Dependency Cool-Down Gate
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  gate:
+  set-pending-status:
     if: >
       github.actor == 'dependabot[bot]' ||
       github.actor == 'renovate[bot]'
