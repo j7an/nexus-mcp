@@ -6,18 +6,13 @@
   "prConcurrentLimit": 3,
   "packageRules": [
     {
-      "description": "Disable Renovate for runtime version pins (python-version, node-version, etc.)",
+      "description": "Disable Renovate for runtime version pins",
       "matchDepNames": ["python"],
       "enabled": false
     },
     {
+      "description": "All GitHub Actions updates require manual merge after cool-down",
       "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["minor", "patch", "digest"],
-      "automerge": true
-    },
-    {
-      "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["major"],
       "automerge": false
     }
   ]
