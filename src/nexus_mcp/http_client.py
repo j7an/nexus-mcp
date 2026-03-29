@@ -54,6 +54,7 @@ class OpenCodeHTTPClient:
             auth=httpx.BasicAuth(username, password),
             timeout=httpx.Timeout(30.0, connect=10.0),
         )
+        self._session_cache: dict[str, str] = {}  # label → session_id
 
     async def health_check(self) -> bool:
         """Check if opencode serve is reachable.
@@ -93,6 +94,71 @@ class OpenCodeHTTPClient:
             )
 
         raise SubprocessError(f"OpenCode server returned {status}")
+
+    async def create_session(self) -> str:
+        """Create a new session on the OpenCode server.
+
+        Returns:
+            The session ID string.
+
+        Raises:
+            SubprocessError or RetryableError on HTTP errors.
+        """
+        response = await self._httpx.post("/session")
+        if response.status_code != 200:
+            self.classify_error(response)
+        data: dict[str, str] = response.json()
+        return data["id"]
+
+    async def get_session(self, session_id: str) -> dict[str, object] | None:
+        """Get session details. Returns None if session doesn't exist (404)."""
+        response = await self._httpx.get(f"/session/{session_id}")
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            self.classify_error(response)
+        result: dict[str, object] = response.json()
+        return result
+
+    async def delete_session(self, session_id: str) -> None:
+        """Delete a session."""
+        response = await self._httpx.delete(f"/session/{session_id}")
+        if response.status_code not in (200, 404):
+            self.classify_error(response)
+
+    async def fork_session(self, session_id: str) -> str:
+        """Fork a session at its current point.
+
+        Returns:
+            The new forked session ID.
+        """
+        response = await self._httpx.post(f"/session/{session_id}/fork")
+        if response.status_code != 200:
+            self.classify_error(response)
+        data: dict[str, str] = response.json()
+        return data["id"]
+
+    async def resolve_session(self, label: str | None) -> str:
+        """Resolve a session ID from a label, creating if needed.
+
+        Strategy:
+        - No label → create ephemeral session (not cached)
+        - Label in cache → validate via GET, reuse if exists, evict + create if 404
+        - Label not in cache → create new, cache it
+        """
+        if label is None:
+            return await self.create_session()
+
+        cached_id = self._session_cache.get(label)
+        if cached_id is not None:
+            existing = await self.get_session(cached_id)
+            if existing is not None:
+                return cached_id
+            del self._session_cache[label]
+
+        session_id = await self.create_session()
+        self._session_cache[label] = session_id
+        return session_id
 
     async def close(self) -> None:
         """Close the underlying httpx client."""
