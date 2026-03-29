@@ -44,8 +44,8 @@ def _extract_prompt_from_args(args: tuple) -> str:
 class TestToolDiscovery:
     """Verify MCP tool registration via list_tools() JSON-RPC call."""
 
-    async def test_list_tools_returns_all_seven(self, mcp_client):
-        """list_tools() returns exactly 7 registered tools."""
+    async def test_list_tools_returns_all_registered(self, mcp_client):
+        """list_tools() returns all registered tools."""
         tools = await mcp_client.list_tools()
         names = {t.name for t in tools}
         assert names == {
@@ -56,6 +56,11 @@ class TestToolDiscovery:
             "clear_preferences",
             "set_model_tiers",
             "get_model_tiers",
+            "opencode_list_providers",
+            "opencode_get_provider_auth",
+            "opencode_set_provider_auth",
+            "opencode_get_config",
+            "opencode_update_config",
         }
 
     async def test_prompt_schema_has_required_params(self, mcp_client):
@@ -146,6 +151,11 @@ class TestToolAnnotations:
             "clear_preferences": "Clear Session Preferences",
             "set_model_tiers": "Set Model Tiers",
             "get_model_tiers": "Get Model Tiers",
+            "opencode_list_providers": "OpenCode Configuration (Read)",
+            "opencode_get_provider_auth": "OpenCode Configuration (Read)",
+            "opencode_set_provider_auth": "OpenCode Configuration",
+            "opencode_get_config": "OpenCode Configuration (Read)",
+            "opencode_update_config": "OpenCode Configuration",
         }
         tools = await mcp_client.list_tools()
         for tool in tools:

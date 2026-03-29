@@ -63,7 +63,7 @@ class TestReadRunnersResource:
         contents = await mcp_client.read_resource("nexus://runners")
         data = json.loads(contents[0].text)
         names = {r["name"] for r in data["runners"]}
-        assert names == {"claude", "codex", "gemini", "opencode"}
+        assert names == {"claude", "codex", "gemini", "opencode", "opencode_server"}
 
     async def test_each_runner_has_required_fields(self, mcp_client):
         contents = await mcp_client.read_resource("nexus://runners")
