@@ -235,3 +235,46 @@ def _get_merged_defaults() -> OperationalDefaults:
     Used by backward-compatible getter functions. Reads env vars fresh each call.
     """
     return _merge_defaults(HARDCODED_DEFAULTS, _read_global_env_defaults())
+
+
+# ---------------------------------------------------------------------------
+# OpenCode Server connection config
+# ---------------------------------------------------------------------------
+
+_OPENCODE_SERVER_DEFAULT_URL = "http://localhost:4096"
+_OPENCODE_SERVER_DEFAULT_USERNAME = "opencode"
+
+
+def get_opencode_server_url() -> str:
+    """Get the OpenCode server base URL.
+
+    Reads NEXUS_OPENCODE_SERVER_URL. Strips trailing slash for consistent
+    URL joining.
+
+    Returns:
+        Base URL string (default: http://localhost:4096).
+    """
+    url = os.getenv("NEXUS_OPENCODE_SERVER_URL", _OPENCODE_SERVER_DEFAULT_URL)
+    return url.rstrip("/")
+
+
+def get_opencode_server_auth() -> tuple[str, str]:
+    """Get OpenCode server Basic auth credentials.
+
+    Reads NEXUS_OPENCODE_SERVER_USERNAME (default: "opencode") and
+    NEXUS_OPENCODE_SERVER_PASSWORD (required).
+
+    Returns:
+        Tuple of (username, password).
+
+    Raises:
+        ValueError: If NEXUS_OPENCODE_SERVER_PASSWORD is not set.
+    """
+    username = os.getenv("NEXUS_OPENCODE_SERVER_USERNAME", _OPENCODE_SERVER_DEFAULT_USERNAME)
+    password = os.getenv("NEXUS_OPENCODE_SERVER_PASSWORD")
+    if password is None:
+        raise ValueError(
+            "NEXUS_OPENCODE_SERVER_PASSWORD environment variable is required "
+            "for opencode_server runner"
+        )
+    return username, password

@@ -13,9 +13,6 @@ concurrency:
 
 jobs:
   set-pending-status:
-    if: >
-      github.actor == 'dependabot[bot]' ||
-      github.actor == 'renovate[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
@@ -23,13 +20,21 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Set pending status
+      - name: Set cooldown status
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ACTOR: ${{ github.actor }}
         run: |
+          if [[ "$ACTOR" == "dependabot[bot]" || "$ACTOR" == "renovate[bot]" ]]; then
+            STATE="pending"
+            DESC="Security cool-down: merge allowed after 5 days + exploit scan"
+          else
+            STATE="success"
+            DESC="Non-bot PR — no cool-down required"
+          fi
           gh api "repos/${REPOSITORY}/statuses/${HEAD_SHA}" \
-            -f state=pending \
+            -f state="$STATE" \
             -f context="dependency-cooldown / gate" \
-            -f description="Security cool-down: merge allowed after 5 days + exploit scan"
+            -f description="$DESC"

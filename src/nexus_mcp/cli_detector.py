@@ -32,7 +32,14 @@ class CLIInfo:
 
 
 def detect_cli(cli_name: str) -> CLIInfo:
-    """Detect if CLI binary exists in PATH."""
+    """Detect if CLI binary exists in PATH.
+
+    Special case: opencode_server has no binary — it connects to a remote
+    HTTP server. Always returns found=True with path="http". Actual availability
+    is confirmed by health check at runtime.
+    """
+    if cli_name == "opencode_server":
+        return CLIInfo(found=True, path="http", version=None)
     path = shutil.which(cli_name)
     if path:
         return CLIInfo(found=True, path=path)
@@ -42,8 +49,11 @@ def detect_cli(cli_name: str) -> CLIInfo:
 def get_cli_version(cli_name: str) -> str | None:
     """Run '<cli> --version' and parse the version string.
 
-    Sync — uses subprocess.run(). Acceptable at runner construction time (<1s).
+    Special case: opencode_server has no binary — version is determined
+    at runtime via the health check endpoint. Returns None.
     """
+    if cli_name == "opencode_server":
+        return None
     try:
         result = subprocess.run(
             [cli_name, "--version"],

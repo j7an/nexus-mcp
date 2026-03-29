@@ -328,6 +328,23 @@ def make_agent_task(**overrides: Any) -> AgentTask:
     return AgentTask(**(defaults | overrides))
 
 
+def make_opencode_server_runner(monkeypatch):  # type: ignore[no-untyped-def]
+    """Create an OpenCodeServerRunner with mocked config.
+
+    Must be called with an active monkeypatch fixture to set env vars.
+    Returns the runner instance.
+    """
+    monkeypatch.setenv("NEXUS_OPENCODE_SERVER_URL", "http://test:4096")
+    monkeypatch.setenv("NEXUS_OPENCODE_SERVER_PASSWORD", "testpass")
+    monkeypatch.setenv("NEXUS_OPENCODE_SERVER_USERNAME", "testuser")
+
+    from nexus_mcp.http_client import reset_http_client
+    from nexus_mcp.runners.opencode_server import OpenCodeServerRunner
+
+    reset_http_client()
+    return OpenCodeServerRunner()
+
+
 def make_session_preferences(**overrides: Any) -> SessionPreferences:
     """Create a SessionPreferences with sensible defaults.
 

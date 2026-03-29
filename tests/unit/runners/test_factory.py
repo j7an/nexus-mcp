@@ -20,6 +20,7 @@ from nexus_mcp.runners.codex import CodexRunner
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.runners.gemini import GeminiRunner
 from nexus_mcp.runners.opencode import OpenCodeRunner
+from nexus_mcp.runners.opencode_server import OpenCodeServerRunner
 
 
 class TestRunnerFactory:
@@ -66,7 +67,7 @@ class TestRunnerFactory:
         """list_clis() should return list of supported agent names."""
         agents = RunnerFactory.list_clis()
 
-        assert agents == ["claude", "codex", "gemini", "opencode"]
+        assert agents == ["claude", "codex", "gemini", "opencode", "opencode_server"]
 
     def test_create_returns_cached_instance(self):
         """create() should return the same cached instance for the same agent."""
@@ -93,7 +94,13 @@ class TestRunnerFactory:
 
 class TestRunnerFactoryNewMethods:
     def test_list_clis_returns_sorted_names(self):
-        assert RunnerFactory.list_clis() == ["claude", "codex", "gemini", "opencode"]
+        assert RunnerFactory.list_clis() == [
+            "claude",
+            "codex",
+            "gemini",
+            "opencode",
+            "opencode_server",
+        ]
 
     def test_get_runner_class_returns_class(self):
         cls = RunnerFactory.get_runner_class("gemini")
@@ -102,3 +109,10 @@ class TestRunnerFactoryNewMethods:
     def test_get_runner_class_unknown_raises(self):
         with pytest.raises(UnsupportedAgentError):
             RunnerFactory.get_runner_class("unknown")
+
+    def test_opencode_server_is_registered(self):
+        assert "opencode_server" in RunnerFactory.list_clis()
+
+    def test_opencode_server_class(self):
+        cls = RunnerFactory.get_runner_class("opencode_server")
+        assert cls is OpenCodeServerRunner

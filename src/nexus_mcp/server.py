@@ -18,6 +18,7 @@ going through the FunctionTool wrapper.
 """
 
 import asyncio
+import json as _json
 import logging
 from typing import Annotated, Any
 
@@ -30,6 +31,7 @@ from nexus_mcp.cli_detector import detect_cli
 from nexus_mcp.config import get_runner_defaults, get_runner_models, get_tool_timeout
 from nexus_mcp.elicitation import ElicitationGuard
 from nexus_mcp.emitters import make_mcp_emitter, make_progress_emitter
+from nexus_mcp.http_client import get_http_client
 from nexus_mcp.icons import SERVER_ICONS, TOOL_CONFIG_ICONS, TOOL_EXEC_ICONS
 from nexus_mcp.labels import assign_labels
 from nexus_mcp.middleware import (
@@ -403,6 +405,43 @@ async def get_model_tiers(
     return result or {}
 
 
+async def opencode_list_providers() -> str:
+    """List available providers on the OpenCode server."""
+    data = await get_http_client().get("/provider")
+    return _json.dumps(data, indent=2)
+
+
+async def opencode_get_provider_auth() -> str:
+    """Get authentication methods for all providers."""
+    data = await get_http_client().get("/provider/auth")
+    return _json.dumps(data, indent=2)
+
+
+async def opencode_set_provider_auth(
+    *,
+    provider_id: str,
+    credentials: dict[str, Any],
+) -> str:
+    """Set authentication credentials for a provider."""
+    await get_http_client().put(f"/auth/{provider_id}", json=credentials)
+    return f"Credentials set for provider '{provider_id}'"
+
+
+async def opencode_get_config() -> str:
+    """Get the current OpenCode server configuration."""
+    data = await get_http_client().get("/config")
+    return _json.dumps(data, indent=2)
+
+
+async def opencode_update_config(
+    *,
+    config: dict[str, Any],
+) -> str:
+    """Update OpenCode server configuration."""
+    data = await get_http_client().patch("/config", json=config)
+    return _json.dumps(data, indent=2)
+
+
 # Inject CLI names as enum into tool schemas before registration freezes them.
 _inject_cli_enum()
 
@@ -465,16 +504,71 @@ _GET_TIERS_ANNOTATIONS = ToolAnnotations(
 )
 
 mcp.tool(
-    task=True, timeout=_tool_timeout, icons=TOOL_EXEC_ICONS, annotations=_BATCH_EXEC_ANNOTATIONS
+    task=True,
+    timeout=_tool_timeout,
+    icons=TOOL_EXEC_ICONS,
+    annotations=_BATCH_EXEC_ANNOTATIONS,
+    tags={"agent-execution"},
 )(batch_prompt)
-mcp.tool(task=True, timeout=_tool_timeout, icons=TOOL_EXEC_ICONS, annotations=_EXEC_ANNOTATIONS)(
-    prompt
+mcp.tool(
+    task=True,
+    timeout=_tool_timeout,
+    icons=TOOL_EXEC_ICONS,
+    annotations=_EXEC_ANNOTATIONS,
+    tags={"agent-execution"},
+)(prompt)
+mcp.tool(
+    icons=TOOL_CONFIG_ICONS,
+    annotations=_SET_PREFS_ANNOTATIONS,
+    tags={"configuration"},
+)(set_preferences)
+mcp.tool(
+    icons=TOOL_CONFIG_ICONS,
+    annotations=_GET_PREFS_ANNOTATIONS,
+    tags={"configuration"},
+)(get_preferences)
+mcp.tool(
+    icons=TOOL_CONFIG_ICONS,
+    annotations=_CLEAR_PREFS_ANNOTATIONS,
+    tags={"configuration"},
+)(clear_preferences)
+mcp.tool(
+    icons=TOOL_CONFIG_ICONS,
+    annotations=_SET_TIERS_ANNOTATIONS,
+    tags={"configuration"},
+)(set_model_tiers)
+mcp.tool(
+    icons=TOOL_CONFIG_ICONS,
+    annotations=_GET_TIERS_ANNOTATIONS,
+    tags={"configuration"},
+)(get_model_tiers)
+
+_CONFIG_OC_ANNOTATIONS = ToolAnnotations(
+    title="OpenCode Configuration",
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=True,
 )
-mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_SET_PREFS_ANNOTATIONS)(set_preferences)
-mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_GET_PREFS_ANNOTATIONS)(get_preferences)
-mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_CLEAR_PREFS_ANNOTATIONS)(clear_preferences)
-mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_SET_TIERS_ANNOTATIONS)(set_model_tiers)
-mcp.tool(icons=TOOL_CONFIG_ICONS, annotations=_GET_TIERS_ANNOTATIONS)(get_model_tiers)
+_READ_OC_ANNOTATIONS = ToolAnnotations(
+    title="OpenCode Configuration (Read)",
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=True,
+)
+
+mcp.tool(annotations=_READ_OC_ANNOTATIONS, tags={"configuration"})(opencode_list_providers)
+mcp.tool(annotations=_READ_OC_ANNOTATIONS, tags={"configuration"})(opencode_get_provider_auth)
+mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_set_provider_auth)
+mcp.tool(annotations=_READ_OC_ANNOTATIONS, tags={"configuration"})(opencode_get_config)
+mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_update_config)
+
+# Phase 1 visibility: tags are assigned above. The allowlist call
+# (mcp.enable(tags=..., only=True)) is deferred to Phase 2 when workspace/terminal
+# tools are added — currently all tools have Phase 1 tags, so gating has no effect.
+# Note: FastMCP's visibility wrapping interferes with tool.timeout monkeypatching
+# in E2E tests (TestToolTimeout). Investigate before enabling.
 
 # Register MCP resources (read-only data endpoints).
 register_resources(mcp)

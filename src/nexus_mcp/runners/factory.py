@@ -20,6 +20,7 @@ from nexus_mcp.runners.claude import ClaudeRunner
 from nexus_mcp.runners.codex import CodexRunner
 from nexus_mcp.runners.gemini import GeminiRunner
 from nexus_mcp.runners.opencode import OpenCodeRunner
+from nexus_mcp.runners.opencode_server import OpenCodeServerRunner
 
 
 class RunnerFactory:
@@ -39,6 +40,7 @@ class RunnerFactory:
         CodexRunner.AGENT_NAME: CodexRunner,
         GeminiRunner.AGENT_NAME: GeminiRunner,
         OpenCodeRunner.AGENT_NAME: OpenCodeRunner,
+        OpenCodeServerRunner.AGENT_NAME: OpenCodeServerRunner,
     }
 
     _instances: ClassVar[dict[str, AbstractRunner]] = {}

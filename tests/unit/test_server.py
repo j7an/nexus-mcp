@@ -638,7 +638,13 @@ class TestDynamicCliEnum:
         tool = await mcp.get_tool("prompt")
         cli_schema = tool.parameters["properties"]["cli"]
         assert "enum" in cli_schema
-        assert set(cli_schema["enum"]) == {"claude", "codex", "gemini", "opencode"}
+        assert set(cli_schema["enum"]) == {
+            "claude",
+            "codex",
+            "gemini",
+            "opencode",
+            "opencode_server",
+        }
 
     async def test_batch_prompt_task_cli_has_enum(self):
         """batch_prompt's task schema has cli enum in the nested AgentTask definition."""
@@ -653,7 +659,13 @@ class TestDynamicCliEnum:
             items = tool.parameters.get("$defs", {}).get(ref_name, {})
         cli_field = items.get("properties", {}).get("cli", {})
         assert "enum" in cli_field
-        assert set(cli_field["enum"]) == {"claude", "codex", "gemini", "opencode"}
+        assert set(cli_field["enum"]) == {
+            "claude",
+            "codex",
+            "gemini",
+            "opencode",
+            "opencode_server",
+        }
 
     async def test_instructions_are_set_on_mcp(self):
         """FastMCP server has non-empty instructions after module load."""
