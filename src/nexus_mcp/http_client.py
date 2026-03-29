@@ -97,6 +97,52 @@ class OpenCodeHTTPClient:
 
         raise SubprocessError(f"OpenCode server returned {status}")
 
+    async def get(self, path: str, **kwargs: object) -> object:
+        """Send a GET request. Returns parsed JSON response.
+
+        Raises SubprocessError or RetryableError on non-200 status.
+        """
+        response = await self._httpx.get(path, **kwargs)  # type: ignore[arg-type]
+        if response.status_code != 200:
+            self.classify_error(response)
+        return response.json()
+
+    async def put(self, path: str, **kwargs: object) -> object:
+        """Send a PUT request. Returns parsed JSON response.
+
+        Raises SubprocessError or RetryableError on non-200 status.
+        """
+        response = await self._httpx.put(path, **kwargs)  # type: ignore[arg-type]
+        if response.status_code != 200:
+            self.classify_error(response)
+        return response.json()
+
+    async def patch(self, path: str, **kwargs: object) -> object:
+        """Send a PATCH request. Returns parsed JSON response.
+
+        Raises SubprocessError or RetryableError on non-200 status.
+        """
+        response = await self._httpx.patch(path, **kwargs)  # type: ignore[arg-type]
+        if response.status_code != 200:
+            self.classify_error(response)
+        return response.json()
+
+    async def post(self, path: str, **kwargs: object) -> object:
+        """Send a POST request. Returns parsed JSON response.
+
+        Raises SubprocessError or RetryableError on non-200 status.
+        """
+        response = await self._httpx.post(path, **kwargs)  # type: ignore[arg-type]
+        if response.status_code != 200:
+            self.classify_error(response)
+        return response.json()
+
+    async def delete(self, path: str) -> None:
+        """Send a DELETE request. Tolerates 404 (already gone)."""
+        response = await self._httpx.delete(path)
+        if response.status_code not in (200, 404):
+            self.classify_error(response)
+
     async def create_session(self) -> str:
         """Create a new session on the OpenCode server.
 

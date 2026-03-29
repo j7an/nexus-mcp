@@ -407,20 +407,14 @@ async def get_model_tiers(
 
 async def opencode_list_providers() -> str:
     """List available providers on the OpenCode server."""
-    client = get_http_client()
-    response = await client._httpx.get("/provider")
-    if response.status_code != 200:
-        client.classify_error(response)
-    return _json.dumps(response.json(), indent=2)
+    data = await get_http_client().get("/provider")
+    return _json.dumps(data, indent=2)
 
 
 async def opencode_get_provider_auth() -> str:
     """Get authentication methods for all providers."""
-    client = get_http_client()
-    response = await client._httpx.get("/provider/auth")
-    if response.status_code != 200:
-        client.classify_error(response)
-    return _json.dumps(response.json(), indent=2)
+    data = await get_http_client().get("/provider/auth")
+    return _json.dumps(data, indent=2)
 
 
 async def opencode_set_provider_auth(
@@ -429,20 +423,14 @@ async def opencode_set_provider_auth(
     credentials: dict[str, Any],
 ) -> str:
     """Set authentication credentials for a provider."""
-    client = get_http_client()
-    response = await client._httpx.put(f"/auth/{provider_id}", json=credentials)
-    if response.status_code != 200:
-        client.classify_error(response)
+    await get_http_client().put(f"/auth/{provider_id}", json=credentials)
     return f"Credentials set for provider '{provider_id}'"
 
 
 async def opencode_get_config() -> str:
     """Get the current OpenCode server configuration."""
-    client = get_http_client()
-    response = await client._httpx.get("/config")
-    if response.status_code != 200:
-        client.classify_error(response)
-    return _json.dumps(response.json(), indent=2)
+    data = await get_http_client().get("/config")
+    return _json.dumps(data, indent=2)
 
 
 async def opencode_update_config(
@@ -450,11 +438,8 @@ async def opencode_update_config(
     config: dict[str, Any],
 ) -> str:
     """Update OpenCode server configuration."""
-    client = get_http_client()
-    response = await client._httpx.patch("/config", json=config)
-    if response.status_code != 200:
-        client.classify_error(response)
-    return _json.dumps(response.json(), indent=2)
+    data = await get_http_client().patch("/config", json=config)
+    return _json.dumps(data, indent=2)
 
 
 # Inject CLI names as enum into tool schemas before registration freezes them.
@@ -578,6 +563,12 @@ mcp.tool(annotations=_READ_OC_ANNOTATIONS, tags={"configuration"})(opencode_get_
 mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_set_provider_auth)
 mcp.tool(annotations=_READ_OC_ANNOTATIONS, tags={"configuration"})(opencode_get_config)
 mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_update_config)
+
+# Phase 1 visibility: tags are assigned above. The allowlist call
+# (mcp.enable(tags=..., only=True)) is deferred to Phase 2 when workspace/terminal
+# tools are added — currently all tools have Phase 1 tags, so gating has no effect.
+# Note: FastMCP's visibility wrapping interferes with tool.timeout monkeypatching
+# in E2E tests (TestToolTimeout). Investigate before enabling.
 
 # Register MCP resources (read-only data endpoints).
 register_resources(mcp)
