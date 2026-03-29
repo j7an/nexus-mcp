@@ -440,10 +440,11 @@ class TestBatchPromptProtocol:
 class TestToolTimeout:
     """Verify FastMCP tool-level timeout via anyio.fail_after().
 
-    Tools registered with task=True support both synchronous and background
-    dispatch. The timeout applies on the synchronous path (client calls
-    without task=True). Background calls go through Docket and are protected
-    by the subprocess-level timeout instead.
+    Uses mcp.get_tool() (public API) to set a short timeout. This approach
+    works as long as mcp.enable(only=True) is NOT active — visibility wrapping
+    creates a proxy that doesn't preserve timeout. If Phase 3 enables visibility
+    gating, switch to: monkeypatch.setenv("NEXUS_TOOL_TIMEOUT_SECONDS", "0.5")
+    + server rebuild.
     """
 
     async def test_hung_tool_times_out(self, mock_subprocess, mcp_client, monkeypatch):

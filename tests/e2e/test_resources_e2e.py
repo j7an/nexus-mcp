@@ -23,11 +23,13 @@ class TestResourceDiscovery:
     """Verify MCP resource registration via list_resources() JSON-RPC call."""
 
     async def test_list_resources_includes_all_static_uris(self, mcp_client):
-        """list_resources() includes the 2 static resource URIs."""
+        """list_resources() includes all always-registered resource URIs."""
         resources = await mcp_client.list_resources()
         uris = {str(r.uri) for r in resources}
         assert "nexus://runners" in uris
         assert "nexus://config" in uris
+        assert "nexus://tiers" in uris
+        assert "nexus://opencode" in uris
 
     async def test_list_resources_includes_preferences(self, mcp_client):
         """list_resources() includes the preferences resource."""
