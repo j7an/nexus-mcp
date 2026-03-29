@@ -160,6 +160,24 @@ async def get_preferences_resource(ctx: Context | None = None) -> str:
     return json.dumps({"source": "defaults", "preferences": fallback})
 
 
+async def get_tiers_resource(ctx: Context | None = None) -> str:
+    """Return saved model tier classifications.
+
+    Resource URI: nexus://tiers
+
+    Returns all persisted tier classifications as a JSON object.
+    Returns an empty dict if no tiers have been saved yet.
+    """
+    if ctx is None:
+        return json.dumps({})
+    try:
+        result = await load_model_tiers(ctx)
+        return json.dumps(result or {})
+    except Exception:
+        logger.debug("Failed to load model tiers")
+        return json.dumps({})
+
+
 def register_resources(mcp: FastMCP) -> None:
     """Register all MCP resources on the server.
 
@@ -177,3 +195,6 @@ def register_resources(mcp: FastMCP) -> None:
     mcp.resource(
         "nexus://preferences", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS
     )(get_preferences_resource)
+    mcp.resource("nexus://tiers", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS)(
+        get_tiers_resource
+    )

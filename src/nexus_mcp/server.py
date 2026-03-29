@@ -49,7 +49,7 @@ from nexus_mcp.preferences import (
 from nexus_mcp.prompts import register_prompts
 from nexus_mcp.resources import register_resources
 from nexus_mcp.runners.factory import RunnerFactory
-from nexus_mcp.store import load_model_tiers, save_model_tiers
+from nexus_mcp.store import save_model_tiers
 from nexus_mcp.types import (
     DEFAULT_MAX_CONCURRENCY,
     AgentTask,
@@ -384,27 +384,6 @@ async def set_model_tiers(
     return f"Model tiers saved: {len(tiers)} model(s) classified"
 
 
-async def get_model_tiers(
-    *,
-    ctx: Context | None = None,
-) -> dict[str, str]:
-    """Return saved model tier classifications.
-
-    Returns all persisted tier classifications. Returns an empty dict
-    if no tiers have been saved yet.
-
-    Args:
-        ctx: MCP context (auto-injected by FastMCP).
-
-    Returns:
-        Dict mapping model names to tiers ('quick', 'standard', 'thorough').
-    """
-    if ctx is None:
-        raise ToolError("get_model_tiers requires an active session context")
-    result = await load_model_tiers(ctx)
-    return result or {}
-
-
 async def opencode_list_providers() -> str:
     """List available providers on the OpenCode server."""
     data = await get_http_client().get("/provider")
@@ -495,14 +474,6 @@ _SET_TIERS_ANNOTATIONS = ToolAnnotations(
     idempotentHint=True,
     openWorldHint=False,
 )
-_GET_TIERS_ANNOTATIONS = ToolAnnotations(
-    title="Get Model Tiers",
-    readOnlyHint=True,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=False,
-)
-
 mcp.tool(
     task=True,
     timeout=_tool_timeout,
@@ -537,12 +508,6 @@ mcp.tool(
     annotations=_SET_TIERS_ANNOTATIONS,
     tags={"configuration"},
 )(set_model_tiers)
-mcp.tool(
-    icons=TOOL_CONFIG_ICONS,
-    annotations=_GET_TIERS_ANNOTATIONS,
-    tags={"configuration"},
-)(get_model_tiers)
-
 _CONFIG_OC_ANNOTATIONS = ToolAnnotations(
     title="OpenCode Configuration",
     readOnlyHint=False,

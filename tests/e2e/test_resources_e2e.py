@@ -132,6 +132,30 @@ class TestReadPreferencesResource:
 
 
 @pytest.mark.e2e
+class TestReadTiersResource:
+    """Verify nexus://tiers resource via read_resource()."""
+
+    async def test_returns_empty_dict_when_no_tiers_saved(self, mcp_client):
+        contents = await mcp_client.read_resource("nexus://tiers")
+        data = json.loads(contents[0].text)
+        assert data == {}
+
+    async def test_returns_saved_tiers(self, mcp_client):
+        await mcp_client.call_tool(
+            "set_model_tiers",
+            {"tiers": {"gemini-2.5-flash": "quick", "kimi-k2.5": "standard"}},
+        )
+        contents = await mcp_client.read_resource("nexus://tiers")
+        data = json.loads(contents[0].text)
+        assert data == {"gemini-2.5-flash": "quick", "kimi-k2.5": "standard"}
+
+    async def test_tiers_resource_listed_in_resources(self, mcp_client):
+        resources = await mcp_client.list_resources()
+        uris = {str(r.uri) for r in resources}
+        assert "nexus://tiers" in uris
+
+
+@pytest.mark.e2e
 class TestResourceAnnotations:
     """Verify all resources have readOnlyHint and idempotentHint annotations."""
 
