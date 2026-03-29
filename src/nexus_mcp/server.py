@@ -18,6 +18,7 @@ going through the FunctionTool wrapper.
 """
 
 import asyncio
+import json as _json
 import logging
 from typing import Annotated, Any
 
@@ -30,6 +31,7 @@ from nexus_mcp.cli_detector import detect_cli
 from nexus_mcp.config import get_runner_defaults, get_runner_models, get_tool_timeout
 from nexus_mcp.elicitation import ElicitationGuard
 from nexus_mcp.emitters import make_mcp_emitter, make_progress_emitter
+from nexus_mcp.http_client import get_http_client
 from nexus_mcp.icons import SERVER_ICONS, TOOL_CONFIG_ICONS, TOOL_EXEC_ICONS
 from nexus_mcp.labels import assign_labels
 from nexus_mcp.middleware import (
@@ -403,6 +405,58 @@ async def get_model_tiers(
     return result or {}
 
 
+async def opencode_list_providers() -> str:
+    """List available providers on the OpenCode server."""
+    client = get_http_client()
+    response = await client._httpx.get("/provider")
+    if response.status_code != 200:
+        client.classify_error(response)
+    return _json.dumps(response.json(), indent=2)
+
+
+async def opencode_get_provider_auth() -> str:
+    """Get authentication methods for all providers."""
+    client = get_http_client()
+    response = await client._httpx.get("/provider/auth")
+    if response.status_code != 200:
+        client.classify_error(response)
+    return _json.dumps(response.json(), indent=2)
+
+
+async def opencode_set_provider_auth(
+    *,
+    provider_id: str,
+    credentials: dict[str, Any],
+) -> str:
+    """Set authentication credentials for a provider."""
+    client = get_http_client()
+    response = await client._httpx.put(f"/auth/{provider_id}", json=credentials)
+    if response.status_code != 200:
+        client.classify_error(response)
+    return f"Credentials set for provider '{provider_id}'"
+
+
+async def opencode_get_config() -> str:
+    """Get the current OpenCode server configuration."""
+    client = get_http_client()
+    response = await client._httpx.get("/config")
+    if response.status_code != 200:
+        client.classify_error(response)
+    return _json.dumps(response.json(), indent=2)
+
+
+async def opencode_update_config(
+    *,
+    config: dict[str, Any],
+) -> str:
+    """Update OpenCode server configuration."""
+    client = get_http_client()
+    response = await client._httpx.patch("/config", json=config)
+    if response.status_code != 200:
+        client.classify_error(response)
+    return _json.dumps(response.json(), indent=2)
+
+
 # Inject CLI names as enum into tool schemas before registration freezes them.
 _inject_cli_enum()
 
@@ -503,6 +557,27 @@ mcp.tool(
     annotations=_GET_TIERS_ANNOTATIONS,
     tags={"configuration"},
 )(get_model_tiers)
+
+_CONFIG_OC_ANNOTATIONS = ToolAnnotations(
+    title="OpenCode Configuration",
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=True,
+)
+_READ_OC_ANNOTATIONS = ToolAnnotations(
+    title="OpenCode Configuration (Read)",
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=True,
+)
+
+mcp.tool(annotations=_READ_OC_ANNOTATIONS, tags={"configuration"})(opencode_list_providers)
+mcp.tool(annotations=_READ_OC_ANNOTATIONS, tags={"configuration"})(opencode_get_provider_auth)
+mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_set_provider_auth)
+mcp.tool(annotations=_READ_OC_ANNOTATIONS, tags={"configuration"})(opencode_get_config)
+mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_update_config)
 
 # Register MCP resources (read-only data endpoints).
 register_resources(mcp)
