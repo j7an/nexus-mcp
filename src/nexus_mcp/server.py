@@ -384,18 +384,6 @@ async def set_model_tiers(
     return f"Model tiers saved: {len(tiers)} model(s) classified"
 
 
-async def opencode_list_providers() -> str:
-    """List available providers on the OpenCode server."""
-    data = await get_http_client().get("/provider")
-    return _json.dumps(data, indent=2)
-
-
-async def opencode_get_provider_auth() -> str:
-    """Get authentication methods for all providers."""
-    data = await get_http_client().get("/provider/auth")
-    return _json.dumps(data, indent=2)
-
-
 async def opencode_set_provider_auth(
     *,
     provider_id: str,
@@ -404,12 +392,6 @@ async def opencode_set_provider_auth(
     """Set authentication credentials for a provider."""
     await get_http_client().put(f"/auth/{provider_id}", json=credentials)
     return f"Credentials set for provider '{provider_id}'"
-
-
-async def opencode_get_config() -> str:
-    """Get the current OpenCode server configuration."""
-    data = await get_http_client().get("/config")
-    return _json.dumps(data, indent=2)
 
 
 async def opencode_update_config(
@@ -503,18 +485,8 @@ _CONFIG_OC_ANNOTATIONS = ToolAnnotations(
     idempotentHint=True,
     openWorldHint=True,
 )
-_READ_OC_ANNOTATIONS = ToolAnnotations(
-    title="OpenCode Configuration (Read)",
-    readOnlyHint=True,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=True,
-)
 
-mcp.tool(annotations=_READ_OC_ANNOTATIONS, tags={"configuration"})(opencode_list_providers)
-mcp.tool(annotations=_READ_OC_ANNOTATIONS, tags={"configuration"})(opencode_get_provider_auth)
 mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_set_provider_auth)
-mcp.tool(annotations=_READ_OC_ANNOTATIONS, tags={"configuration"})(opencode_get_config)
 mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_update_config)
 
 # Phase 1 visibility: tags are assigned above. The allowlist call

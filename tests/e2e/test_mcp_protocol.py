@@ -54,10 +54,7 @@ class TestToolDiscovery:
             "set_preferences",
             "clear_preferences",
             "set_model_tiers",
-            "opencode_list_providers",
-            "opencode_get_provider_auth",
             "opencode_set_provider_auth",
-            "opencode_get_config",
             "opencode_update_config",
         }
 
@@ -137,10 +134,7 @@ class TestToolAnnotations:
             "set_preferences": "Set Session Preferences",
             "clear_preferences": "Clear Session Preferences",
             "set_model_tiers": "Set Model Tiers",
-            "opencode_list_providers": "OpenCode Configuration (Read)",
-            "opencode_get_provider_auth": "OpenCode Configuration (Read)",
             "opencode_set_provider_auth": "OpenCode Configuration",
-            "opencode_get_config": "OpenCode Configuration (Read)",
             "opencode_update_config": "OpenCode Configuration",
         }
         tools = await mcp_client.list_tools()
