@@ -1,12 +1,13 @@
 # src/nexus_mcp/server.py
 """FastMCP server with CLI agent tools.
 
-Exposes five MCP tools:
+Exposes four MCP tools:
 - batch_prompt: Send multiple prompts to CLI agents in parallel (primary tool)
 - prompt: Send a single prompt to a CLI agent, routes to batch_prompt
 - set_preferences: Set session defaults (execution mode, model, retries, etc.)
-- get_preferences: Retrieve current session preferences
 - clear_preferences: Reset all session preferences
+
+Session preferences are readable via the nexus://preferences MCP resource.
 
 Background task design: both prompt and batch_prompt use @mcp.tool(task=True) so they
 run asynchronously and return task IDs immediately. This prevents MCP timeouts for long
@@ -43,7 +44,6 @@ from nexus_mcp.preferences import (
     _apply_preferences,
     _get_session_preferences,
     clear_preferences,
-    get_preferences,
     set_preferences,
 )
 from nexus_mcp.prompts import register_prompts
@@ -453,13 +453,6 @@ _SET_PREFS_ANNOTATIONS = ToolAnnotations(
     idempotentHint=True,
     openWorldHint=False,
 )
-_GET_PREFS_ANNOTATIONS = ToolAnnotations(
-    title="Get Session Preferences",
-    readOnlyHint=True,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=False,
-)
 _CLEAR_PREFS_ANNOTATIONS = ToolAnnotations(
     title="Clear Session Preferences",
     readOnlyHint=False,
@@ -493,11 +486,6 @@ mcp.tool(
     annotations=_SET_PREFS_ANNOTATIONS,
     tags={"configuration"},
 )(set_preferences)
-mcp.tool(
-    icons=TOOL_CONFIG_ICONS,
-    annotations=_GET_PREFS_ANNOTATIONS,
-    tags={"configuration"},
-)(get_preferences)
 mcp.tool(
     icons=TOOL_CONFIG_ICONS,
     annotations=_CLEAR_PREFS_ANNOTATIONS,

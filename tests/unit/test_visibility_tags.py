@@ -33,11 +33,3 @@ class TestToolTags:
         tool = next((t for t in tools if t.name == "set_preferences"), None)
         assert tool is not None
         assert "configuration" in tool.tags
-
-    async def test_get_preferences_has_configuration_tag(self):
-        from nexus_mcp.server import mcp
-
-        tools = await mcp.list_tools()
-        tool = next((t for t in tools if t.name == "get_preferences"), None)
-        assert tool is not None
-        assert "configuration" in tool.tags

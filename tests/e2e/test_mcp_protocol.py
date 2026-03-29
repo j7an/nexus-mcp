@@ -52,7 +52,6 @@ class TestToolDiscovery:
             "prompt",
             "batch_prompt",
             "set_preferences",
-            "get_preferences",
             "clear_preferences",
             "set_model_tiers",
             "opencode_list_providers",
@@ -110,16 +109,6 @@ class TestToolAnnotations:
             assert tool.annotations.idempotentHint is False
             assert tool.annotations.openWorldHint is True
 
-    async def test_get_preferences_is_read_only_and_idempotent(self, mcp_client):
-        """get_preferences is a pure read with no side effects."""
-        tools = await mcp_client.list_tools()
-        tool = next(t for t in tools if t.name == "get_preferences")
-        assert tool.annotations is not None
-        assert tool.annotations.readOnlyHint is True
-        assert tool.annotations.destructiveHint is False
-        assert tool.annotations.idempotentHint is True
-        assert tool.annotations.openWorldHint is False
-
     async def test_set_preferences_is_idempotent_non_destructive(self, mcp_client):
         """set_preferences merges state (non-destructive) and is idempotent."""
         tools = await mcp_client.list_tools()
@@ -146,7 +135,6 @@ class TestToolAnnotations:
             "prompt": "Prompt CLI Agent",
             "batch_prompt": "Batch Prompt CLI Agents",
             "set_preferences": "Set Session Preferences",
-            "get_preferences": "Get Session Preferences",
             "clear_preferences": "Clear Session Preferences",
             "set_model_tiers": "Set Model Tiers",
             "opencode_list_providers": "OpenCode Configuration (Read)",
