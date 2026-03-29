@@ -1,5 +1,7 @@
 """Tests for OpenCodeHTTPClient — auth, health check, error classification."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import httpx
 import pytest
 import respx
@@ -165,3 +167,55 @@ class TestSessionManagement:
         )
         session_id = await client.resolve_session(None)
         assert session_id == "ses_ephemeral"
+
+
+class TestSSEPromptFlow:
+    @respx.mock
+    async def test_send_prompt_collects_text_parts(self, client):
+        """Full SSE flow: subscribe → connected → send → collect parts → return."""
+        respx.post("http://test:4096/session/ses_1/message").mock(return_value=httpx.Response(200))
+
+        mock_events = [
+            MagicMock(event="server.connected", data="{}"),
+            MagicMock(event="part.updated", data='{"part": {"type": "text", "text": "Hello "}}'),
+            MagicMock(event="part.updated", data='{"part": {"type": "text", "text": "world"}}'),
+            MagicMock(event="session.status", data='{"status": "completed"}'),
+        ]
+
+        async def mock_aiter_sse():
+            for event in mock_events:
+                yield event
+
+        mock_event_source = AsyncMock()
+        mock_event_source.aiter_sse = mock_aiter_sse
+        mock_event_source.__aenter__ = AsyncMock(return_value=mock_event_source)
+        mock_event_source.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("nexus_mcp.http_client.aconnect_sse", return_value=mock_event_source):
+            result = await client.send_prompt("ses_1", "test prompt")
+
+        assert result == "Hello world"
+
+    @respx.mock
+    async def test_send_prompt_handles_empty_response(self, client):
+        """Session completes with no text parts — returns empty string."""
+        respx.post("http://test:4096/session/ses_1/message").mock(return_value=httpx.Response(200))
+
+        mock_events = [
+            MagicMock(event="server.connected", data="{}"),
+            MagicMock(event="session.status", data='{"status": "completed"}'),
+        ]
+
+        async def mock_aiter_sse():
+            for event in mock_events:
+                yield event
+
+        mock_event_source = AsyncMock()
+        mock_event_source.aiter_sse = mock_aiter_sse
+        mock_event_source.__aenter__ = AsyncMock(return_value=mock_event_source)
+        mock_event_source.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("nexus_mcp.http_client.aconnect_sse", return_value=mock_event_source):
+            result = await client.send_prompt("ses_1", "test prompt")
+
+        assert result == ""

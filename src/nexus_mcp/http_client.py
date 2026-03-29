@@ -8,9 +8,11 @@ httpx directly. This enables future swap to httpxyz if httpx remains stalled.
 """
 
 import contextlib
+import json
 import logging
 
 import httpx
+from httpx_sse import aconnect_sse
 
 from nexus_mcp.config_resolver import get_opencode_server_auth, get_opencode_server_url
 from nexus_mcp.exceptions import RetryableError, SubprocessError
@@ -159,6 +161,59 @@ class OpenCodeHTTPClient:
         session_id = await self.create_session()
         self._session_cache[label] = session_id
         return session_id
+
+    async def send_prompt(self, session_id: str, prompt_text: str) -> str:
+        """Send a prompt and collect the response via SSE.
+
+        Implements race condition mitigation from OpenCode PR #12965:
+        1. Connect SSE (subscribe to events)
+        2. Wait for server.connected
+        3. POST prompt
+        4. Collect part.updated text events
+        5. Return when session.status = completed
+
+        Args:
+            session_id: The session to send the prompt to.
+            prompt_text: The prompt text.
+
+        Returns:
+            Aggregated text from all part.updated events.
+        """
+        parts: list[str] = []
+        prompt_sent = False
+
+        async with aconnect_sse(self._httpx, "GET", "/event") as event_source:
+            async for event in event_source.aiter_sse():
+                if event.event == "server.connected" and not prompt_sent:
+                    # Step 3: Send prompt AFTER subscribing (race condition fix)
+                    response = await self._httpx.post(
+                        f"/session/{session_id}/message",
+                        json={"content": prompt_text},
+                    )
+                    if response.status_code != 200:
+                        self.classify_error(response)
+                    prompt_sent = True
+
+                elif event.event == "part.updated":
+                    try:
+                        data = json.loads(event.data)
+                        part = data.get("part", {})
+                        if part.get("type") == "text":
+                            text = part.get("text", "")
+                            if text:
+                                parts.append(text)
+                    except json.JSONDecodeError:
+                        pass
+
+                elif event.event == "session.status":
+                    try:
+                        data = json.loads(event.data)
+                        if data.get("status") == "completed":
+                            break
+                    except json.JSONDecodeError:
+                        pass
+
+        return "".join(parts)
 
     async def close(self) -> None:
         """Close the underlying httpx client."""
