@@ -54,6 +54,77 @@ ROUTE_MAPS = [
     RouteMap(
         methods=["GET"], pattern=r"/command$", mcp_type=MCPType.TOOL, mcp_tags={"configuration"}
     ),
+    # Session lifecycle (Phase 3)
+    RouteMap(
+        methods=["POST"],
+        pattern=r"/session/[^/]+/abort$",
+        mcp_type=MCPType.TOOL,
+        mcp_tags={"session"},
+    ),
+    RouteMap(
+        methods=["POST"],
+        pattern=r"/session/[^/]+/summarize$",
+        mcp_type=MCPType.TOOL,
+        mcp_tags={"session"},
+    ),
+    RouteMap(
+        methods=["POST", "DELETE"],
+        pattern=r"/session/[^/]+/share$",
+        mcp_type=MCPType.TOOL,
+        mcp_tags={"session"},
+    ),
+    RouteMap(
+        methods=["POST"],
+        pattern=r"/session/[^/]+/revert$",
+        mcp_type=MCPType.TOOL,
+        mcp_tags={"session"},
+    ),
+    RouteMap(
+        methods=["POST"],
+        pattern=r"/session/[^/]+/unrevert$",
+        mcp_type=MCPType.TOOL,
+        mcp_tags={"session"},
+    ),
+    RouteMap(
+        methods=["PATCH"], pattern=r"/session/[^/]+$", mcp_type=MCPType.TOOL, mcp_tags={"session"}
+    ),
+    RouteMap(
+        methods=["POST"],
+        pattern=r"/session/[^/]+/command$",
+        mcp_type=MCPType.TOOL,
+        mcp_tags={"session"},
+    ),
+    RouteMap(
+        methods=["POST"],
+        pattern=r"/session/[^/]+/init$",
+        mcp_type=MCPType.TOOL,
+        mcp_tags={"session"},
+    ),
+    RouteMap(
+        methods=["DELETE"],
+        pattern=r"/session/[^/]+/message/[^/]+/part/[^/]+$",
+        mcp_type=MCPType.TOOL,
+        mcp_tags={"session"},
+    ),
+    # Permission & question (Phase 3)
+    RouteMap(
+        methods=["POST"],
+        pattern=r"/permission/[^/]+/reply$",
+        mcp_type=MCPType.TOOL,
+        mcp_tags={"session"},
+    ),
+    RouteMap(
+        methods=["POST"],
+        pattern=r"/question/[^/]+/reply$",
+        mcp_type=MCPType.TOOL,
+        mcp_tags={"session"},
+    ),
+    RouteMap(
+        methods=["POST"],
+        pattern=r"/question/[^/]+/reject$",
+        mcp_type=MCPType.TOOL,
+        mcp_tags={"session"},
+    ),
     # Exclude everything else (catch-all — must be last)
     RouteMap(pattern=r".*", mcp_type=MCPType.EXCLUDE),
 ]

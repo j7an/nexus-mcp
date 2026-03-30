@@ -171,10 +171,16 @@ class TestConfiguredHealthyState:
             async with Client(mcp) as client:
                 resources = await client.list_resources()
                 uris = {str(r.uri) for r in resources}
+                # Phase 2 resources
                 assert "nexus://opencode" in uris
                 assert "nexus://opencode/providers" in uris
                 assert "nexus://opencode/providers/auth" in uris
                 assert "nexus://opencode/config" in uris
+                # Phase 3 static resources
+                assert "nexus://opencode/sessions" in uris
+                assert "nexus://opencode/sessions/status" in uris
+                assert "nexus://opencode/permissions" in uris
+                assert "nexus://opencode/questions" in uris
         finally:
             mcp._lifespan_result_set = False
             reset_http_client()

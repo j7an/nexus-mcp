@@ -178,6 +178,60 @@ class TestRouteMapFiltering:
         for rm in non_exclude:
             assert rm.mcp_type == MCPType.TOOL
 
+    def test_session_endpoints_included(self):
+        """ROUTE_MAPS includes session-tagged entries for lifecycle endpoints."""
+        session_maps = [rm for rm in ROUTE_MAPS if "session" in rm.mcp_tags]
+        patterns = {str(rm.pattern) for rm in session_maps}
+        assert r"/session/[^/]+/abort$" in patterns
+        assert r"/session/[^/]+/summarize$" in patterns
+        assert r"/session/[^/]+/share$" in patterns
+        assert r"/session/[^/]+/revert$" in patterns
+        assert r"/session/[^/]+/unrevert$" in patterns
+        assert r"/session/[^/]+/command$" in patterns
+        assert r"/session/[^/]+/init$" in patterns
+
+    def test_session_update_endpoint_included(self):
+        """ROUTE_MAPS includes PATCH /session/{id} for session update."""
+        session_maps = [rm for rm in ROUTE_MAPS if "session" in rm.mcp_tags]
+        patch_maps = [rm for rm in session_maps if "PATCH" in rm.methods]
+        patterns = {str(rm.pattern) for rm in patch_maps}
+        assert r"/session/[^/]+$" in patterns
+
+    def test_permission_question_endpoints_included(self):
+        """ROUTE_MAPS includes permission and question reply/reject endpoints."""
+        session_maps = [rm for rm in ROUTE_MAPS if "session" in rm.mcp_tags]
+        patterns = {str(rm.pattern) for rm in session_maps}
+        assert r"/permission/[^/]+/reply$" in patterns
+        assert r"/question/[^/]+/reply$" in patterns
+        assert r"/question/[^/]+/reject$" in patterns
+
+    def test_message_part_delete_endpoint_included(self):
+        """ROUTE_MAPS includes DELETE for message part deletion."""
+        session_maps = [rm for rm in ROUTE_MAPS if "session" in rm.mcp_tags]
+        delete_maps = [rm for rm in session_maps if "DELETE" in rm.methods]
+        patterns = {str(rm.pattern) for rm in delete_maps}
+        assert r"/session/[^/]+/message/[^/]+/part/[^/]+$" in patterns
+
+    def test_share_route_has_post_and_delete_methods(self):
+        """Share route map includes both POST (share) and DELETE (unshare) methods."""
+        session_maps = [rm for rm in ROUTE_MAPS if "session" in rm.mcp_tags]
+        share_maps = [rm for rm in session_maps if "/share$" in str(rm.pattern)]
+        assert len(share_maps) == 1
+        assert "POST" in share_maps[0].methods
+        assert "DELETE" in share_maps[0].methods
+
+    def test_deprecated_session_permissions_excluded(self):
+        """Deprecated POST /session/{id}/permissions/{id} is caught by EXCLUDE."""
+        session_maps = [rm for rm in ROUTE_MAPS if "session" in rm.mcp_tags]
+        patterns = {str(rm.pattern) for rm in session_maps}
+        # No pattern should match the deprecated session-scoped permissions endpoint
+        assert not any("permissions" in p for p in patterns)
+
+    def test_session_endpoint_count(self):
+        """ROUTE_MAPS has exactly 12 session-tagged entries (13 tools from 12 maps)."""
+        session_maps = [rm for rm in ROUTE_MAPS if "session" in rm.mcp_tags]
+        assert len(session_maps) == 12
+
 
 class TestSetupOpenCodeTools:
     @respx.mock
