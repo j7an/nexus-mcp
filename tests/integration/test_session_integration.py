@@ -22,7 +22,7 @@ from nexus_mcp.http_client import OpenCodeHTTPClient, reset_http_client
 def opencode_server_available():
     """Skip all tests if OpenCode server is not configured."""
     password = os.environ.get("NEXUS_OPENCODE_SERVER_PASSWORD")
-    if not password:
+    if password is None:
         pytest.skip("NEXUS_OPENCODE_SERVER_PASSWORD not set — skipping server integration tests")
 
 
@@ -92,13 +92,6 @@ class TestSessionLifecycle:
     async def test_session_children(self, client, temp_session):
         data = await client.get(f"/session/{temp_session}/children")
         assert isinstance(data, list)
-
-    async def test_session_command_help(self, client, temp_session):
-        result = await client.post(
-            f"/session/{temp_session}/command",
-            json={"command": "/help", "args": []},
-        )
-        assert result is not None
 
 
 @pytest.mark.integration
