@@ -120,6 +120,42 @@ async def get_opencode_config() -> str:
     return json.dumps(data, indent=2)
 
 
+async def get_opencode_sessions() -> str:
+    """Return list of all sessions from OpenCode server.
+
+    Resource URI: nexus://opencode/sessions
+    """
+    data = await get_http_client().get("/session")
+    return json.dumps(data, indent=2)
+
+
+async def get_opencode_sessions_status() -> str:
+    """Return status of all sessions from OpenCode server.
+
+    Resource URI: nexus://opencode/sessions/status
+    """
+    data = await get_http_client().get("/session/status")
+    return json.dumps(data, indent=2)
+
+
+async def get_opencode_permissions() -> str:
+    """Return pending permission requests from OpenCode server.
+
+    Resource URI: nexus://opencode/permissions
+    """
+    data = await get_http_client().get("/permission")
+    return json.dumps(data, indent=2)
+
+
+async def get_opencode_questions() -> str:
+    """Return pending question requests from OpenCode server.
+
+    Resource URI: nexus://opencode/questions
+    """
+    data = await get_http_client().get("/question")
+    return json.dumps(data, indent=2)
+
+
 def register_opencode_status_resource(mcp: FastMCP) -> None:
     """Register the nexus://opencode status resource (always)."""
     mcp.resource(
@@ -146,3 +182,23 @@ def register_opencode_data_resources(mcp: FastMCP) -> None:
         mime_type="application/json",
         annotations=_RESOURCE_ANNOTATIONS,
     )(get_opencode_config)
+    mcp.resource(
+        "nexus://opencode/sessions",
+        mime_type="application/json",
+        annotations=_RESOURCE_ANNOTATIONS,
+    )(get_opencode_sessions)
+    mcp.resource(
+        "nexus://opencode/sessions/status",
+        mime_type="application/json",
+        annotations=_RESOURCE_ANNOTATIONS,
+    )(get_opencode_sessions_status)
+    mcp.resource(
+        "nexus://opencode/permissions",
+        mime_type="application/json",
+        annotations=_RESOURCE_ANNOTATIONS,
+    )(get_opencode_permissions)
+    mcp.resource(
+        "nexus://opencode/questions",
+        mime_type="application/json",
+        annotations=_RESOURCE_ANNOTATIONS,
+    )(get_opencode_questions)
