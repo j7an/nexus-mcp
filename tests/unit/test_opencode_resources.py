@@ -34,6 +34,7 @@ class TestOpenCodeStatusResource:
         assert result["server"]["url"] is None
         assert result["tool_groups"] == []
         assert result["compound_tools"] == []
+        assert result["resource_groups"] == []
 
     @respx.mock
     async def test_configured_healthy(self):
@@ -48,8 +49,27 @@ class TestOpenCodeStatusResource:
         assert result["server"]["configured"] is True
         assert result["server"]["healthy"] is True
         assert result["server"]["url"] == "http://test:4096"
-        assert len(result["tool_groups"]) == 4
+        # Updated tool groups
+        tags = {g["tag"] for g in result["tool_groups"]}
+        assert tags == {"configuration", "workspace", "monitoring", "session"}
+        assert "terminal" not in tags
+        # Session group has 13 tools
+        session_group = next(g for g in result["tool_groups"] if g["tag"] == "session")
+        assert session_group["tool_count"] == 13
+        assert session_group["enabled"] is True
+        # Fixed counts
+        config_group = next(g for g in result["tool_groups"] if g["tag"] == "configuration")
+        assert config_group["tool_count"] == 4
+        workspace_group = next(g for g in result["tool_groups"] if g["tag"] == "workspace")
+        assert workspace_group["tool_count"] == 11
+        # Compound tools unchanged
         assert result["compound_tools"] == ["opencode_investigate", "opencode_session_review"]
+        # Resource groups (new)
+        assert "resource_groups" in result
+        categories = {g["category"] for g in result["resource_groups"]}
+        assert categories == {"providers", "session"}
+        session_rg = next(g for g in result["resource_groups"] if g["category"] == "session")
+        assert session_rg["resource_count"] == 9
 
     @respx.mock
     async def test_configured_unhealthy(self):
@@ -63,6 +83,7 @@ class TestOpenCodeStatusResource:
         assert result["server"]["healthy"] is False
         assert result["tool_groups"] == []
         assert result["compound_tools"] == []
+        assert result["resource_groups"] == []
 
 
 class TestOpenCodeProvidersResource:

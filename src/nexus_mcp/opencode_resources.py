@@ -30,13 +30,13 @@ _TOOL_GROUPS_HEALTHY = [
     {
         "tag": "configuration",
         "description": "Provider setup, config management",
-        "tool_count": 5,
+        "tool_count": 4,
         "enabled": True,
     },
     {
         "tag": "workspace",
         "description": "File search, git status, project info",
-        "tool_count": 9,
+        "tool_count": 11,
         "enabled": True,
     },
     {
@@ -46,10 +46,23 @@ _TOOL_GROUPS_HEALTHY = [
         "enabled": True,
     },
     {
-        "tag": "terminal",
-        "description": "Shell commands, PTY sessions",
-        "tool_count": 0,
-        "enabled": False,
+        "tag": "session",
+        "description": "Session lifecycle, permissions, questions",
+        "tool_count": 13,
+        "enabled": True,
+    },
+]
+
+_RESOURCE_GROUPS_HEALTHY = [
+    {
+        "category": "providers",
+        "description": "Provider list, auth methods, config",
+        "resource_count": 3,
+    },
+    {
+        "category": "session",
+        "description": "Session data, messages, todos, diffs",
+        "resource_count": 9,
     },
 ]
 
@@ -79,6 +92,7 @@ async def get_opencode_status() -> str:
                 "server": {"configured": False, "healthy": False, "url": None},
                 "tool_groups": [],
                 "compound_tools": [],
+                "resource_groups": [],
             }
         )
 
@@ -95,6 +109,7 @@ async def get_opencode_status() -> str:
             "server": {"configured": True, "healthy": healthy, "url": url},
             "tool_groups": _TOOL_GROUPS_HEALTHY if healthy else [],
             "compound_tools": _COMPOUND_TOOLS if healthy else [],
+            "resource_groups": _RESOURCE_GROUPS_HEALTHY if healthy else [],
         }
     )
 
