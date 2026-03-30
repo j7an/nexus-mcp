@@ -78,7 +78,11 @@ async def get_opencode_status() -> str:
 
     url = get_opencode_server_url()
     client = get_http_client()
-    healthy = await client.health_check()
+    try:
+        healthy = await client.health_check()
+    except Exception:
+        logger.debug("Health check failed unexpectedly", exc_info=True)
+        healthy = False
 
     return json.dumps(
         {

@@ -94,7 +94,7 @@ async def setup_opencode_tools(mcp: FastMCP, client: OpenCodeHTTPClient) -> bool
             client=client._httpx,
             route_maps=ROUTE_MAPS,
         )
-    except (ValueError, Exception) as e:
+    except Exception as e:
         logger.warning("Failed to create OpenAPIProvider: %s", e)
         return False
 

@@ -10,11 +10,10 @@ Tools:
 """
 
 import logging
+import re
 from typing import Any
 
 from fastmcp import Context, FastMCP
-
-from nexus_mcp.http_client import OpenCodeHTTPClient
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +66,7 @@ async def opencode_investigate(
     If ctx.sample() is available, returns AI-analyzed results.
     Otherwise returns raw search results + file contents.
     """
+    max_files = min(max(max_files, 1), 50)  # clamp to [1, 50]
     from nexus_mcp.http_client import get_http_client
 
     client = get_http_client()
@@ -89,7 +89,7 @@ async def opencode_investigate(
             if sampled.text is not None:
                 return sampled.text
         except Exception:
-            pass
+            logger.debug("ctx.sample() failed, returning raw data", exc_info=True)
     return raw
 
 
@@ -104,6 +104,8 @@ async def opencode_session_review(
     If ctx.sample() is available, returns AI-summarized review.
     Otherwise returns raw session data.
     """
+    if not re.fullmatch(r"[a-zA-Z0-9_-]+", session_id):
+        raise ValueError(f"Invalid session_id: {session_id!r}")
     from nexus_mcp.http_client import get_http_client
 
     client = get_http_client()
@@ -123,11 +125,11 @@ async def opencode_session_review(
             if sampled.text is not None:
                 return sampled.text
         except Exception:
-            pass
+            logger.debug("ctx.sample() failed, returning raw data", exc_info=True)
     return raw
 
 
-def register_compound_tools(mcp: FastMCP, client: OpenCodeHTTPClient) -> None:
+def register_compound_tools(mcp: FastMCP) -> None:
     """Register compound tools on the FastMCP server."""
     mcp.tool(tags={"workspace"})(opencode_investigate)
     mcp.tool(tags={"workspace"})(opencode_session_review)

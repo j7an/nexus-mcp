@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 import json as _json
 import logging
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
@@ -157,8 +158,10 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
     """Conditionally register OpenCode tools based on server availability."""
     register_opencode_status_resource(server)
 
+    client_to_close = None
     if is_opencode_server_configured():
         client = get_http_client()
+        client_to_close = client
 
         server.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(
             opencode_set_provider_auth
@@ -170,7 +173,7 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
         healthy = await client.health_check()
         if healthy:
             await setup_opencode_tools(server, client)
-            register_compound_tools(server, client)
+            register_compound_tools(server)
             register_opencode_data_resources(server)
             logger.info("OpenCode server tools registered (server healthy)")
         else:
@@ -180,9 +183,9 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
 
     yield
 
-    if is_opencode_server_configured():
+    if client_to_close is not None:
         with contextlib.suppress(Exception):
-            await get_http_client().close()
+            await client_to_close.close()
 
 
 mcp = FastMCP(
@@ -438,6 +441,8 @@ async def opencode_set_provider_auth(
     credentials: dict[str, Any],
 ) -> str:
     """Set authentication credentials for a provider."""
+    if not re.fullmatch(r"[a-zA-Z0-9_-]+", provider_id):
+        raise ToolError(f"Invalid provider_id: {provider_id!r}")
     await get_http_client().put(f"/auth/{provider_id}", json=credentials)
     return f"Credentials set for provider '{provider_id}'"
 
