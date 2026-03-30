@@ -5,12 +5,22 @@ Verifies the full stack: JSON-RPC serialization → FastMCP DI → preference to
 session state persistence → prompt/batch_prompt preference resolution.
 """
 
+import json
+
 import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
 from nexus_mcp.server import mcp
 from tests.fixtures import create_mock_process, gemini_json
+
+
+async def _get_prefs(mcp_client) -> dict:
+    """Read current session preferences via the nexus://preferences resource."""
+    contents = await mcp_client.read_resource("nexus://preferences")
+    data = json.loads(contents[0].text)
+    return data["preferences"]
+
 
 # ---------------------------------------------------------------------------
 # Class 1: set/get/clear round-trips
@@ -20,17 +30,15 @@ from tests.fixtures import create_mock_process, gemini_json
 @pytest.mark.e2e
 class TestPreferencesRoundTrip:
     async def test_set_then_get_returns_preference(self, mcp_client):
-        """set_preferences → get_preferences returns the stored execution_mode."""
+        """set_preferences → nexus://preferences resource returns the stored execution_mode."""
         await mcp_client.call_tool("set_preferences", {"execution_mode": "yolo"})
-        result = await mcp_client.call_tool("get_preferences", {})
-        assert result.is_error is False
-        assert result.data["execution_mode"] == "yolo"
+        prefs = await _get_prefs(mcp_client)
+        assert prefs["execution_mode"] == "yolo"
 
     async def test_get_returns_defaults_before_set(self, mcp_client):
-        """get_preferences before any set_preferences returns None values."""
-        result = await mcp_client.call_tool("get_preferences", {})
-        assert result.is_error is False
-        assert result.data == {
+        """nexus://preferences before any set_preferences returns None values."""
+        prefs = await _get_prefs(mcp_client)
+        assert prefs == {
             "execution_mode": None,
             "model": None,
             "max_retries": None,
@@ -46,25 +54,25 @@ class TestPreferencesRoundTrip:
         }
 
     async def test_set_model_preference(self, mcp_client):
-        """set_preferences(model=...) is returned by get_preferences."""
+        """set_preferences(model=...) is returned by nexus://preferences."""
         await mcp_client.call_tool("set_preferences", {"model": "gemini-2.5-flash"})
-        result = await mcp_client.call_tool("get_preferences", {})
-        assert result.data["model"] == "gemini-2.5-flash"
+        prefs = await _get_prefs(mcp_client)
+        assert prefs["model"] == "gemini-2.5-flash"
 
     async def test_set_merges_with_existing(self, mcp_client):
         """Two sequential set_preferences calls merge: first sets mode, second sets model."""
         await mcp_client.call_tool("set_preferences", {"execution_mode": "yolo"})
         await mcp_client.call_tool("set_preferences", {"model": "gemini-2.5-flash"})
-        result = await mcp_client.call_tool("get_preferences", {})
-        assert result.data["execution_mode"] == "yolo"
-        assert result.data["model"] == "gemini-2.5-flash"
+        prefs = await _get_prefs(mcp_client)
+        assert prefs["execution_mode"] == "yolo"
+        assert prefs["model"] == "gemini-2.5-flash"
 
     async def test_clear_resets_to_defaults(self, mcp_client):
-        """clear_preferences → get_preferences returns None values."""
+        """clear_preferences → nexus://preferences returns None values."""
         await mcp_client.call_tool("set_preferences", {"execution_mode": "yolo"})
         await mcp_client.call_tool("clear_preferences", {})
-        result = await mcp_client.call_tool("get_preferences", {})
-        assert result.data == {
+        prefs = await _get_prefs(mcp_client)
+        assert prefs == {
             "execution_mode": None,
             "model": None,
             "max_retries": None,
@@ -80,46 +88,46 @@ class TestPreferencesRoundTrip:
         }
 
     async def test_set_max_retries_preference(self, mcp_client):
-        """set_preferences(max_retries=5) is returned by get_preferences."""
+        """set_preferences(max_retries=5) is returned by nexus://preferences."""
         await mcp_client.call_tool("set_preferences", {"max_retries": 5})
-        result = await mcp_client.call_tool("get_preferences", {})
-        assert result.data["max_retries"] == 5
+        prefs = await _get_prefs(mcp_client)
+        assert prefs["max_retries"] == 5
 
     async def test_set_output_limit_preference(self, mcp_client):
-        """set_preferences(output_limit=4096) is returned by get_preferences."""
+        """set_preferences(output_limit=4096) is returned by nexus://preferences."""
         await mcp_client.call_tool("set_preferences", {"output_limit": 4096})
-        result = await mcp_client.call_tool("get_preferences", {})
-        assert result.data["output_limit"] == 4096
+        prefs = await _get_prefs(mcp_client)
+        assert prefs["output_limit"] == 4096
 
     async def test_set_timeout_preference(self, mcp_client):
-        """set_preferences(timeout=30) is returned by get_preferences."""
+        """set_preferences(timeout=30) is returned by nexus://preferences."""
         await mcp_client.call_tool("set_preferences", {"timeout": 30})
-        result = await mcp_client.call_tool("get_preferences", {})
-        assert result.data["timeout"] == 30
+        prefs = await _get_prefs(mcp_client)
+        assert prefs["timeout"] == 30
 
     async def test_clear_individual_new_fields(self, mcp_client):
         """clear_max_retries=True clears max_retries while preserving other fields."""
         await mcp_client.call_tool("set_preferences", {"max_retries": 5, "timeout": 30})
         await mcp_client.call_tool("set_preferences", {"clear_max_retries": True})
-        result = await mcp_client.call_tool("get_preferences", {})
-        assert result.data["max_retries"] is None
-        assert result.data["timeout"] == 30  # preserved
+        prefs = await _get_prefs(mcp_client)
+        assert prefs["max_retries"] is None
+        assert prefs["timeout"] == 30  # preserved
 
     async def test_set_retry_delay_preferences(self, mcp_client):
         """set_preferences(retry_base_delay=1.5, retry_max_delay=60.0) stores both fields."""
         await mcp_client.call_tool(
             "set_preferences", {"retry_base_delay": 1.5, "retry_max_delay": 60.0}
         )
-        result = await mcp_client.call_tool("get_preferences", {})
-        assert result.data["retry_base_delay"] == 1.5
-        assert result.data["retry_max_delay"] == 60.0
+        prefs = await _get_prefs(mcp_client)
+        assert prefs["retry_base_delay"] == 1.5
+        assert prefs["retry_max_delay"] == 60.0
 
     async def test_clear_retry_base_delay_preference(self, mcp_client):
         """clear_retry_base_delay=True resets retry_base_delay to None."""
         await mcp_client.call_tool("set_preferences", {"retry_base_delay": 1.5})
         await mcp_client.call_tool("set_preferences", {"clear_retry_base_delay": True})
-        result = await mcp_client.call_tool("get_preferences", {})
-        assert result.data["retry_base_delay"] is None
+        prefs = await _get_prefs(mcp_client)
+        assert prefs["retry_base_delay"] is None
 
     async def test_set_preferences_returns_confirmation(self, mcp_client):
         """set_preferences returns a non-empty confirmation string."""
@@ -258,8 +266,8 @@ class TestPreferencesValidation:
             await mcp_client.call_tool("set_preferences", {"execution_mode": "invalid_value"})
         result = await mcp_client.call_tool("set_preferences", {"execution_mode": "yolo"})
         assert result.is_error is False
-        prefs = await mcp_client.call_tool("get_preferences", {})
-        assert prefs.data["execution_mode"] == "yolo"
+        prefs = await _get_prefs(mcp_client)
+        assert prefs["execution_mode"] == "yolo"
 
 
 # ---------------------------------------------------------------------------
@@ -274,14 +282,16 @@ class TestCrossSessionPersistence:
         # Session 1: set yolo preference
         async with Client(mcp) as client1:
             await client1.call_tool("set_preferences", {"execution_mode": "yolo"})
-            r1 = await client1.call_tool("get_preferences", {})
-            assert r1.data["execution_mode"] == "yolo"
+            contents = await client1.read_resource("nexus://preferences")
+            r1 = json.loads(contents[0].text)
+            assert r1["preferences"]["execution_mode"] == "yolo"
         mcp._lifespan_result_set = False
 
         # Session 2: should see session 1's preference
         async with Client(mcp) as client2:
-            r2 = await client2.call_tool("get_preferences", {})
-            assert r2.data["execution_mode"] == "yolo"
+            contents = await client2.read_resource("nexus://preferences")
+            r2 = json.loads(contents[0].text)
+            assert r2["preferences"]["execution_mode"] == "yolo"
         mcp._lifespan_result_set = False
 
     async def test_clear_preferences_then_new_session_sees_defaults(self):
@@ -290,12 +300,14 @@ class TestCrossSessionPersistence:
         async with Client(mcp) as client1:
             await client1.call_tool("set_preferences", {"execution_mode": "yolo"})
             await client1.call_tool("clear_preferences", {})
-            r1 = await client1.call_tool("get_preferences", {})
-            assert r1.data["execution_mode"] is None
+            contents = await client1.read_resource("nexus://preferences")
+            r1 = json.loads(contents[0].text)
+            assert r1["preferences"]["execution_mode"] is None
         mcp._lifespan_result_set = False
 
         # Session 2: should see defaults (cleared)
         async with Client(mcp) as client2:
-            r2 = await client2.call_tool("get_preferences", {})
-            assert r2.data["execution_mode"] is None
+            contents = await client2.read_resource("nexus://preferences")
+            r2 = json.loads(contents[0].text)
+            assert r2["preferences"]["execution_mode"] is None
         mcp._lifespan_result_set = False

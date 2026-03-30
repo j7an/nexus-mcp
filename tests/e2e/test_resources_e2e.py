@@ -23,11 +23,13 @@ class TestResourceDiscovery:
     """Verify MCP resource registration via list_resources() JSON-RPC call."""
 
     async def test_list_resources_includes_all_static_uris(self, mcp_client):
-        """list_resources() includes the 2 static resource URIs."""
+        """list_resources() includes all always-registered resource URIs."""
         resources = await mcp_client.list_resources()
         uris = {str(r.uri) for r in resources}
         assert "nexus://runners" in uris
         assert "nexus://config" in uris
+        assert "nexus://tiers" in uris
+        assert "nexus://opencode" in uris
 
     async def test_list_resources_includes_preferences(self, mcp_client):
         """list_resources() includes the preferences resource."""
@@ -129,6 +131,30 @@ class TestReadPreferencesResource:
         data = json.loads(contents[0].text)
         assert data["source"] in ("session", "defaults")
         assert "preferences" in data
+
+
+@pytest.mark.e2e
+class TestReadTiersResource:
+    """Verify nexus://tiers resource via read_resource()."""
+
+    async def test_returns_empty_dict_when_no_tiers_saved(self, mcp_client):
+        contents = await mcp_client.read_resource("nexus://tiers")
+        data = json.loads(contents[0].text)
+        assert data == {}
+
+    async def test_returns_saved_tiers(self, mcp_client):
+        await mcp_client.call_tool(
+            "set_model_tiers",
+            {"tiers": {"gemini-2.5-flash": "quick", "kimi-k2.5": "standard"}},
+        )
+        contents = await mcp_client.read_resource("nexus://tiers")
+        data = json.loads(contents[0].text)
+        assert data == {"gemini-2.5-flash": "quick", "kimi-k2.5": "standard"}
+
+    async def test_tiers_resource_listed_in_resources(self, mcp_client):
+        resources = await mcp_client.list_resources()
+        uris = {str(r.uri) for r in resources}
+        assert "nexus://tiers" in uris
 
 
 @pytest.mark.e2e

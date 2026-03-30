@@ -44,23 +44,16 @@ def _extract_prompt_from_args(args: tuple) -> str:
 class TestToolDiscovery:
     """Verify MCP tool registration via list_tools() JSON-RPC call."""
 
-    async def test_list_tools_returns_all_registered(self, mcp_client):
-        """list_tools() returns all registered tools."""
+    async def test_list_tools_returns_core_tools(self, mcp_client):
+        """list_tools() returns all core tools (OpenCode tools require server config)."""
         tools = await mcp_client.list_tools()
         names = {t.name for t in tools}
-        assert names == {
+        assert names >= {
             "prompt",
             "batch_prompt",
             "set_preferences",
-            "get_preferences",
             "clear_preferences",
             "set_model_tiers",
-            "get_model_tiers",
-            "opencode_list_providers",
-            "opencode_get_provider_auth",
-            "opencode_set_provider_auth",
-            "opencode_get_config",
-            "opencode_update_config",
         }
 
     async def test_prompt_schema_has_required_params(self, mcp_client):
@@ -111,16 +104,6 @@ class TestToolAnnotations:
             assert tool.annotations.idempotentHint is False
             assert tool.annotations.openWorldHint is True
 
-    async def test_get_preferences_is_read_only_and_idempotent(self, mcp_client):
-        """get_preferences is a pure read with no side effects."""
-        tools = await mcp_client.list_tools()
-        tool = next(t for t in tools if t.name == "get_preferences")
-        assert tool.annotations is not None
-        assert tool.annotations.readOnlyHint is True
-        assert tool.annotations.destructiveHint is False
-        assert tool.annotations.idempotentHint is True
-        assert tool.annotations.openWorldHint is False
-
     async def test_set_preferences_is_idempotent_non_destructive(self, mcp_client):
         """set_preferences merges state (non-destructive) and is idempotent."""
         tools = await mcp_client.list_tools()
@@ -141,24 +124,19 @@ class TestToolAnnotations:
         assert tool.annotations.idempotentHint is True
         assert tool.annotations.openWorldHint is False
 
-    async def test_all_tools_have_titles(self, mcp_client):
-        """Every tool has a human-readable title set via annotations."""
+    async def test_core_tools_have_titles(self, mcp_client):
+        """Core tools have human-readable titles set via annotations."""
         expected_titles = {
             "prompt": "Prompt CLI Agent",
             "batch_prompt": "Batch Prompt CLI Agents",
             "set_preferences": "Set Session Preferences",
-            "get_preferences": "Get Session Preferences",
             "clear_preferences": "Clear Session Preferences",
             "set_model_tiers": "Set Model Tiers",
-            "get_model_tiers": "Get Model Tiers",
-            "opencode_list_providers": "OpenCode Configuration (Read)",
-            "opencode_get_provider_auth": "OpenCode Configuration (Read)",
-            "opencode_set_provider_auth": "OpenCode Configuration",
-            "opencode_get_config": "OpenCode Configuration (Read)",
-            "opencode_update_config": "OpenCode Configuration",
         }
         tools = await mcp_client.list_tools()
         for tool in tools:
+            if tool.name not in expected_titles:
+                continue
             assert tool.annotations is not None, f"{tool.name} missing annotations"
             assert tool.annotations.title == expected_titles[tool.name], (
                 f"{tool.name}: expected title {expected_titles[tool.name]!r}, "
@@ -462,10 +440,11 @@ class TestBatchPromptProtocol:
 class TestToolTimeout:
     """Verify FastMCP tool-level timeout via anyio.fail_after().
 
-    Tools registered with task=True support both synchronous and background
-    dispatch. The timeout applies on the synchronous path (client calls
-    without task=True). Background calls go through Docket and are protected
-    by the subprocess-level timeout instead.
+    Uses mcp.get_tool() (public API) to set a short timeout. This approach
+    works as long as mcp.enable(only=True) is NOT active — visibility wrapping
+    creates a proxy that doesn't preserve timeout. If Phase 3 enables visibility
+    gating, switch to: monkeypatch.setenv("NEXUS_TOOL_TIMEOUT_SECONDS", "0.5")
+    + server rebuild.
     """
 
     async def test_hung_tool_times_out(self, mock_subprocess, mcp_client, monkeypatch):
@@ -521,3 +500,27 @@ class TestErrorHandlingProtocol:
             )
 
         assert mock_subprocess.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Class 7: Conditional registration
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestConditionalRegistration:
+    """Verify OpenCode tools are conditionally registered based on server availability."""
+
+    async def test_core_tools_always_present(self, mcp_client):
+        tools = await mcp_client.list_tools()
+        names = {t.name for t in tools}
+        assert "prompt" in names
+        assert "batch_prompt" in names
+        assert "set_preferences" in names
+        assert "clear_preferences" in names
+        assert "set_model_tiers" in names
+
+    async def test_opencode_status_resource_always_present(self, mcp_client):
+        resources = await mcp_client.list_resources()
+        uris = {str(r.uri) for r in resources}
+        assert "nexus://opencode" in uris

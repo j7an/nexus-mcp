@@ -1,12 +1,13 @@
 # src/nexus_mcp/server.py
 """FastMCP server with CLI agent tools.
 
-Exposes five MCP tools:
+Exposes four MCP tools:
 - batch_prompt: Send multiple prompts to CLI agents in parallel (primary tool)
 - prompt: Send a single prompt to a CLI agent, routes to batch_prompt
 - set_preferences: Set session defaults (execution mode, model, retries, etc.)
-- get_preferences: Retrieve current session preferences
 - clear_preferences: Reset all session preferences
+
+Session preferences are readable via the nexus://preferences MCP resource.
 
 Background task design: both prompt and batch_prompt use @mcp.tool(task=True) so they
 run asynchronously and return task IDs immediately. This prevents MCP timeouts for long
@@ -18,8 +19,12 @@ going through the FunctionTool wrapper.
 """
 
 import asyncio
+import contextlib
 import json as _json
 import logging
+import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
@@ -28,6 +33,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from nexus_mcp.cli_detector import detect_cli
+from nexus_mcp.compound_tools import register_compound_tools
 from nexus_mcp.config import get_runner_defaults, get_runner_models, get_tool_timeout
 from nexus_mcp.elicitation import ElicitationGuard
 from nexus_mcp.emitters import make_mcp_emitter, make_progress_emitter
@@ -39,17 +45,22 @@ from nexus_mcp.middleware import (
     RequestLoggingMiddleware,
     TimingMiddleware,
 )
+from nexus_mcp.openapi_setup import setup_opencode_tools
+from nexus_mcp.opencode_resources import (
+    is_opencode_server_configured,
+    register_opencode_data_resources,
+    register_opencode_status_resource,
+)
 from nexus_mcp.preferences import (
     _apply_preferences,
     _get_session_preferences,
     clear_preferences,
-    get_preferences,
     set_preferences,
 )
 from nexus_mcp.prompts import register_prompts
 from nexus_mcp.resources import register_resources
 from nexus_mcp.runners.factory import RunnerFactory
-from nexus_mcp.store import load_model_tiers, save_model_tiers
+from nexus_mcp.store import save_model_tiers
 from nexus_mcp.types import (
     DEFAULT_MAX_CONCURRENCY,
     AgentTask,
@@ -142,7 +153,47 @@ def _inject_cli_enum() -> None:
     AgentTask.model_rebuild(force=True)
 
 
-mcp = FastMCP("nexus-mcp", instructions=build_server_instructions(), icons=SERVER_ICONS)
+@asynccontextmanager
+async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
+    """Conditionally register OpenCode tools based on server availability."""
+    register_opencode_status_resource(server)
+
+    client_to_close = None
+    if is_opencode_server_configured():
+        client = get_http_client()
+        client_to_close = client
+
+        server.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(
+            opencode_set_provider_auth
+        )
+        server.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(
+            opencode_update_config
+        )
+
+        healthy = await client.health_check()
+        if healthy:
+            await setup_opencode_tools(server, client)
+            register_compound_tools(server)
+            register_opencode_data_resources(server)
+            logger.info("OpenCode server tools registered (server healthy)")
+        else:
+            logger.warning("OpenCode server not reachable, mutation tools only")
+    else:
+        logger.warning("OpenCode server not configured (NEXUS_OPENCODE_SERVER_PASSWORD not set)")
+
+    yield
+
+    if client_to_close is not None:
+        with contextlib.suppress(Exception):
+            await client_to_close.close()
+
+
+mcp = FastMCP(
+    "nexus-mcp",
+    instructions=build_server_instructions(),
+    icons=SERVER_ICONS,
+    lifespan=_lifespan,
+)
 
 # Middleware executes outermost → innermost on request, reverse on response.
 # Order: ErrorNormalization (catch all) → Timing (measure) → RequestLogging (log entry/exit)
@@ -384,53 +435,16 @@ async def set_model_tiers(
     return f"Model tiers saved: {len(tiers)} model(s) classified"
 
 
-async def get_model_tiers(
-    *,
-    ctx: Context | None = None,
-) -> dict[str, str]:
-    """Return saved model tier classifications.
-
-    Returns all persisted tier classifications. Returns an empty dict
-    if no tiers have been saved yet.
-
-    Args:
-        ctx: MCP context (auto-injected by FastMCP).
-
-    Returns:
-        Dict mapping model names to tiers ('quick', 'standard', 'thorough').
-    """
-    if ctx is None:
-        raise ToolError("get_model_tiers requires an active session context")
-    result = await load_model_tiers(ctx)
-    return result or {}
-
-
-async def opencode_list_providers() -> str:
-    """List available providers on the OpenCode server."""
-    data = await get_http_client().get("/provider")
-    return _json.dumps(data, indent=2)
-
-
-async def opencode_get_provider_auth() -> str:
-    """Get authentication methods for all providers."""
-    data = await get_http_client().get("/provider/auth")
-    return _json.dumps(data, indent=2)
-
-
 async def opencode_set_provider_auth(
     *,
     provider_id: str,
     credentials: dict[str, Any],
 ) -> str:
     """Set authentication credentials for a provider."""
+    if not re.fullmatch(r"[a-zA-Z0-9_-]+", provider_id):
+        raise ToolError(f"Invalid provider_id: {provider_id!r}")
     await get_http_client().put(f"/auth/{provider_id}", json=credentials)
     return f"Credentials set for provider '{provider_id}'"
-
-
-async def opencode_get_config() -> str:
-    """Get the current OpenCode server configuration."""
-    data = await get_http_client().get("/config")
-    return _json.dumps(data, indent=2)
 
 
 async def opencode_update_config(
@@ -474,13 +488,6 @@ _SET_PREFS_ANNOTATIONS = ToolAnnotations(
     idempotentHint=True,
     openWorldHint=False,
 )
-_GET_PREFS_ANNOTATIONS = ToolAnnotations(
-    title="Get Session Preferences",
-    readOnlyHint=True,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=False,
-)
 _CLEAR_PREFS_ANNOTATIONS = ToolAnnotations(
     title="Clear Session Preferences",
     readOnlyHint=False,
@@ -495,14 +502,6 @@ _SET_TIERS_ANNOTATIONS = ToolAnnotations(
     idempotentHint=True,
     openWorldHint=False,
 )
-_GET_TIERS_ANNOTATIONS = ToolAnnotations(
-    title="Get Model Tiers",
-    readOnlyHint=True,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=False,
-)
-
 mcp.tool(
     task=True,
     timeout=_tool_timeout,
@@ -524,11 +523,6 @@ mcp.tool(
 )(set_preferences)
 mcp.tool(
     icons=TOOL_CONFIG_ICONS,
-    annotations=_GET_PREFS_ANNOTATIONS,
-    tags={"configuration"},
-)(get_preferences)
-mcp.tool(
-    icons=TOOL_CONFIG_ICONS,
     annotations=_CLEAR_PREFS_ANNOTATIONS,
     tags={"configuration"},
 )(clear_preferences)
@@ -537,12 +531,6 @@ mcp.tool(
     annotations=_SET_TIERS_ANNOTATIONS,
     tags={"configuration"},
 )(set_model_tiers)
-mcp.tool(
-    icons=TOOL_CONFIG_ICONS,
-    annotations=_GET_TIERS_ANNOTATIONS,
-    tags={"configuration"},
-)(get_model_tiers)
-
 _CONFIG_OC_ANNOTATIONS = ToolAnnotations(
     title="OpenCode Configuration",
     readOnlyHint=False,
@@ -550,25 +538,6 @@ _CONFIG_OC_ANNOTATIONS = ToolAnnotations(
     idempotentHint=True,
     openWorldHint=True,
 )
-_READ_OC_ANNOTATIONS = ToolAnnotations(
-    title="OpenCode Configuration (Read)",
-    readOnlyHint=True,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=True,
-)
-
-mcp.tool(annotations=_READ_OC_ANNOTATIONS, tags={"configuration"})(opencode_list_providers)
-mcp.tool(annotations=_READ_OC_ANNOTATIONS, tags={"configuration"})(opencode_get_provider_auth)
-mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_set_provider_auth)
-mcp.tool(annotations=_READ_OC_ANNOTATIONS, tags={"configuration"})(opencode_get_config)
-mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_update_config)
-
-# Phase 1 visibility: tags are assigned above. The allowlist call
-# (mcp.enable(tags=..., only=True)) is deferred to Phase 2 when workspace/terminal
-# tools are added — currently all tools have Phase 1 tags, so gating has no effect.
-# Note: FastMCP's visibility wrapping interferes with tool.timeout monkeypatching
-# in E2E tests (TestToolTimeout). Investigate before enabling.
 
 # Register MCP resources (read-only data endpoints).
 register_resources(mcp)

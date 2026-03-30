@@ -1,11 +1,12 @@
-"""Unit tests for set_model_tiers and get_model_tiers tools."""
+"""Unit tests for set_model_tiers tool and get_tiers_resource."""
 
 from unittest.mock import patch
 
 import pytest
 from fastmcp.exceptions import ToolError
 
-from nexus_mcp.server import get_model_tiers, set_model_tiers
+from nexus_mcp.resources import get_tiers_resource
+from nexus_mcp.server import set_model_tiers
 
 
 class TestSetModelTiers:
@@ -27,18 +28,24 @@ class TestSetModelTiers:
         mock_save.assert_awaited_once_with(ctx, {})
 
 
-class TestGetModelTiers:
-    @patch("nexus_mcp.server.load_model_tiers")
+class TestGetTiersResource:
+    @patch("nexus_mcp.resources.load_model_tiers")
     async def test_returns_saved_tiers(self, mock_load, ctx):
+        import json
+
         mock_load.return_value = {"gemini-2.5-flash": "quick"}
-        result = await get_model_tiers(ctx=ctx)
-        assert result == {"gemini-2.5-flash": "quick"}
+        result = await get_tiers_resource(ctx=ctx)
+        assert json.loads(result) == {"gemini-2.5-flash": "quick"}
 
-    @patch("nexus_mcp.server.load_model_tiers", return_value=None)
+    @patch("nexus_mcp.resources.load_model_tiers", return_value=None)
     async def test_returns_empty_dict_when_no_tiers(self, mock_load, ctx):
-        result = await get_model_tiers(ctx=ctx)
-        assert result == {}
+        import json
 
-    async def test_requires_context(self):
-        with pytest.raises(ToolError, match="requires.*context"):
-            await get_model_tiers(ctx=None)
+        result = await get_tiers_resource(ctx=ctx)
+        assert json.loads(result) == {}
+
+    async def test_returns_empty_dict_without_context(self):
+        import json
+
+        result = await get_tiers_resource(ctx=None)
+        assert json.loads(result) == {}
