@@ -101,6 +101,9 @@ class TestOpenCodeSessionReview:
         respx.get("http://test:4096/session/s1/diff").mock(
             return_value=httpx.Response(200, json={"diff": "--- a/file.py\n+++ b/file.py"})
         )
+        respx.get("http://test:4096/session/s1/todo").mock(
+            return_value=httpx.Response(200, json=[])
+        )
         from nexus_mcp.compound_tools import opencode_session_review
 
         result = await opencode_session_review(session_id="s1")
@@ -118,9 +121,59 @@ class TestOpenCodeSessionReview:
         respx.get("http://test:4096/session/s1/diff").mock(
             return_value=httpx.Response(200, json={"diff": ""})
         )
+        respx.get("http://test:4096/session/s1/todo").mock(
+            return_value=httpx.Response(200, json=[])
+        )
         mock_ctx = AsyncMock()
         mock_ctx.sample.side_effect = Exception("not supported")
         from nexus_mcp.compound_tools import opencode_session_review
 
         result = await opencode_session_review(session_id="s1", ctx=mock_ctx)
         assert "s1" in result
+
+    @respx.mock
+    async def test_includes_todo_data(self):
+        respx.get("http://test:4096/session/ses_abc").mock(
+            return_value=httpx.Response(200, json={"id": "ses_abc", "status": "completed"})
+        )
+        respx.get("http://test:4096/session/ses_abc/message").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get("http://test:4096/session/ses_abc/diff").mock(
+            return_value=httpx.Response(200, json={"diff": ""})
+        )
+        respx.get("http://test:4096/session/ses_abc/todo").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {"text": "Fix auth bug", "completed": True},
+                    {"text": "Add tests", "completed": False},
+                ],
+            )
+        )
+        from nexus_mcp.compound_tools import opencode_session_review
+
+        result = await opencode_session_review(session_id="ses_abc")
+        assert "Fix auth bug" in result
+        assert "Add tests" in result
+        assert "✓" in result  # completed marker
+        assert "○" in result  # incomplete marker
+
+    @respx.mock
+    async def test_empty_todos_omitted(self):
+        respx.get("http://test:4096/session/ses_abc").mock(
+            return_value=httpx.Response(200, json={"id": "ses_abc", "status": "completed"})
+        )
+        respx.get("http://test:4096/session/ses_abc/message").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get("http://test:4096/session/ses_abc/diff").mock(
+            return_value=httpx.Response(200, json={"diff": ""})
+        )
+        respx.get("http://test:4096/session/ses_abc/todo").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        from nexus_mcp.compound_tools import opencode_session_review
+
+        result = await opencode_session_review(session_id="ses_abc")
+        assert "Todos" not in result

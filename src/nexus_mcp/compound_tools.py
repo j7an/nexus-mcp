@@ -37,6 +37,7 @@ def _format_session_review(
     session: dict[str, Any],
     messages: list[dict[str, Any]],
     diff: dict[str, Any],
+    todos: list[dict[str, Any]] | None = None,
 ) -> str:
     """Format session review data as structured text."""
     lines = [f"## Session: {session.get('id', 'unknown')}"]
@@ -51,6 +52,11 @@ def _format_session_review(
     if diff_text:
         lines.append("### Diff")
         lines.append(f"```diff\n{diff_text}\n```")
+    if todos:
+        lines.append("### Todos")
+        for todo in todos:
+            status = "✓" if todo.get("completed") else "○"
+            lines.append(f"- {status} {todo.get('text', '')}")
     return "\n".join(lines)
 
 
@@ -100,7 +106,8 @@ async def opencode_session_review(
 ) -> str:
     """Review a session's messages and file changes.
 
-    Chains GET /session/{id} → GET /session/{id}/message → GET /session/{id}/diff.
+    Chains GET /session/{id} → GET /session/{id}/message → GET /session/{id}/diff
+    → GET /session/{id}/todo.
     If ctx.sample() is available, returns AI-summarized review.
     Otherwise returns raw session data.
     """
@@ -112,10 +119,12 @@ async def opencode_session_review(
     session = await client.get(f"/session/{session_id}")
     messages = await client.get(f"/session/{session_id}/message")
     diff = await client.get(f"/session/{session_id}/diff")
+    todo = await client.get(f"/session/{session_id}/todo")
     session_dict = session if isinstance(session, dict) else {}
     messages_list = messages if isinstance(messages, list) else []
     diff_dict = diff if isinstance(diff, dict) else {}
-    raw = _format_session_review(session_dict, messages_list, diff_dict)
+    todo_list = todo if isinstance(todo, list) else []
+    raw = _format_session_review(session_dict, messages_list, diff_dict, todo_list)
     if ctx:
         try:
             sampled = await ctx.sample(
