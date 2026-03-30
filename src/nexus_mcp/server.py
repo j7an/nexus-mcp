@@ -205,6 +205,11 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
                     "nexus://opencode/sessions/status",
                     "nexus://opencode/permissions",
                     "nexus://opencode/questions",
+                    "nexus://opencode/session/{session_id}/todo",
+                    "nexus://opencode/session/{session_id}/messages",
+                    "nexus://opencode/session/{session_id}/children",
+                    "nexus://opencode/session/{session_id}/diff",
+                    "nexus://opencode/session/{session_id}/message/{message_id}",
                 ]
             )
             logger.info("OpenCode server tools registered (server healthy)")

@@ -92,44 +92,44 @@ class TestOpenCodeInvestigate:
 class TestOpenCodeSessionReview:
     @respx.mock
     async def test_chains_session_messages_diff(self):
-        respx.get("http://test:4096/session/s1").mock(
-            return_value=httpx.Response(200, json={"id": "s1", "status": "completed"})
+        respx.get("http://test:4096/session/ses_1").mock(
+            return_value=httpx.Response(200, json={"id": "ses_1", "status": "completed"})
         )
-        respx.get("http://test:4096/session/s1/message").mock(
+        respx.get("http://test:4096/session/ses_1/message").mock(
             return_value=httpx.Response(200, json=[{"role": "user", "content": "fix the bug"}])
         )
-        respx.get("http://test:4096/session/s1/diff").mock(
+        respx.get("http://test:4096/session/ses_1/diff").mock(
             return_value=httpx.Response(200, json={"diff": "--- a/file.py\n+++ b/file.py"})
         )
-        respx.get("http://test:4096/session/s1/todo").mock(
+        respx.get("http://test:4096/session/ses_1/todo").mock(
             return_value=httpx.Response(200, json=[])
         )
         from nexus_mcp.compound_tools import opencode_session_review
 
-        result = await opencode_session_review(session_id="s1")
-        assert "s1" in result
+        result = await opencode_session_review(session_id="ses_1")
+        assert "ses_1" in result
         assert "fix the bug" in result
 
     @respx.mock
     async def test_sampling_fallback(self):
-        respx.get("http://test:4096/session/s1").mock(
-            return_value=httpx.Response(200, json={"id": "s1", "status": "completed"})
+        respx.get("http://test:4096/session/ses_1").mock(
+            return_value=httpx.Response(200, json={"id": "ses_1", "status": "completed"})
         )
-        respx.get("http://test:4096/session/s1/message").mock(
+        respx.get("http://test:4096/session/ses_1/message").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get("http://test:4096/session/s1/diff").mock(
+        respx.get("http://test:4096/session/ses_1/diff").mock(
             return_value=httpx.Response(200, json={"diff": ""})
         )
-        respx.get("http://test:4096/session/s1/todo").mock(
+        respx.get("http://test:4096/session/ses_1/todo").mock(
             return_value=httpx.Response(200, json=[])
         )
         mock_ctx = AsyncMock()
         mock_ctx.sample.side_effect = Exception("not supported")
         from nexus_mcp.compound_tools import opencode_session_review
 
-        result = await opencode_session_review(session_id="s1", ctx=mock_ctx)
-        assert "s1" in result
+        result = await opencode_session_review(session_id="ses_1", ctx=mock_ctx)
+        assert "ses_1" in result
 
     @respx.mock
     async def test_includes_todo_data(self):

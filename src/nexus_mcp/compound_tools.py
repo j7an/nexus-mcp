@@ -111,7 +111,7 @@ async def opencode_session_review(
     If ctx.sample() is available, returns AI-summarized review.
     Otherwise returns raw session data.
     """
-    if not re.fullmatch(r"[a-zA-Z0-9_-]+", session_id):
+    if not re.fullmatch(r"ses[a-zA-Z0-9_-]+", session_id):
         raise ValueError(f"Invalid session_id: {session_id!r}")
     from nexus_mcp.http_client import get_http_client
 
