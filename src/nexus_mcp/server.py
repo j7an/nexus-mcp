@@ -155,8 +155,18 @@ def _inject_cli_enum() -> None:
 
 @asynccontextmanager
 async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
-    """Conditionally register OpenCode tools based on server availability."""
+    """Conditionally register OpenCode tools based on server availability.
+
+    Tracks registered tools/resources and cleans them up on exit to support
+    test isolation (re-running lifespan with different configurations).
+    """
+    # Track what we register for cleanup
+    registered_tools: list[str] = []
+    registered_resources: list[str] = []
+    registered_providers: list[object] = []  # Provider instances added to server.providers
+
     register_opencode_status_resource(server)
+    registered_resources.append("nexus://opencode")
 
     client_to_close = None
     if is_opencode_server_configured():
@@ -166,26 +176,61 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
         server.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(
             opencode_set_provider_auth
         )
+        registered_tools.append("opencode_set_provider_auth")
+
         server.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(
             opencode_update_config
         )
+        registered_tools.append("opencode_update_config")
 
         healthy = await client.health_check()
         if healthy:
+            # Track OpenAPIProvider for cleanup
+            provider_count_before = len(server.providers)
             await setup_opencode_tools(server, client)
+            if len(server.providers) > provider_count_before:
+                # New provider was added
+                registered_providers.append(server.providers[-1])
+
             register_compound_tools(server)
+            registered_tools.extend(["opencode_investigate", "opencode_session_review"])
+
             register_opencode_data_resources(server)
+            registered_resources.extend(
+                [
+                    "nexus://opencode/providers",
+                    "nexus://opencode/providers/auth",
+                    "nexus://opencode/config",
+                    "nexus://opencode/sessions",
+                    "nexus://opencode/sessions/status",
+                    "nexus://opencode/permissions",
+                    "nexus://opencode/questions",
+                ]
+            )
             logger.info("OpenCode server tools registered (server healthy)")
         else:
             logger.warning("OpenCode server not reachable, mutation tools only")
     else:
         logger.warning("OpenCode server not configured (NEXUS_OPENCODE_SERVER_PASSWORD not set)")
 
-    yield
+    try:
+        yield
+    finally:
+        # Cleanup: remove registered tools, resources, and providers
+        lp = server._local_provider
+        for tool_name in registered_tools:
+            with contextlib.suppress(Exception):
+                lp.remove_tool(tool_name)
+        for resource_uri in registered_resources:
+            with contextlib.suppress(Exception):
+                lp.remove_resource(resource_uri)
+        for provider in registered_providers:
+            with contextlib.suppress(Exception):
+                server.providers.remove(provider)  # type: ignore[arg-type]
 
-    if client_to_close is not None:
-        with contextlib.suppress(Exception):
-            await client_to_close.close()
+        if client_to_close is not None:
+            with contextlib.suppress(Exception):
+                await client_to_close.close()
 
 
 mcp = FastMCP(
