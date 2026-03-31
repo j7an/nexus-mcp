@@ -47,3 +47,37 @@ class TestCorrelationFilter:
         record = logging.LogRecord("test", logging.INFO, "", 0, "msg", (), None)
         filt.filter(record)
         assert record.req_id == "-"  # type: ignore[attr-defined]
+
+
+class TestEmitterCorrelation:
+    """Verify emitter logs carry correlation context."""
+
+    async def test_mcp_emitter_logs_carry_req_id(self, caplog):
+        """LogEmitter's Python logger calls inherit the correlation ContextVar."""
+        from unittest.mock import AsyncMock
+
+        from nexus_mcp.correlation import CorrelationFilter
+        from nexus_mcp.emitters import make_mcp_emitter
+
+        mock_ctx = AsyncMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.debug = AsyncMock()
+        mock_ctx.warning = AsyncMock()
+        mock_ctx.error = AsyncMock()
+        emitter = make_mcp_emitter(mock_ctx)
+
+        emitter_logger = logging.getLogger("nexus_mcp.emitters")
+        filt = CorrelationFilter()
+        emitter_logger.addFilter(filt)
+
+        token = set_correlation_id()
+        expected_id = correlation_id.get()
+        try:
+            with caplog.at_level(logging.INFO, logger="nexus_mcp.emitters"):
+                await emitter("info", "test message")
+            for record in caplog.records:
+                if record.name == "nexus_mcp.emitters":
+                    assert record.req_id == expected_id  # type: ignore[attr-defined]
+        finally:
+            correlation_id.reset(token)
+            emitter_logger.removeFilter(filt)

@@ -44,11 +44,14 @@ def main() -> None:
         print(f"nexus-mcp {__version__}")
         return
 
+    from nexus_mcp.correlation import CorrelationFilter
+
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        format="%(asctime)s [%(req_id)s] %(name)s %(levelname)s %(message)s",
         stream=sys.stderr,
     )
+    logging.getLogger().addFilter(CorrelationFilter())
     from nexus_mcp.server import mcp
 
     mcp.run(transport="stdio")
