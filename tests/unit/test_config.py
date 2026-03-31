@@ -1,5 +1,6 @@
 """Tests for configuration module (environment variable settings)."""
 
+import logging
 import os
 from unittest.mock import patch
 
@@ -541,11 +542,6 @@ class TestReadRunnerEnvDefaults:
         result = _read_runner_env_defaults("gemini")
         assert result.execution_mode == "yolo"
 
-    def test_invalid_timeout_silently_skipped(self, monkeypatch):
-        monkeypatch.setenv("NEXUS_GEMINI_TIMEOUT", "not-a-number")
-        result = _read_runner_env_defaults("gemini")
-        assert result.timeout is None  # silently skipped
-
     def test_invalid_execution_mode_silently_skipped(self, monkeypatch):
         monkeypatch.setenv("NEXUS_GEMINI_EXECUTION_MODE", "turbo")
         result = _read_runner_env_defaults("gemini")
@@ -555,11 +551,6 @@ class TestReadRunnerEnvDefaults:
         monkeypatch.setenv("NEXUS_CODEX_RETRY_BASE_DELAY", "0.5")
         result = _read_runner_env_defaults("codex")
         assert result.retry_base_delay == 0.5
-
-    def test_negative_retry_delay_silently_skipped(self, monkeypatch):
-        monkeypatch.setenv("NEXUS_CODEX_RETRY_BASE_DELAY", "-1.0")
-        result = _read_runner_env_defaults("codex")
-        assert result.retry_base_delay is None  # negative → skipped
 
     def test_zero_timeout_silently_skipped(self, monkeypatch):
         """NEXUS_GEMINI_TIMEOUT=0 must not produce a zero-second timeout."""
@@ -590,6 +581,40 @@ class TestReadRunnerEnvDefaults:
         monkeypatch.setenv("NEXUS_GEMINI_OUTPUT_LIMIT", "0")
         result = _read_runner_env_defaults("gemini")
         assert result.output_limit is None
+
+    def test_invalid_timeout_logs_warning(self, monkeypatch, caplog):
+        """Invalid per-runner integer env var logs a warning."""
+        monkeypatch.setenv("NEXUS_GEMINI_TIMEOUT", "not-a-number")
+        with caplog.at_level(logging.WARNING, logger="nexus_mcp.config_resolver"):
+            result = _read_runner_env_defaults("gemini")
+        assert result.timeout is None
+        assert "NEXUS_GEMINI_TIMEOUT" in caplog.text
+        assert "not-a-number" in caplog.text
+
+    def test_invalid_retry_delay_logs_warning(self, monkeypatch, caplog):
+        """Invalid per-runner float env var logs a warning."""
+        monkeypatch.setenv("NEXUS_CODEX_RETRY_BASE_DELAY", "banana")
+        with caplog.at_level(logging.WARNING, logger="nexus_mcp.config_resolver"):
+            result = _read_runner_env_defaults("codex")
+        assert result.retry_base_delay is None
+        assert "NEXUS_CODEX_RETRY_BASE_DELAY" in caplog.text
+        assert "banana" in caplog.text
+
+    def test_non_positive_timeout_logs_warning(self, monkeypatch, caplog):
+        """Non-positive per-runner integer env var logs a warning."""
+        monkeypatch.setenv("NEXUS_GEMINI_TIMEOUT", "0")
+        with caplog.at_level(logging.WARNING, logger="nexus_mcp.config_resolver"):
+            result = _read_runner_env_defaults("gemini")
+        assert result.timeout is None
+        assert "NEXUS_GEMINI_TIMEOUT" in caplog.text
+
+    def test_negative_retry_delay_logs_warning(self, monkeypatch, caplog):
+        """Negative per-runner float env var logs a warning."""
+        monkeypatch.setenv("NEXUS_CODEX_RETRY_BASE_DELAY", "-1.0")
+        with caplog.at_level(logging.WARNING, logger="nexus_mcp.config_resolver"):
+            result = _read_runner_env_defaults("codex")
+        assert result.retry_base_delay is None
+        assert "NEXUS_CODEX_RETRY_BASE_DELAY" in caplog.text
 
 
 # ---------------------------------------------------------------------------

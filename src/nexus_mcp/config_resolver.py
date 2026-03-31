@@ -7,13 +7,15 @@ Resolution order (highest → lowest priority):
   per-request → session prefs → per-runner env → global env → hardcoded
 """
 
-import contextlib
+import logging
 import math
 import os
 from typing import Any
 
 from nexus_mcp.exceptions import ConfigurationError
 from nexus_mcp.types import OperationalDefaults
+
+logger = logging.getLogger(__name__)
 
 HARDCODED_DEFAULTS = OperationalDefaults(
     timeout=600,
@@ -129,25 +131,37 @@ def _read_runner_env_defaults(runner_name: str) -> OperationalDefaults:
         ("OUTPUT_LIMIT", "output_limit", int),
         ("MAX_RETRIES", "max_retries", int),
     ):
-        raw = os.getenv(f"NEXUS_{prefix}_{key}")
+        env_var = f"NEXUS_{prefix}_{key}"
+        raw = os.getenv(env_var)
         if raw is not None:
-            with contextlib.suppress(ValueError):
+            try:
                 v = parse(raw)
-                if v > 0:
-                    kwargs[field] = v
+            except ValueError:
+                logger.warning("Ignoring invalid %s=%r (not an integer)", env_var, raw)
+                continue
+            if v > 0:
+                kwargs[field] = v
+            else:
+                logger.warning("Ignoring non-positive %s=%s", env_var, raw)
 
     for key, field in (
         ("RETRY_BASE_DELAY", "retry_base_delay"),
         ("RETRY_MAX_DELAY", "retry_max_delay"),
     ):
-        raw = os.getenv(f"NEXUS_{prefix}_{key}")
+        env_var = f"NEXUS_{prefix}_{key}"
+        raw = os.getenv(env_var)
         if raw is not None:
             try:
                 fv = float(raw)
-                if math.isfinite(fv) and fv >= 0:
-                    kwargs[field] = fv
             except ValueError:
-                pass  # silently skip invalid per-runner overrides
+                logger.warning("Ignoring invalid %s=%r (not a number)", env_var, raw)
+                continue
+            if not math.isfinite(fv) or fv < 0:
+                logger.warning(
+                    "Ignoring invalid %s=%s (must be finite and non-negative)", env_var, raw
+                )
+                continue
+            kwargs[field] = fv
 
     # Per-runner model: NEXUS_{RUNNER}_MODEL
     model = os.getenv(f"NEXUS_{prefix}_MODEL")
