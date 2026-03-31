@@ -558,11 +558,13 @@ class TestReadRunnerEnvDefaults:
         result = _read_runner_env_defaults("gemini")
         assert result.timeout is None  # zero → skipped
 
-    def test_negative_timeout_silently_skipped(self, monkeypatch):
-        """Negative timeout must be silently skipped."""
+    def test_negative_timeout_logs_warning(self, monkeypatch, caplog):
+        """Negative per-runner integer env var logs a warning."""
         monkeypatch.setenv("NEXUS_GEMINI_TIMEOUT", "-5")
-        result = _read_runner_env_defaults("gemini")
+        with caplog.at_level(logging.WARNING, logger="nexus_mcp.config_resolver"):
+            result = _read_runner_env_defaults("gemini")
         assert result.timeout is None
+        assert "NEXUS_GEMINI_TIMEOUT" in caplog.text
 
     def test_negative_max_retries_silently_skipped(self, monkeypatch):
         """NEXUS_GEMINI_MAX_RETRIES=-5 must not produce range(-5)."""

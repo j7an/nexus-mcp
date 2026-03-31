@@ -299,6 +299,27 @@ class TestRequestLoggingMiddlewareCorrelation:
 
         assert correlation_id.get() == "-"
 
+    async def test_concurrent_calls_get_distinct_ids(self):
+        """Two concurrent middleware calls receive distinct correlation IDs."""
+        import asyncio
+
+        ids: list[str] = []
+
+        async def _capture_id(context):
+            ids.append(correlation_id.get())
+            await asyncio.sleep(0)  # yield to let other task run
+            return _make_tool_result()
+
+        mw = RequestLoggingMiddleware()
+        ctx = _make_context("prompt", {"cli": "gemini", "prompt": "hi"})
+        await asyncio.gather(
+            mw.on_call_tool(ctx, _capture_id),
+            mw.on_call_tool(ctx, _capture_id),
+        )
+        assert len(ids) == 2
+        assert ids[0] != ids[1]
+        assert correlation_id.get() == "-"
+
     async def test_correlation_id_in_log_messages(self, caplog):
         """Log records have req_id attribute when CorrelationFilter is attached."""
         from nexus_mcp.correlation import CorrelationFilter
