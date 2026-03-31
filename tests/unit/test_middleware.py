@@ -16,6 +16,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.tools.tool import ToolResult
 from pydantic import ValidationError
 
+from nexus_mcp.correlation import correlation_id
 from nexus_mcp.exceptions import CLINotFoundError, UnsupportedAgentError
 from nexus_mcp.middleware import (
     ErrorNormalizationMiddleware,
@@ -263,3 +264,93 @@ class TestErrorNormalizationMiddleware:
             await mw.on_call_tool(ctx, call_next)
 
         assert "Unexpected error in tool 'prompt'" in caplog.text
+
+
+class TestRequestLoggingMiddlewareCorrelation:
+    """Tests for correlation ID lifecycle in RequestLoggingMiddleware."""
+
+    async def test_sets_correlation_id_during_call(self):
+        """Correlation ID is set before call_next and reset after."""
+        mw = RequestLoggingMiddleware()
+        ctx = _make_context("prompt", {"cli": "gemini", "prompt": "hi"})
+        captured_id: str | None = None
+
+        async def _capture_id(context):
+            nonlocal captured_id
+            captured_id = correlation_id.get()
+            return _make_tool_result()
+
+        await mw.on_call_tool(ctx, _capture_id)
+
+        assert captured_id is not None
+        assert captured_id != "-"
+        assert len(captured_id) == 8
+        # After completion, correlation ID is reset
+        assert correlation_id.get() == "-"
+
+    async def test_resets_correlation_id_on_failure(self):
+        """Correlation ID is reset even when call_next raises."""
+        mw = RequestLoggingMiddleware()
+        ctx = _make_context("prompt")
+        call_next = AsyncMock(side_effect=ToolError("boom"))
+
+        with pytest.raises(ToolError):
+            await mw.on_call_tool(ctx, call_next)
+
+        assert correlation_id.get() == "-"
+
+    async def test_concurrent_calls_have_isolated_contexts(self):
+        """Two concurrent middleware calls each see only their own correlation ID.
+
+        Verifies ContextVar isolation: each task captures its ID at entry and
+        re-reads it after yielding. If isolation is broken, the re-read would
+        see the other task's ID instead of its own.
+        """
+        import asyncio
+
+        snapshots: list[tuple[str, str]] = []  # (id_at_entry, id_after_yield)
+
+        async def _capture_id(context):
+            entry_id = correlation_id.get()
+            await asyncio.sleep(0)  # yield to let other task run
+            reread_id = correlation_id.get()
+            snapshots.append((entry_id, reread_id))
+            return _make_tool_result()
+
+        mw = RequestLoggingMiddleware()
+        ctx = _make_context("prompt", {"cli": "gemini", "prompt": "hi"})
+        await asyncio.gather(
+            mw.on_call_tool(ctx, _capture_id),
+            mw.on_call_tool(ctx, _capture_id),
+        )
+        assert len(snapshots) == 2
+        # Each task's ID is stable across the yield (not overwritten by the other)
+        for entry_id, reread_id in snapshots:
+            assert entry_id == reread_id
+            assert entry_id != "-"
+        # The two tasks got distinct IDs
+        assert snapshots[0][0] != snapshots[1][0]
+        # After both complete, outer context is clean
+        assert correlation_id.get() == "-"
+
+    async def test_correlation_id_in_log_messages(self, caplog):
+        """Log records have req_id attribute when CorrelationFilter is attached."""
+        from nexus_mcp.correlation import CorrelationFilter
+
+        mw = RequestLoggingMiddleware()
+        ctx = _make_context("prompt", {"cli": "gemini", "prompt": "hi"})
+        call_next = AsyncMock(return_value=_make_tool_result())
+
+        mw_logger = logging.getLogger("nexus_mcp.middleware")
+        filt = CorrelationFilter()
+        mw_logger.addFilter(filt)
+        try:
+            with caplog.at_level(logging.INFO, logger="nexus_mcp.middleware"):
+                await mw.on_call_tool(ctx, call_next)
+            # Verify that log records have req_id attribute
+            for record in caplog.records:
+                if record.name == "nexus_mcp.middleware":
+                    assert hasattr(record, "req_id")
+                    assert record.req_id != "-"  # type: ignore[attr-defined]
+        finally:
+            mw_logger.removeFilter(filt)

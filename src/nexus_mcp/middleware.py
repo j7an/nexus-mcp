@@ -19,6 +19,7 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools.tool import ToolResult
 from pydantic import ValidationError
 
+from nexus_mcp.correlation import correlation_id, set_correlation_id
 from nexus_mcp.exceptions import CLINotFoundError, UnsupportedAgentError
 
 logger = logging.getLogger(__name__)
@@ -91,16 +92,20 @@ class RequestLoggingMiddleware(Middleware):
         context: MiddlewareContext[mt.CallToolRequestParams],
         call_next: CallNext[mt.CallToolRequestParams, ToolResult],
     ) -> ToolResult:
-        tool_name = context.message.name
-        args_summary = _summarize_args(tool_name, context.message.arguments)
-        logger.info("Tool '%s' called%s", tool_name, args_summary)
+        token = set_correlation_id()
         try:
-            result = await call_next(context)
-            logger.info("Tool '%s' completed", tool_name)
-            return result
-        except Exception as e:
-            logger.info("Tool '%s' failed: %s: %s", tool_name, type(e).__name__, e)
-            raise
+            tool_name = context.message.name
+            args_summary = _summarize_args(tool_name, context.message.arguments)
+            logger.info("Tool '%s' called%s", tool_name, args_summary)
+            try:
+                result = await call_next(context)
+                logger.info("Tool '%s' completed", tool_name)
+                return result
+            except Exception as e:
+                logger.info("Tool '%s' failed: %s: %s", tool_name, type(e).__name__, e)
+                raise
+        finally:
+            correlation_id.reset(token)
 
 
 class ErrorNormalizationMiddleware(Middleware):
