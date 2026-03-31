@@ -299,15 +299,22 @@ class TestRequestLoggingMiddlewareCorrelation:
 
         assert correlation_id.get() == "-"
 
-    async def test_concurrent_calls_get_distinct_ids(self):
-        """Two concurrent middleware calls receive distinct correlation IDs."""
+    async def test_concurrent_calls_have_isolated_contexts(self):
+        """Two concurrent middleware calls each see only their own correlation ID.
+
+        Verifies ContextVar isolation: each task captures its ID at entry and
+        re-reads it after yielding. If isolation is broken, the re-read would
+        see the other task's ID instead of its own.
+        """
         import asyncio
 
-        ids: list[str] = []
+        snapshots: list[tuple[str, str]] = []  # (id_at_entry, id_after_yield)
 
         async def _capture_id(context):
-            ids.append(correlation_id.get())
+            entry_id = correlation_id.get()
             await asyncio.sleep(0)  # yield to let other task run
+            reread_id = correlation_id.get()
+            snapshots.append((entry_id, reread_id))
             return _make_tool_result()
 
         mw = RequestLoggingMiddleware()
@@ -316,8 +323,14 @@ class TestRequestLoggingMiddlewareCorrelation:
             mw.on_call_tool(ctx, _capture_id),
             mw.on_call_tool(ctx, _capture_id),
         )
-        assert len(ids) == 2
-        assert ids[0] != ids[1]
+        assert len(snapshots) == 2
+        # Each task's ID is stable across the yield (not overwritten by the other)
+        for entry_id, reread_id in snapshots:
+            assert entry_id == reread_id
+            assert entry_id != "-"
+        # The two tasks got distinct IDs
+        assert snapshots[0][0] != snapshots[1][0]
+        # After both complete, outer context is clean
         assert correlation_id.get() == "-"
 
     async def test_correlation_id_in_log_messages(self, caplog):
