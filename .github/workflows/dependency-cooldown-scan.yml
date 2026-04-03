@@ -315,6 +315,31 @@ jobs:
               fi
             done
 
+            # --- OpenSSF Scorecard (Tier 2, GitHub Actions only) ---
+            SCORECARD_TABLE=""
+            for ACTION in $ACTIONS; do
+              [ -z "$ACTION" ] && continue
+              SC_RESULT=$(curl -sf --max-time 30 \
+                "https://api.securityscorecards.dev/projects/github.com/${ACTION}" \
+                2>/dev/null) || SC_RESULT=""
+
+              if [ -z "$SC_RESULT" ]; then
+                SCORECARD_TABLE="${SCORECARD_TABLE}| \`${ACTION}\` | Not available | - |"$'\n'
+              else
+                SC_SCORE=$(echo "$SC_RESULT" | jq -r '.score // "N/A"')
+                SC_URL="https://scorecard.dev/viewer/?uri=github.com/${ACTION}"
+                SCORECARD_TABLE="${SCORECARD_TABLE}| \`${ACTION}\` | ${SC_SCORE}/10 | [View](${SC_URL}) |"$'\n'
+              fi
+            done
+
+            SCORECARD_SECTION=""
+            if [ -n "$SCORECARD_TABLE" ]; then
+              SC_HDR="| Action | Score | Details |"
+              SC_SEP="|--------|-------|---------|"
+              SCORECARD_SECTION="$(printf '\n### Project Health (OpenSSF Scorecard)\n\n%s\n%s\n%s' \
+                "$SC_HDR" "$SC_SEP" "$SCORECARD_TABLE")"
+            fi
+
             # Strip trailing comma-space from DEPS
             DEPS=$(echo "$DEPS" | sed 's/, $//')
 
@@ -347,14 +372,15 @@ jobs:
               RESULTS_FOOTER="> This PR is now eligible for manual review and merge."
             fi
 
-            COMMENT_BODY="$(printf '%s\n\n%s\n%s\n\n%s\n\n%s\n\n%s\n\n%s' \
+            COMMENT_BODY="$(printf '%s\n\n%s\n%s\n\n%s\n\n%s\n\n%s\n\n%s%s' \
               "## Dependency Security Scan (Cool-Down Complete)" \
               "**PR age:** ${AGE_DAYS} days, ${AGE_HOURS} hours (${BIZ_DAYS} business days)" \
               "**Packages scanned:** ${DEPS}" \
               "### Results" \
               "$RESULTS_HEADER" \
               "$RESULTS_TABLE" \
-              "$RESULTS_FOOTER")"
+              "$RESULTS_FOOTER" \
+              "$SCORECARD_SECTION")"
 
             # --- Comment management: update-or-create with change detection ---
 
