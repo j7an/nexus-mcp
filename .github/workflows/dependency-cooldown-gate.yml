@@ -11,6 +11,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  BYPASS_LABEL: "security-bypass-cooling"
+
 jobs:
   set-pending-status:
     runs-on: ubuntu-latest
@@ -26,13 +29,22 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           ACTOR: ${{ github.actor }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [[ "$ACTOR" == "dependabot[bot]" || "$ACTOR" == "renovate[bot]" ]]; then
-            STATE="pending"
-            DESC="Security cool-down: merge allowed after 5 days + exploit scan"
-          else
+          if [[ "$ACTOR" != "dependabot[bot]" && "$ACTOR" != "renovate[bot]" ]]; then
             STATE="success"
             DESC="Non-bot PR — no cool-down required"
+          else
+            # Check for bypass label
+            HAS_BYPASS=$(gh pr view "$PR_NUMBER" --repo "$REPOSITORY" --json labels \
+              --jq "[.labels[]?.name] | any(. == \"$BYPASS_LABEL\")")
+            if [[ "$HAS_BYPASS" == "true" ]]; then
+              STATE="success"
+              DESC="Cooling bypassed via $BYPASS_LABEL label"
+            else
+              STATE="pending"
+              DESC="Security cool-down: merge allowed after 5 business days + exploit scan"
+            fi
           fi
           gh api "repos/${REPOSITORY}/statuses/${HEAD_SHA}" \
             -f state="$STATE" \

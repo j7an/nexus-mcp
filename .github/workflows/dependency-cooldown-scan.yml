@@ -16,6 +16,7 @@ concurrency:
 
 env:
   COOLING_DAYS: "5"
+  BYPASS_LABEL: "security-bypass-cooling"
 
 jobs:
   scan:
@@ -94,12 +95,25 @@ jobs:
           for PR_NUMBER in $PR_NUMBERS; do
             echo "=== Scanning PR #${PR_NUMBER} ==="
 
-            # Get PR metadata
-            PR_DATA=$(gh pr view "$PR_NUMBER" \
+            # Get PR metadata including labels for bypass check
+            PR_META=$(gh pr view "$PR_NUMBER" \
               --repo "$GH_REPO" \
-              --json createdAt,headRefOid)
-            CREATED_AT=$(echo "$PR_DATA" | jq -r '.createdAt')
-            HEAD_SHA=$(echo "$PR_DATA" | jq -r '.headRefOid')
+              --json createdAt,headRefOid,labels)
+            CREATED_AT=$(echo "$PR_META" | jq -r '.createdAt')
+            HEAD_SHA=$(echo "$PR_META" | jq -r '.headRefOid')
+
+            # Check for bypass label
+            HAS_BYPASS=$(echo "$PR_META" | jq -r \
+              --arg label "$BYPASS_LABEL" \
+              '[.labels[]?.name] | any(. == $label)')
+            if [[ "$HAS_BYPASS" == "true" ]]; then
+              gh api "repos/${GH_REPO}/statuses/${HEAD_SHA}" \
+                -f state=success \
+                -f context="dependency-cooldown / gate" \
+                -f description="Cooling bypassed via ${BYPASS_LABEL} label"
+              echo "PR #${PR_NUMBER} has bypass label — skipping scan"
+              continue
+            fi
 
             # Calculate PR age
             CREATED_TS=$(date -d "$CREATED_AT" +%s 2>/dev/null \
