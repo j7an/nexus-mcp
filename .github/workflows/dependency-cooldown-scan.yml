@@ -34,17 +34,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           # Get all open bot PRs with metadata
-          # Note: comment filter kept for now — removed in Task 3 when
-          # comment update logic is added to prevent duplicate comments
           PR_DATA=$(gh pr list \
             --repo "$GH_REPO" \
             --state open \
-            --json number,author,createdAt,comments \
+            --json number,author,createdAt \
             --jq "[
               .[] |
               select(
-                (.author.login == \"dependabot[bot]\" or .author.login == \"app/renovate\") and
-                ([.comments[]? | select(.body | contains(\"Dependency Security Scan\"))] | length == 0)
+                .author.login == \"dependabot[bot]\" or .author.login == \"app/renovate\"
               ) |
               {number, createdAt}
             ]")
@@ -122,6 +119,23 @@ jobs:
             AGE_SECONDS=$((NOW_TS - CREATED_TS))
             AGE_DAYS=$((AGE_SECONDS / 86400))
             AGE_HOURS=$(( (AGE_SECONDS % 86400) / 3600 ))
+
+            # Calculate business days for display
+            BIZ_DAYS=$(CREATED_AT="$CREATED_AT" python3 -c "
+            import os
+            from datetime import datetime, timedelta
+            created = datetime.fromisoformat(os.environ['CREATED_AT'].replace('Z', '+00:00'))
+            now = datetime.now(created.tzinfo)
+            count = 0
+            current = created
+            while True:
+                current += timedelta(days=1)
+                if current > now:
+                    break
+                if current.weekday() < 5:
+                    count += 1
+            print(count)
+            ")
 
             # Extract dependencies from PR diff
             DIFF=$(gh pr diff "$PR_NUMBER" --repo "$GH_REPO")
@@ -334,23 +348,76 @@ jobs:
             fi
 
             COMMENT_BODY="$(printf '%s\n\n%s\n%s\n\n%s\n\n%s\n\n%s\n\n%s' \
-              "## Dependency Security Scan (5-Day Cool-Down Complete)" \
-              "**PR age:** ${AGE_DAYS} days, ${AGE_HOURS} hours" \
+              "## Dependency Security Scan (Cool-Down Complete)" \
+              "**PR age:** ${AGE_DAYS} days, ${AGE_HOURS} hours (${BIZ_DAYS} business days)" \
               "**Packages scanned:** ${DEPS}" \
               "### Results" \
               "$RESULTS_HEADER" \
               "$RESULTS_TABLE" \
               "$RESULTS_FOOTER")"
 
-            # Post comment and set status to success (human decides on exploits)
-            gh pr comment "$PR_NUMBER" \
-              --repo "$GH_REPO" \
-              --body "$COMMENT_BODY"
+            # --- Comment management: update-or-create with change detection ---
 
+            # Search for existing scan comment (HTML marker or legacy heading)
+            COMMENTS_JSON=$(gh api "repos/${GH_REPO}/issues/${PR_NUMBER}/comments" --paginate)
+            EXISTING_COMMENT_ID=$(echo "$COMMENTS_JSON" | jq -r "
+              [.[] | select(
+                (.body | contains(\"<!-- dependency-scan-\")) or
+                (.body | contains(\"## Dependency Security Scan\"))
+              )][0].id // empty")
+
+            # Extract previous advisory IDs for change detection
+            PREV_IDS=""
+            if [ -n "$EXISTING_COMMENT_ID" ]; then
+              PREV_BODY=$(echo "$COMMENTS_JSON" | jq -r "
+                [.[] | select(.id == ${EXISTING_COMMENT_ID})][0].body")
+              PREV_IDS=$(echo "$PREV_BODY" | \
+                grep -oE '(GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}|PYSEC-[0-9]+-[0-9]+)' | \
+                sort -u | tr '\n' ',' | sed 's/,$//' || true)
+            fi
+
+            # Collect current advisory IDs
+            CURRENT_IDS=$(echo "$SCAN_RESULTS" | \
+              grep -oE '(GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}|PYSEC-[0-9]+-[0-9]+)' | \
+              sort -u | tr '\n' ',' | sed 's/,$//' || true)
+
+            # Add HTML marker and timestamp to comment body
+            SCAN_MARKER="<!-- dependency-scan-${PR_NUMBER} -->"
+            TIMESTAMP="Last scanned: $(date -u +'%Y-%m-%d %H:%M') UTC"
+            DIVIDER="---"
+            COMMENT_BODY="$(printf '%s\n%s\n\n%s\n_%s_' \
+              "$SCAN_MARKER" \
+              "$COMMENT_BODY" \
+              "$DIVIDER" \
+              "$TIMESTAMP")"
+
+            # Update existing comment or create new one
+            if [ -n "$EXISTING_COMMENT_ID" ]; then
+              gh api "repos/${GH_REPO}/issues/comments/${EXISTING_COMMENT_ID}" \
+                -X PATCH \
+                -f body="$COMMENT_BODY"
+              echo "Updated existing scan comment (ID: ${EXISTING_COMMENT_ID})"
+            else
+              gh pr comment "$PR_NUMBER" \
+                --repo "$GH_REPO" \
+                --body "$COMMENT_BODY"
+              echo "Created new scan comment"
+            fi
+
+            # Post change notification if advisory status changed
+            if [ -n "$EXISTING_COMMENT_ID" ] && [ "$PREV_IDS" != "$CURRENT_IDS" ]; then
+              CHANGE_NOTE="Advisory status changed since last scan — review updated findings above."
+              gh pr comment "$PR_NUMBER" \
+                --repo "$GH_REPO" \
+                --body "$CHANGE_NOTE"
+              echo "Posted change notification"
+            fi
+
+            # Set status to success
             gh api "repos/${GH_REPO}/statuses/${HEAD_SHA}" \
               -f state=success \
               -f context="dependency-cooldown / gate" \
-              -f description="5-day cool-down complete. Exploit scan posted. Ready for manual review."
+              -f description="Cool-down complete. Exploit scan posted. Ready for manual review."
 
             echo "=== Done with PR #${PR_NUMBER} ==="
           done
