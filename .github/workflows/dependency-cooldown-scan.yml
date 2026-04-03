@@ -14,6 +14,9 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
+env:
+  COOLING_DAYS: "5"
+
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -29,10 +32,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          CUTOFF=$(date -u -d "5 days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
-                   || date -u -v-5d +%Y-%m-%dT%H:%M:%SZ)
-
-          PR_NUMBERS=$(gh pr list \
+          # Get all open bot PRs with metadata
+          # Note: comment filter kept for now — removed in Task 3 when
+          # comment update logic is added to prevent duplicate comments
+          PR_DATA=$(gh pr list \
             --repo "$GH_REPO" \
             --state open \
             --json number,author,createdAt,comments \
@@ -40,11 +43,36 @@ jobs:
               .[] |
               select(
                 (.author.login == \"dependabot[bot]\" or .author.login == \"app/renovate\") and
-                (.createdAt <= \"$CUTOFF\") and
                 ([.comments[]? | select(.body | contains(\"Dependency Security Scan\"))] | length == 0)
               ) |
-              .number
-            ] | .[]")
+              {number, createdAt}
+            ]")
+
+          # Filter by business days (Mon-Fri only) using Python
+          PR_NUMBERS=$(echo "$PR_DATA" | python3 << 'PYEOF'
+          import json, sys, os
+          from datetime import datetime, timedelta
+
+          def business_days_elapsed(created_at):
+              created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+              now = datetime.now(created.tzinfo)
+              count = 0
+              current = created
+              while True:
+                  current += timedelta(days=1)
+                  if current > now:
+                      break
+                  if current.weekday() < 5:
+                      count += 1
+              return count
+
+          threshold = int(os.environ["COOLING_DAYS"])
+          prs = json.load(sys.stdin)
+          for pr in prs:
+              if business_days_elapsed(pr["createdAt"]) >= threshold:
+                  print(pr["number"])
+          PYEOF
+          )
 
           if [ -z "$PR_NUMBERS" ]; then
             echo "No PRs ready for scanning"
