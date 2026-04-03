@@ -16,7 +16,7 @@ from time import perf_counter
 import mcp.types as mt
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools import ToolResult
 from pydantic import ValidationError
 
 from nexus_mcp.correlation import correlation_id, set_correlation_id
