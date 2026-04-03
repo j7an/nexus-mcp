@@ -194,6 +194,35 @@ uv run python -m nexus_mcp
 
 </details>
 
+<details>
+<summary><h3>OpenCode Server (Docker)</h3></summary>
+
+Run an isolated [OpenCode](https://opencode.ai) server for HTTP-based agent execution alongside the CLI runner. Provides session management, file search, permissions, and 38 additional MCP tools when the server is healthy.
+
+**Quick start:**
+
+1. Copy `.env.example` to `.env` and set `PROJECT_DIR` to your project path:
+   ```bash
+   cp .env.example .env
+   # Edit .env: set PROJECT_DIR=/path/to/your/project
+   ```
+2. Start the server:
+   ```bash
+   docker compose up -d
+   ```
+3. Authenticate with your provider:
+   ```bash
+   docker exec -it opencode-server opencode auth login
+   ```
+4. Verify the server is healthy:
+   ```bash
+   curl -u opencode:nexus http://localhost:4096/global/health
+   ```
+
+The server binds to `127.0.0.1` (localhost only) by default for security. See [docs/opencode-server-setup.md](docs/opencode-server-setup.md) for the full guide including remote access, multi-project setup, and network security.
+
+</details>
+
 ## Usage
 
 Once nexus-mcp is configured in your MCP client, your AI assistant automatically sees its tools.
