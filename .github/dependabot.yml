@@ -9,8 +9,8 @@ updates:
     commit-message:
       prefix: "deps"
 
-  # Python dependencies (uv/pip ecosystem)
-  - package-ecosystem: "pip"
+  # Python dependencies (uv ecosystem)
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
