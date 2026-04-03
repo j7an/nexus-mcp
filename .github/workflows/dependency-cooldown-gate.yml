@@ -6,6 +6,8 @@ on:
 
 permissions:
   statuses: write
+  issues: write
+  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -50,3 +52,68 @@ jobs:
             -f state="$STATE" \
             -f context="dependency-cooldown / gate" \
             -f description="$DESC"
+
+  create-tracking-issue:
+    if: >-
+      github.event.action == 'opened' &&
+      (github.actor == 'dependabot[bot]' || github.actor == 'renovate[bot]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2
+        with:
+          egress-policy: audit
+
+      - name: Create tracking issue and link to PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          ISSUE_TITLE="Track: ${PR_TITLE}"
+
+          # Check for existing tracking issue (dedup)
+          EXISTING=$(gh issue list --repo "$GH_REPO" --state open \
+            --search "in:title \"${ISSUE_TITLE}\"" \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "Tracking issue #${EXISTING} already exists — skipping creation"
+            # Still ensure PR body has Fixes reference
+            CURRENT_BODY=$(gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json body --jq '.body')
+            if ! echo "$CURRENT_BODY" | grep -q "Fixes #${EXISTING}"; then
+              NEW_BODY="$(printf 'Fixes #%s\n\n%s' "$EXISTING" "$CURRENT_BODY")"
+              gh pr edit "$PR_NUMBER" --repo "$GH_REPO" --body "$NEW_BODY"
+            fi
+            exit 0
+          fi
+
+          # Detect ecosystem from branch name
+          LABELS="dependencies"
+          case "$PR_BRANCH" in
+            dependabot/github_actions/*) LABELS="dependencies,github-actions" ;;
+            dependabot/pip/*)            LABELS="dependencies,python" ;;
+          esac
+
+          # Create tracking issue
+          ISSUE_BODY="$(printf 'Automatically created to track dependency update.\n\n**PR:** #%s\n**Title:** %s\n\nThis issue will be closed automatically when the PR is merged.' \
+            "$PR_NUMBER" "$PR_TITLE")"
+
+          ISSUE_URL=$(gh issue create \
+            --repo "$GH_REPO" \
+            --title "$ISSUE_TITLE" \
+            --body "$ISSUE_BODY" \
+            --label "$LABELS" \
+            --assignee "$REPO_OWNER")
+          ISSUE_NUMBER=$(echo "$ISSUE_URL" | grep -oE '[0-9]+$')
+          echo "Created tracking issue #${ISSUE_NUMBER}"
+
+          # Prepend Fixes reference to PR body
+          CURRENT_BODY=$(gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json body --jq '.body')
+          if ! echo "$CURRENT_BODY" | grep -q "Fixes #${ISSUE_NUMBER}"; then
+            NEW_BODY="$(printf 'Fixes #%s\n\n%s' "$ISSUE_NUMBER" "$CURRENT_BODY")"
+            gh pr edit "$PR_NUMBER" --repo "$GH_REPO" --body "$NEW_BODY"
+            echo "Added Fixes #${ISSUE_NUMBER} to PR body"
+          fi
