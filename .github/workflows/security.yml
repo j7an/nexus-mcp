@@ -67,6 +67,25 @@ jobs:
           echo "::error::TruffleHog detected verified secrets. Review the scan output above."
           exit 1
 
+  zizmor:
+    name: Zizmor
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Run Zizmor
+        uses: zizmorcore/zizmor-action@71321a20a9ded102f6e9ce5718a2fcec2c4f70d8 # v0.5.2
+        with:
+          min-severity: medium
+          min-confidence: medium
+
   trivy:
     name: Trivy
     runs-on: ubuntu-latest
