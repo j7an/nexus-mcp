@@ -1,5 +1,14 @@
 version: 2
 updates:
+  # GitHub Actions (SHA-pinned, updated by Dependabot)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "deps"
+
   # Python dependencies (uv/pip ecosystem)
   - package-ecosystem: "pip"
     directory: "/"
