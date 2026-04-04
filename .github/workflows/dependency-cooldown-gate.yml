@@ -6,8 +6,6 @@ on:
 
 permissions:
   statuses: write
-  issues: write
-  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,3 +16,4 @@ jobs:
     uses: j7an/shared-workflows/.github/workflows/dependency-cooldown-gate.yml@978b3ebc19f12e9fcd39a2129ea9387483e500a3 # v1.2.3
     with:
       cooling_business_days: 5
+      create_tracking_issue: false
