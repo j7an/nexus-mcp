@@ -2,7 +2,7 @@ name: Dependency Cool-Down Scan
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 9 * * 1-5"  # Weekdays at 09:00 UTC, skip weekends
   workflow_dispatch:
 
 permissions:
