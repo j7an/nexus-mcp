@@ -6,6 +6,9 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    groups:
+      all-actions:
+        patterns: ["*"]
     commit-message:
       prefix: "deps"
 
