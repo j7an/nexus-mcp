@@ -15,6 +15,6 @@ concurrency:
 
 jobs:
   gate:
-    uses: j7an/shared-workflows/.github/workflows/dependency-cooldown-gate.yml@a60e4d58bb9dcc3a6311477f46c6ef707708a13d # v1.2.1
+    uses: j7an/shared-workflows/.github/workflows/dependency-cooldown-gate.yml@6d471d8f4aa1b94140f352e38b308ff30fc61cee # v1.2.2
     with:
       cooling_business_days: 5
