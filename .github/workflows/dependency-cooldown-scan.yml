@@ -2,11 +2,11 @@ name: Dependency Cool-Down Scan
 
 on:
   schedule:
-    - cron: "0 9 * * 1-5"  # Weekdays at 09:00 UTC, skip weekends
+    - cron: "0 15 * * 1-5"  # 8am PT (PDT) / 7am PT (PST)
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write      # needed for gh pr merge (auto-merge)
   pull-requests: write
   statuses: write
 
@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   scan:
-    uses: j7an/shared-workflows/.github/workflows/dependency-cooldown-scan.yml@b0a5ece145440e853e1a489acf797793fa1d55f8 # v1.3.1
+    uses: j7an/shared-workflows/.github/workflows/dependency-cooldown-scan.yml@72e54204a9d6cd988e43b95e74d155cf797c0617 # v1.3.2
     with:
       cooling_business_days: 5
+      auto_merge: true
