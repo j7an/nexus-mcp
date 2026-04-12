@@ -16,6 +16,6 @@ concurrency:
 
 jobs:
   scan:
-    uses: j7an/shared-workflows/.github/workflows/dependency-cooldown-scan.yml@978b3ebc19f12e9fcd39a2129ea9387483e500a3 # v1.2.3
+    uses: j7an/shared-workflows/.github/workflows/dependency-cooldown-scan.yml@b0a5ece145440e853e1a489acf797793fa1d55f8 # v1.3.1
     with:
       cooling_business_days: 5
