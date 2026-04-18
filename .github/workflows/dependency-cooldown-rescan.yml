@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "If true, log decisions but skip gh run rerun"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -15,4 +20,4 @@ jobs:
   rescan:
     uses: j7an/shared-workflows/.github/workflows/cooldown-rescan.yml@68158ca145a6a90a0d2b890b23c7103513f442ce # v2.4.0
     with:
-      dry_run: true
+      dry_run: ${{ inputs.dry_run || false }}
