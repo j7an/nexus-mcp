@@ -1,4 +1,6 @@
 # Nexus MCP
+
+[![SafeSkill 90/100](https://img.shields.io/badge/SafeSkill-90%2F100_Verified%20Safe-brightgreen)](https://safeskill.dev/scan/j7an-nexus-mcp)
 <!-- mcp-name: io.github.j7an/nexus-mcp -->
 
 [![PyPI](https://img.shields.io/pypi/v/nexus-mcp)](https://pypi.org/project/nexus-mcp/)
