@@ -11,35 +11,52 @@ These are already configured. Verify once if something seems broken:
   (Settings → Environments → `pypi` → required reviewer set)
 - [ ] TestPyPI Trusted Publisher configured for the `testpypi` environment
 - [ ] Both environments use OIDC — no API tokens needed
-
-For initial setup details, see `docs/phase-6-release-workflow.md`.
+- [ ] `Release Bot` GitHub App installed on this repo (needed to push signed
+  tags; bypasses the recursion guard that blocks `GITHUB_TOKEN` tag pushes)
+- [ ] `vars.RELEASE_BOT_APP_ID` set at repo level (Settings → Secrets and
+  variables → Actions → Variables tab)
+- [ ] `RELEASE_BOT_PRIVATE_KEY` secret stored inside the `release` environment
+  (Settings → Environments → `release` → Environment secrets). The `release`
+  environment's branch policy must restrict deployments to `main` only
 
 ---
 
 ## Releasing a New Version
 
-Run these commands in order — the inline comments explain each step:
+### Stable release (UI-driven, recommended)
 
-    # 1. Bump version and create release branch
+1. Go to **Actions → Tag Release → Run workflow**
+2. Select the `main` branch and pick a `bump`:
+   - `auto` — infer from Conventional Commits since the last tag
+     (`feat:` → minor, `fix:` / `chore:` / `docs:` → patch,
+     `<type>!:` or `BREAKING CHANGE:` → major)
+   - `patch` / `minor` / `major` — override the auto analysis
+3. Click **Run workflow**. The shared `tag-release.yml` reusable workflow
+   computes the next version, pushes a signed `vX.Y.Z` tag via the Release
+   Bot App, and finishes
+4. The `v*` tag push triggers `release.yml` (build → TestPyPI → PyPI →
+   GitHub Release → MCP Registry) — same as a manual tag push
+
+The "auto" bump analyzer reads commit subjects since the last tag, so the
+**Conventional Commits and Release Shape** rule matters: every commit in a
+PR should match the PR's user-visible intent, not the per-commit diff shape.
+A stray `feat:` in an otherwise-`fix:` PR will flip a patch release to minor.
+
+### Pre-release (manual tag push)
+
+The UI only offers `auto/patch/minor/major`, so pre-releases use a manual
+tag push. The same `release.yml` runs and the classifier flags the release
+as prerelease automatically:
+
     git checkout main && git pull origin main
-    uv version --bump patch   # or minor / major
-    VERSION=$(uv version --short)
-    git checkout -b "release/v${VERSION}"
+    git tag v1.0.0rc1       # or v1.0.0a1, v1.0.0b1, v1.0.0.dev1
+    git push origin v1.0.0rc1
 
-    # 2. Commit and push the release branch
-    git add pyproject.toml uv.lock
-    git commit -m "chore(release): v${VERSION}"
-    git push -u origin "release/v${VERSION}"
-
-    # 3. Create PR, wait for CI, merge
-    gh pr create --title "chore(release): v${VERSION}" --body "Version bump to ${VERSION}"
-    # After CI passes, merge via GitHub UI or:
-    gh pr merge --squash --delete-branch "release/v${VERSION}"
-
-    # 4. Tag the merge commit on main — workflow triggers automatically
-    git checkout main && git pull origin main
-    git tag "v${VERSION}"
-    git push origin "v${VERSION}"
+Use **PEP 440 canonical** forms (no hyphens): `a1` / `b1` / `rc1` / `.dev1`.
+`hatch-vcs` normalizes the tag to PEP 440 for the wheel's `Version` metadata,
+so `v1.0.0-rc1` (SemVer-style with a hyphen) still works as a git tag but
+produces `1.0.0rc1` in the wheel — keeping tag and metadata identical avoids
+confusion when `pip install` reports a different string than the tag.
 
 ---
 
@@ -52,7 +69,7 @@ The `release.yml` workflow runs five jobs in sequence:
 | `build` | Verifies the tag is on `main`, builds sdist + wheel via `uv build`, uploads artifacts |
 | `publish-testpypi` | Publishes to TestPyPI, waits 30 s, installs and smoke-tests the package |
 | `publish-pypi` | **Waits for a required reviewer to approve** the `pypi` environment, then publishes |
-| `github-release` | Creates a **draft** GitHub Release with auto-generated notes and dist assets attached |
+| `github-release` | Creates a **draft** GitHub Release with auto-generated notes; a regex classifier marks it as `prerelease: true` unless the tag matches `^v[0-9]+\.[0-9]+\.[0-9]+(\.post[0-9]+)?$` |
 | `publish-mcp-registry` | Patches `server.json` version from tag, authenticates via OIDC, publishes metadata to MCP Registry |
 
 Monitor progress at:
@@ -70,38 +87,57 @@ Monitor progress at:
 
 ---
 
-## Pre-release Versions
+## About `server.json` version fields
 
-Tags containing a hyphen are automatically marked as pre-releases by the workflow:
+`server.json` holds MCP Registry metadata. The two version fields —
+`.version` and `.packages[0].version` — are **publish-time placeholders**,
+not authoritative values. The committed file stays at `"0.0.0"`; the
+`publish-mcp-registry` job in `release.yml` rewrites both fields from the
+tag name (`GITHUB_REF_NAME`) via a `jq` patch before calling
+`mcp-publisher publish`. The MCP Registry schema requires these fields to
+exist, but their values only become meaningful at publish time.
 
-    git tag v1.0.0-rc1
-    git push origin v1.0.0-rc1
+The other ~12 fields in `server.json` (`$schema`, `name`, `description`,
+`repository.*`, `packages[0].identifier/runtimeHint/runtimeArguments/transport`)
+are authoritative source of truth — review them in PRs normally.
 
-Examples: `v1.0.0-alpha1`, `v1.0.0-beta2`, `v1.0.0-rc1`
+Do not hand-edit the version fields to "match" the latest tag. A mismatch
+between `pyproject.toml`'s dynamic version and the committed `server.json`
+version is the designed steady state, not drift.
 
 ---
 
 ## Recovering from a Failed Release
 
-### Build job failed
+### Build job failed (stable release)
 
-Fix the issue on `main`, then re-push the tag:
+The tag already exists. Fix the issue on `main`, then delete the tag and
+re-run the Tag Release workflow:
 
     git tag -d "v${VERSION}"
     git push origin ":refs/tags/v${VERSION}"
-    # fix the issue, merge to main
+    # merge the fix to main, then:
+    # Actions → Tag Release → Run workflow → same bump as before
+
+### Build job failed (pre-release)
+
+Same delete-and-re-push, but the re-tag is manual:
+
+    git tag -d "v${VERSION}"
+    git push origin ":refs/tags/v${VERSION}"
+    # merge the fix to main, then:
     git tag "v${VERSION}" && git push origin "v${VERSION}"
 
 ### Published to TestPyPI but PyPI failed
 
-The wheel and sdist are already uploaded to TestPyPI (immutable). You can publish
-to PyPI manually using the artifacts from the failed workflow run, or bump to a
-patch version (`X.Y.Z+1`) and re-release.
+The wheel and sdist are already uploaded to TestPyPI (immutable). You can
+publish to PyPI manually using the artifacts from the failed workflow run,
+or bump to a patch version and re-release via the Tag Release workflow.
 
 ### GitHub Release not created
 
-The `github-release` job only runs if `publish-pypi` succeeds. If it was skipped,
-create the release manually:
+The `github-release` job only runs if `publish-pypi` succeeds. If it was
+skipped, create the release manually:
 
     gh release create "v${VERSION}" dist/* \
       --title "v${VERSION}" \

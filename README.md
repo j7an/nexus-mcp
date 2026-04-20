@@ -628,6 +628,14 @@ nexus-mcp/
 
 </details>
 
+## Releases
+
+Stable releases are cut by running the **Tag Release** workflow from the Actions
+tab and choosing a bump (`auto` infers it from Conventional Commits since the
+last tag). Pre-releases are tagged manually. See [RELEASE.md](RELEASE.md) for
+the full maintainer workflow, recovery steps, and notes on `server.json`
+placeholder fields.
+
 ## License
 
 MIT
