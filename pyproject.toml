@@ -1,6 +1,6 @@
 [project]
 name = "nexus-mcp"
-version = "0.10.0"
+dynamic = ["version"]
 description = "Model Context Protocol server for AI CLI agents"
 readme = "README.md"
 authors = [
@@ -52,9 +52,13 @@ Issues = "https://github.com/j7an/nexus-mcp/issues"
 nexus-mcp = "nexus_mcp.__main__:main"
 
 [build-system]
-requires = ["hatchling>=1.28.0"]
+requires = ["hatchling>=1.28.0", "hatch-vcs>=0.4.0"]
 build-backend = "hatchling.build"
 # Note: hatchling>=1.28.0 auto-discovers src-layout; no [tool.hatch.build.targets.wheel] needed
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { version_scheme = "no-guess-dev" }
 
 [dependency-groups]
 dev = [
