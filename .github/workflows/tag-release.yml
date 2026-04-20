@@ -1,0 +1,27 @@
+name: Tag Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Semver bump (auto = infer from Conventional Commits since last tag)"
+        type: choice
+        required: true
+        default: auto
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    uses: j7an/shared-workflows/.github/workflows/tag-release.yml@68158ca145a6a90a0d2b890b23c7103513f442ce # v2.4.0
+    with:
+      bump: ${{ inputs.bump }}
+      tag-prefix: "v"
+    secrets:
+      RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
