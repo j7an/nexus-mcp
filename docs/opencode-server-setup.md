@@ -1,6 +1,8 @@
-# OpenCode Server Setup Guide
+# OpenCode Server Setup Guide — experimental
 
 Run an isolated OpenCode server via Docker for HTTP-based agent execution. This enables session management, file search, workspace tools, permissions, and questions — capabilities not available through the CLI subprocess runner.
+
+> ⚠️ **Experimental** — This integration has not been validated end-to-end by the maintainer. Expect rough edges in setup, auth, and tool exposure. The MCP tools surfaced from upstream OpenCode track the upstream project and may change without notice. Feedback and bug reports are welcome.
 
 ## Prerequisites
 

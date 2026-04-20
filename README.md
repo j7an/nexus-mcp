@@ -195,7 +195,9 @@ uv run python -m nexus_mcp
 </details>
 
 <details>
-<summary><h3>OpenCode Server (Docker)</h3></summary>
+<summary><h3>OpenCode Server (Docker) — experimental</h3></summary>
+
+> ⚠️ **Experimental** — This integration has not been validated end-to-end by the maintainer. Expect rough edges in setup, auth, and tool exposure. The MCP tools surfaced from upstream OpenCode track the upstream project and may change without notice. Feedback and bug reports are welcome.
 
 Run an isolated [OpenCode](https://opencode.ai) server for HTTP-based agent execution alongside the CLI runner. Provides session management, file search, permissions, and 38 additional MCP tools when the server is healthy.
 
