@@ -1,0 +1,6 @@
+{
+  "files": [
+    { "path": "server.json", "path_expr": ".version" },
+    { "path": "server.json", "path_expr": ".packages[0].version" }
+  ]
+}
