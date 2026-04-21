@@ -32,8 +32,9 @@ These are already configured. Verify once if something seems broken:
      `<type>!:` or `BREAKING CHANGE:` → major)
    - `patch` / `minor` / `major` — override the auto analysis
 3. Click **Run workflow**. The shared `tag-release.yml` reusable workflow
-   computes the next version, pushes a signed `vX.Y.Z` tag via the Release
-   Bot App, and finishes
+   computes the next version, applies `.version-bump.json` to update
+   `server.json`'s two version fields, commits those changes, pushes a signed
+   `vX.Y.Z` tag via the Release Bot App, and finishes
 4. The `v*` tag push triggers `release.yml` (build → TestPyPI → PyPI →
    GitHub Release → MCP Registry) — same as a manual tag push
 
@@ -70,7 +71,7 @@ The `release.yml` workflow runs five jobs in sequence:
 | `publish-testpypi` | Publishes to TestPyPI, waits 30 s, installs and smoke-tests the package |
 | `publish-pypi` | **Waits for a required reviewer to approve** the `pypi` environment, then publishes |
 | `github-release` | Creates a **draft** GitHub Release with auto-generated notes; a regex classifier marks it as `prerelease: true` unless the tag matches `^v[0-9]+\.[0-9]+\.[0-9]+(\.post[0-9]+)?$` |
-| `publish-mcp-registry` | Patches `server.json` version from tag, authenticates via OIDC, publishes metadata to MCP Registry |
+| `publish-mcp-registry` | Authenticates via OIDC, publishes the committed `server.json` to MCP Registry |
 
 Monitor progress at:
 `https://github.com/j7an/nexus-mcp/actions`
@@ -84,26 +85,6 @@ Monitor progress at:
 - [ ] Smoke-test: `python -c "import nexus_mcp; print(nexus_mcp.__version__)"`
 - [ ] Open the draft GitHub Release, review auto-generated notes, and click **Publish release**
 - [ ] Verify the MCP Registry listing
-
----
-
-## About `server.json` version fields
-
-`server.json` holds MCP Registry metadata. The two version fields —
-`.version` and `.packages[0].version` — are **publish-time placeholders**,
-not authoritative values. The committed file stays at `"0.0.0"`; the
-`publish-mcp-registry` job in `release.yml` rewrites both fields from the
-tag name (`GITHUB_REF_NAME`) via a `jq` patch before calling
-`mcp-publisher publish`. The MCP Registry schema requires these fields to
-exist, but their values only become meaningful at publish time.
-
-The other ~12 fields in `server.json` (`$schema`, `name`, `description`,
-`repository.*`, `packages[0].identifier/runtimeHint/runtimeArguments/transport`)
-are authoritative source of truth — review them in PRs normally.
-
-Do not hand-edit the version fields to "match" the latest tag. A mismatch
-between `pyproject.toml`'s dynamic version and the committed `server.json`
-version is the designed steady state, not drift.
 
 ---
 

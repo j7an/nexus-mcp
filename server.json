@@ -1,9 +1,8 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "_comment": "version fields are publish-time placeholders — see release.yml publish-mcp-registry jq patch",
   "name": "io.github.j7an/nexus-mcp",
   "description": "Invoke CLI agents (Gemini, Codex, Claude, OpenCode) as MCP tools with parallel execution",
-  "version": "0.0.0",
+  "version": "0.10.0",
   "repository": {
     "url": "https://github.com/j7an/nexus-mcp",
     "source": "github"
@@ -12,7 +11,7 @@
     {
       "registryType": "pypi",
       "identifier": "nexus-mcp",
-      "version": "0.0.0",
+      "version": "0.10.0",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         { "type": "positional", "value": "--python", "isRequired": true },
