@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   cooldown:
-    uses: j7an/shared-workflows/.github/workflows/dependency-cooldown.yml@c092d60b64e29d03b67d49e8a8471bdfd61cee5a # v2.5.1
+    uses: j7an/shared-workflows/.github/workflows/dependency-cooldown.yml@365119edbe2b1c7339d7727d9e8d021784e5bc01 # v2.5.2
     with:
       auto_merge: true
       cooldown_days: 7
