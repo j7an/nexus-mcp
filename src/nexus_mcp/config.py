@@ -17,6 +17,7 @@ __all__ = [
     "get_cli_detection_timeout",
     "get_runner_defaults",
     "get_runner_models",
+    "get_agent_fallback_models",
     "get_agent_env",
 ]
 
@@ -40,6 +41,9 @@ from nexus_mcp.config_resolver import (
 )
 from nexus_mcp.config_resolver import (
     get_agent_env as get_agent_env,
+)
+from nexus_mcp.config_resolver import (
+    get_agent_fallback_models as get_agent_fallback_models,
 )
 from nexus_mcp.config_resolver import (
     get_runner_defaults as get_runner_defaults,

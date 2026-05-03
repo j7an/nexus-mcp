@@ -196,6 +196,14 @@ def get_runner_models(runner_name: str) -> tuple[str, ...]:
     return tuple(m.strip() for m in raw.split(",") if m.strip())
 
 
+def get_agent_fallback_models(agent: str) -> tuple[str, ...]:
+    """Get fallback model list for an agent from NEXUS_{AGENT}_FALLBACK_MODELS."""
+    raw = os.getenv(f"NEXUS_{agent.upper()}_FALLBACK_MODELS")
+    if not raw:
+        return ()
+    return tuple(model.strip() for model in raw.split(",") if model.strip())
+
+
 # ---------------------------------------------------------------------------
 # Per-runner defaults (3-tier merge)
 # ---------------------------------------------------------------------------
