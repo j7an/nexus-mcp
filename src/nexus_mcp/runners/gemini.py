@@ -11,12 +11,13 @@ Expected JSON response:
     {"response": "...", "stats": {...}}  # stats field is optional
 """
 
+import asyncio
 import contextlib
 import json
 from typing import Any, ClassVar
 
 from nexus_mcp.config import get_agent_fallback_models
-from nexus_mcp.exceptions import ParseError, RetryableError
+from nexus_mcp.exceptions import ParseError, RetryableError, SubprocessTimeoutError
 from nexus_mcp.parser import extract_last_json_array, extract_last_json_object
 from nexus_mcp.runners.base import AbstractRunner
 from nexus_mcp.types import AgentResponse, ExecutionMode, LogEmitter, ProgressEmitter, PromptRequest
@@ -288,5 +289,10 @@ class GeminiRunner(AbstractRunner):
                     f"Gemini retryable error on model {model}; "
                     f"switching to fallback model {chain[index]}",
                 )
+                continue
+            except SubprocessTimeoutError:
+                raise
+            except asyncio.CancelledError:
+                raise
         # Unreachable: loop always returns or raises — satisfies type checker
         raise AssertionError("unreachable: fallback loop exited without result or exception")
