@@ -1065,3 +1065,78 @@ class TestGeminiRunnerFallbackSuccess:
 
         models = [call.args[call.args.index("--model") + 1] for call in mock_exec.call_args_list]
         assert models == ["gemini-3.1-pro-preview", "gemini-3-flash-preview"]
+
+
+# ---------------------------------------------------------------------------
+# Fallback chain — retry semantics
+# ---------------------------------------------------------------------------
+
+
+class TestGeminiRunnerFallbackRetrySemantics:
+    """Fallback should only advance on RetryableError."""
+
+    @patch.dict(
+        "os.environ",
+        {"NEXUS_GEMINI_FALLBACK_MODELS": "gemini-3-flash-preview"},
+        clear=False,
+    )
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_full_chain_retryable_exhaustion_retries_whole_chain(self, mock_exec):
+        error_stdout = gemini_error_json(429, "Quota exhausted", "RESOURCE_EXHAUSTED")
+        mock_exec.return_value = create_mock_process(stdout=error_stdout, returncode=1)
+
+        runner = make_gemini_runner()
+        request = make_prompt_request(model="gemini-3.1-pro-preview", max_retries=2)
+
+        with pytest.raises(RetryableError):
+            await runner.run(request)
+
+        models = [call.args[call.args.index("--model") + 1] for call in mock_exec.call_args_list]
+        assert models == [
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
+        ]
+
+    @patch.dict(
+        "os.environ",
+        {"NEXUS_GEMINI_FALLBACK_MODELS": "gemini-3-flash-preview"},
+        clear=False,
+    )
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_non_retryable_error_does_not_advance_to_fallback(self, mock_exec):
+        mock_exec.return_value = create_mock_process(
+            stdout=gemini_error_json(401, "Bad API key", "UNAUTHENTICATED"),
+            returncode=1,
+        )
+
+        runner = make_gemini_runner()
+
+        with pytest.raises(SubprocessError):
+            await runner.run(make_prompt_request(model="gemini-3.1-pro-preview", max_retries=2))
+
+        assert mock_exec.await_count == 1
+
+    @patch.dict(
+        "os.environ",
+        {"NEXUS_GEMINI_FALLBACK_MODELS": "gemini-3-flash-preview"},
+        clear=False,
+    )
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_no_primary_model_keeps_existing_retry_only_behavior(self, mock_exec):
+        mock_exec.side_effect = [
+            create_mock_process(
+                stdout=gemini_error_json(429, "Rate limited", "RESOURCE_EXHAUSTED"),
+                returncode=1,
+            ),
+            create_mock_process(stdout=gemini_json("ok after retry"), returncode=0),
+        ]
+
+        runner = make_gemini_runner()
+        response = await runner.run(make_prompt_request(model=None, max_retries=2))
+
+        assert response.output == "ok after retry"
+        assert response.metadata == {}
+        for call in mock_exec.call_args_list:
+            assert "--model" not in list(call.args)
