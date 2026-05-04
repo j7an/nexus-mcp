@@ -15,10 +15,11 @@ import contextlib
 import json
 from typing import Any, ClassVar
 
-from nexus_mcp.exceptions import ParseError
+from nexus_mcp.config import get_agent_fallback_models
+from nexus_mcp.exceptions import ParseError, RetryableError
 from nexus_mcp.parser import extract_last_json_array, extract_last_json_object
 from nexus_mcp.runners.base import AbstractRunner
-from nexus_mcp.types import AgentResponse, ExecutionMode, PromptRequest
+from nexus_mcp.types import AgentResponse, ExecutionMode, LogEmitter, ProgressEmitter, PromptRequest
 
 
 class GeminiRunner(AbstractRunner):
@@ -157,6 +158,32 @@ class GeminiRunner(AbstractRunner):
         Raises:
             SubprocessError: If stdout or stderr contains a Gemini API error object.
         """
+        data = self._extract_error_payload(stdout, stderr)
+        if data is None:
+            return
+
+        error = data["error"]  # _extract_error_payload guarantees this is a dict
+        code = self._coerce_error_code(error.get("code", "unknown"))
+        message = error.get("message", "unknown error")
+        status = error.get("status", "")
+        if code == 1 and message == "[object Object]":
+            return
+        error_msg = f"Gemini API error {code}: {message} ({status})"
+        self._raise_structured_error(error_msg, code, stdout, stderr, returncode, command)
+
+    # ------------------------------------------------------------------
+    # Fallback-chain helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_primary_model(self, request: PromptRequest) -> str | None:
+        return request.model or self.default_model
+
+    def _extract_error_payload(self, stdout: str, stderr: str) -> dict[str, Any] | None:
+        """Locate a Gemini error JSON object in stdout (preferred) or stderr.
+
+        Returns the parent dict whose ``error`` field is a dict, or None if no
+        such payload exists.
+        """
         data: dict[str, Any] | None = None
         with contextlib.suppress(json.JSONDecodeError):
             parsed = json.loads(stdout)
@@ -169,16 +196,97 @@ class GeminiRunner(AbstractRunner):
             data = extract_last_json_object(stderr)
 
         if data is None:
-            return
+            return None
 
         error = data.get("error")
         if not isinstance(error, dict):
-            return
+            return None
+        return data
 
-        code = self._coerce_error_code(error.get("code", "unknown"))
-        message = error.get("message", "unknown error")
-        status = error.get("status", "")
-        if code == 1 and message == "[object Object]":
-            return
-        error_msg = f"Gemini API error {code}: {message} ({status})"
-        self._raise_structured_error(error_msg, code, stdout, stderr, returncode, command)
+    def _build_fallback_chain(self, primary_model: str) -> tuple[str, ...]:
+        """Build the ordered fallback chain starting from the primary model.
+
+        Deduplicates while preserving first-seen order so each model is tried
+        at most once per runner-level attempt.
+        """
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for model in (primary_model, *get_agent_fallback_models(self.AGENT_NAME)):
+            if model not in seen:
+                ordered.append(model)
+                seen.add(model)
+        return tuple(ordered)
+
+    def _with_effective_model_metadata(
+        self,
+        response: AgentResponse,
+        *,
+        original_model: str,
+        effective_model: str,
+        fallback_attempt: int,
+        fallback_reason: str | None,
+    ) -> AgentResponse:
+        """Stamp fallback bookkeeping onto a successful response."""
+        metadata: dict[str, object] = {
+            "effective_model": effective_model,
+            "fallback_model_used": effective_model != original_model,
+            "original_model": original_model,
+        }
+        if effective_model != original_model:
+            metadata["fallback_attempt"] = fallback_attempt
+            if fallback_reason:
+                metadata["fallback_reason"] = fallback_reason
+        return response.with_metadata(**metadata)
+
+    def _retryable_reason(self, error: RetryableError | None) -> str | None:
+        """Best-effort summary of why the previous model in the chain failed."""
+        if error is None:
+            return None
+        data = self._extract_error_payload(error.stdout, error.stderr)
+        if data is None:
+            return str(error)
+        status = data["error"].get("status")
+        if isinstance(status, str) and status:
+            return status
+        return str(error)
+
+    async def _execute(
+        self, request: PromptRequest, emit: LogEmitter, progress: ProgressEmitter
+    ) -> AgentResponse:
+        """Walk the fallback model chain on retryable failures.
+
+        For a single runner-level attempt, try each model in order. A
+        ``RetryableError`` from one model triggers an immediate switch to the
+        next; non-retryable errors propagate as before. The first success is
+        returned with fallback metadata stamped on the response.
+        """
+        primary_model = self._resolve_primary_model(request)
+        if primary_model is None:
+            return await self._execute_single_attempt(request, emit, progress)
+
+        chain = self._build_fallback_chain(primary_model)
+        last_retryable: RetryableError | None = None
+
+        for index, model in enumerate(chain, start=1):
+            attempt_request = request.model_copy(update={"model": model})
+            try:
+                response = await self._execute_single_attempt(attempt_request, emit, progress)
+                reason = self._retryable_reason(last_retryable) if last_retryable else None
+                return self._with_effective_model_metadata(
+                    response,
+                    original_model=primary_model,
+                    effective_model=model,
+                    fallback_attempt=index,
+                    fallback_reason=reason,
+                )
+            except RetryableError as error:
+                last_retryable = error
+                if index == len(chain):
+                    raise
+                await emit(
+                    "warning",
+                    f"Gemini retryable error on model {model}; "
+                    f"switching to fallback model {chain[index]}",
+                )
+        # Unreachable: loop always returns or raises — satisfies type checker
+        raise AssertionError("unreachable: fallback loop exited without result or exception")

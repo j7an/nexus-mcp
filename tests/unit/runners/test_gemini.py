@@ -21,6 +21,7 @@ from tests.fixtures import (
     GEMINI_NOISY_STDOUT,
     create_mock_process,
     gemini_error_json,
+    gemini_json,
     make_prompt_request,
 )
 
@@ -986,3 +987,81 @@ class TestGaxiosErrorExtraction:
 class TestGeminiRunnerClassConstants:
     def test_supported_modes_class_constant(self):
         assert GeminiRunner._SUPPORTED_MODES == ("default", "yolo")
+
+
+# ---------------------------------------------------------------------------
+# Fallback chain — success path
+# ---------------------------------------------------------------------------
+
+
+class TestGeminiRunnerFallbackSuccess:
+    """Retryable primary failure should switch models immediately."""
+
+    @patch.dict(
+        "os.environ",
+        {"NEXUS_GEMINI_FALLBACK_MODELS": ("gemini-3.1-pro-preview,gemini-3-flash-preview")},
+        clear=False,
+    )
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_retryable_primary_failure_switches_to_fallback_model(self, mock_exec):
+        mock_exec.side_effect = [
+            create_mock_process(
+                stdout=gemini_error_json(429, "No capacity", "RESOURCE_EXHAUSTED"),
+                returncode=1,
+            ),
+            create_mock_process(
+                stdout=gemini_json(
+                    "fallback output",
+                    {"models": {"gemini-3-flash-preview": 1}},
+                ),
+                returncode=0,
+            ),
+        ]
+        calls: list[tuple[str, str]] = []
+
+        async def collecting_emitter(level: str, message: str) -> None:
+            calls.append((level, message))
+
+        runner = make_gemini_runner()
+        response = await runner.run(
+            make_prompt_request(model="gemini-3.1-pro-preview", max_retries=1),
+            emitter=collecting_emitter,
+        )
+
+        models = [call.args[call.args.index("--model") + 1] for call in mock_exec.call_args_list]
+        assert models == ["gemini-3.1-pro-preview", "gemini-3-flash-preview"]
+        assert response.metadata["effective_model"] == "gemini-3-flash-preview"
+        assert response.metadata["fallback_model_used"] is True
+        assert response.metadata["original_model"] == "gemini-3.1-pro-preview"
+        assert response.metadata["fallback_attempt"] == 2
+        assert response.metadata["fallback_reason"] == "RESOURCE_EXHAUSTED"
+        assert any(
+            "switching to fallback model gemini-3-flash-preview" in msg
+            for level, msg in calls
+            if level == "warning"
+        )
+
+    @patch.dict(
+        "os.environ",
+        {
+            "NEXUS_GEMINI_FALLBACK_MODELS": (
+                "gemini-3.1-pro-preview,gemini-3-flash-preview,gemini-3-flash-preview"
+            )
+        },
+        clear=False,
+    )
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_fallback_chain_deduplicates_while_preserving_order(self, mock_exec):
+        mock_exec.side_effect = [
+            create_mock_process(
+                stdout=gemini_error_json(429, "No capacity", "RESOURCE_EXHAUSTED"),
+                returncode=1,
+            ),
+            create_mock_process(stdout=gemini_json("ok from fallback"), returncode=0),
+        ]
+
+        runner = make_gemini_runner()
+        await runner.run(make_prompt_request(model="gemini-3.1-pro-preview", max_retries=1))
+
+        models = [call.args[call.args.index("--model") + 1] for call in mock_exec.call_args_list]
+        assert models == ["gemini-3.1-pro-preview", "gemini-3-flash-preview"]
