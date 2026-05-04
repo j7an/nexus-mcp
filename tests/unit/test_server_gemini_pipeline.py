@@ -10,6 +10,7 @@ and runner tests (mock at subprocess) independently miss.
 """
 
 import json
+from unittest.mock import patch
 
 import pytest
 from fastmcp.exceptions import ToolError
@@ -145,6 +146,33 @@ class TestPromptGeminiPipeline:
             await prompt(cli="gemini", prompt="test", max_retries=3)
 
         assert mock_subprocess.call_count == 3
+
+    @patch.dict(
+        "os.environ",
+        {"NEXUS_GEMINI_FALLBACK_MODELS": "gemini-3-flash-preview"},
+        clear=False,
+    )
+    async def test_fallback_header_shows_effective_model_and_origin(self, mock_subprocess):
+        mock_subprocess.side_effect = [
+            create_mock_process(
+                stdout=_gemini_error_json(429, "Resource exhausted", "RESOURCE_EXHAUSTED"),
+                returncode=1,
+            ),
+            create_mock_process(stdout=_gemini_json("ok from fallback"), returncode=0),
+        ]
+
+        result = await prompt(
+            cli="gemini",
+            prompt="test",
+            model="gemini-3.1-pro-preview",
+            max_retries=1,
+        )
+
+        assert result.startswith(
+            "[cli: gemini | model: gemini-3-flash-preview "
+            "(fallback from gemini-3.1-pro-preview) | mode: default]\n\n"
+        )
+        assert strip_runner_header(result) == "ok from fallback"
 
 
 # ---------------------------------------------------------------------------
