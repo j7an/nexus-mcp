@@ -13,6 +13,7 @@ from nexus_mcp.config import (
     _read_global_env_defaults,
     _read_runner_env_defaults,
     get_agent_env,
+    get_agent_fallback_models,
     get_cli_detection_timeout,
     get_global_output_limit,
     get_global_timeout,
@@ -650,6 +651,31 @@ class TestGetRunnerModels:
     def test_empty_string_returns_empty(self, monkeypatch):
         monkeypatch.setenv("NEXUS_GEMINI_MODELS", "")
         assert get_runner_models("gemini") == ()
+
+
+class TestGetAgentFallbackModels:
+    """Test get_agent_fallback_models() env parsing."""
+
+    @patch.dict(
+        os.environ,
+        {
+            "NEXUS_GEMINI_FALLBACK_MODELS": (
+                " gemini-3-flash-preview ,Gemini-3-Flash-Preview,, gemini-2.5-flash "
+            )
+        },
+        clear=False,
+    )
+    def test_preserves_exact_strings_after_whitespace_strip(self):
+        assert get_agent_fallback_models("gemini") == (
+            "gemini-3-flash-preview",
+            "Gemini-3-Flash-Preview",
+            "gemini-2.5-flash",
+        )
+
+    @patch.dict(os.environ, {}, clear=False)
+    def test_returns_empty_tuple_when_env_var_missing(self):
+        os.environ.pop("NEXUS_GEMINI_FALLBACK_MODELS", None)
+        assert get_agent_fallback_models("gemini") == ()
 
 
 # ---------------------------------------------------------------------------

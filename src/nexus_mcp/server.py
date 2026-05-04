@@ -312,9 +312,12 @@ async def batch_prompt(
             if t.cli is None:
                 raise ToolError("cli is required on all tasks when no context available")
 
-    def _metadata_header(task: AgentTask) -> str:
+    def _metadata_header(task: AgentTask, metadata: dict[str, Any] | None = None) -> str:
         """Build a short metadata line so the AI knows which runner handled the task."""
-        model_part = task.model or "default"
+        metadata = metadata or {}
+        model_part = metadata.get("effective_model") or task.model or "default"
+        if metadata.get("fallback_model_used") is True and metadata.get("original_model"):
+            model_part = f"{model_part} (fallback from {metadata['original_model']})"
         return f"[cli: {task.cli} | model: {model_part} | mode: {task.execution_mode}]"
 
     labelled = assign_labels(tasks)
@@ -342,7 +345,7 @@ async def batch_prompt(
                 request = task.to_request()
                 runner = RunnerFactory.create(request.cli)
                 response = await runner.run(request, emitter=emitter, progress=progress)
-                header = _metadata_header(task)
+                header = _metadata_header(task, response.metadata)
                 output = f"{header}\n\n{response.output}"
                 return AgentTaskResult(label=task.label, output=output)  # type: ignore[arg-type]
             except Exception as e:

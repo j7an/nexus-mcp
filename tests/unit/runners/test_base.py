@@ -602,3 +602,38 @@ class TestRaiseStructuredError:
             )
         assert exc_info.value.stdout == "rate stdout"
         assert exc_info.value.stderr == "rate stderr"
+
+
+class TestAbstractRunnerSingleAttempt:
+    """Direct tests for the extracted single-attempt helper."""
+
+    @pytest.fixture
+    def runner(self) -> ConcreteRunner:
+        return ConcreteRunner()
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_execute_single_attempt_recovers_nonzero_exit(self, mock_exec, runner):
+        mock_exec.return_value = create_mock_process(
+            stdout="success output",
+            stderr="minor warning",
+            returncode=1,
+        )
+
+        response = await runner._execute_single_attempt(
+            make_prompt_request(prompt="test"),
+            AsyncMock(),
+            AsyncMock(),
+        )
+
+        assert response.output == "success output"
+        assert response.metadata["recovered_from_error"] is True
+        assert response.metadata["original_exit_code"] == 1
+
+    async def test_execute_delegates_to_single_attempt(self, runner):
+        expected = make_agent_response(output="ok")
+        runner._execute_single_attempt = AsyncMock(return_value=expected)  # type: ignore[method-assign]
+
+        response = await runner._execute(make_prompt_request(), AsyncMock(), AsyncMock())
+
+        assert response == expected
+        runner._execute_single_attempt.assert_awaited_once()

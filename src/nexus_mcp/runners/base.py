@@ -123,7 +123,18 @@ class AbstractRunner(RetryMixin, ABC):
     async def _execute(
         self, request: PromptRequest, emit: LogEmitter, progress: ProgressEmitter
     ) -> AgentResponse:
-        """Execute CLI agent once using Template Method pattern.
+        """Execute one runner-level attempt.
+
+        The default implementation is exactly one subprocess/parse/recovery pass.
+        Gemini overrides this method so one runner-level attempt can span multiple
+        models in a fallback chain.
+        """
+        return await self._execute_single_attempt(request, emit, progress)
+
+    async def _execute_single_attempt(
+        self, request: PromptRequest, emit: LogEmitter, progress: ProgressEmitter
+    ) -> AgentResponse:
+        """Execute exactly one subprocess attempt for the given request.
 
         Template steps:
         1. build_command(request) → command list
