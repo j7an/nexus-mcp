@@ -1,0 +1,21 @@
+name: Dependency Safety
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+  issues: write
+
+concurrency:
+  group: dependency-safety-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  safety:
+    uses: j7an/shared-workflows/.github/workflows/dependency-safety.yml@704d0b58e2093d238c7389756974efd2ce582d20 # v2.6.0
+    with:
+      auto_merge: true

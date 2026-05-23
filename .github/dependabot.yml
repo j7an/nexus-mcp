@@ -3,8 +3,9 @@ updates:
   # GitHub Actions (SHA-pinned, updated by Dependabot)
   - package-ecosystem: "github-actions"
     directory: "/"
+    rebase-strategy: "disabled"
     cooldown:
-      default-days: 7
+      default-days: 5
     schedule:
       interval: "weekly"
       day: "monday"
@@ -19,8 +20,9 @@ updates:
   # Python dependencies (uv ecosystem)
   - package-ecosystem: "uv"
     directory: "/"
+    rebase-strategy: "disabled"
     cooldown:
-      default-days: 7
+      default-days: 5
     schedule:
       interval: "weekly"
       day: "monday"
