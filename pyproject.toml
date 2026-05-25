@@ -151,3 +151,6 @@ exclude_also = [
     "class .*\\bProtocol\\):",
     "\\.\\.\\.",
 ]
+
+[tool.uv]
+exclude-newer = "1 week"
