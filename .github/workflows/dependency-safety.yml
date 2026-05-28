@@ -16,6 +16,6 @@ concurrency:
 
 jobs:
   safety:
-    uses: j7an/shared-workflows/.github/workflows/dependency-safety.yml@704d0b58e2093d238c7389756974efd2ce582d20 # v2.6.0
+    uses: j7an/shared-workflows/.github/workflows/dependency-safety.yml@522610f12d08a8fe358569d6c533c21af6ac8ec0 # v3.0.1
     with:
       auto_merge: true
