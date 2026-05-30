@@ -817,3 +817,48 @@ class TestOpenCodeTryExtractErrorBranches:
         with pytest.raises(SubprocessError) as exc_info:
             runner._try_extract_error(stdout, "", 1)
         assert "AuthError" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Structured errors on zero exit code (CLI exits 0 while emitting error event)
+# ---------------------------------------------------------------------------
+
+
+class TestOpenCodeRunnerErrorOnZeroExit:
+    """OpenCode CLI can emit a {"type":"error"} event yet exit 0.
+
+    The error must still surface as a structured error (and retryable codes
+    must still be classified as RetryableError), not a generic ParseError.
+    """
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_structured_error_surfaces_when_cli_exits_zero(self, mock_exec):
+        """Exit 0 + error NDJSON → SubprocessError 'OpenCode API error', not ParseError."""
+        mock_exec.return_value = create_mock_process(
+            stdout=opencode_error_json(
+                "APIError", "Forbidden: subscription required", status_code=403
+            ),
+            stderr="",
+            returncode=0,
+        )
+        runner = make_opencode_runner()
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(make_prompt_request(cli="opencode", prompt="x", max_retries=1))
+
+        assert not isinstance(exc_info.value, ParseError)
+        assert "OpenCode API error" in exc_info.value.args[0]
+        assert "APIError" in exc_info.value.args[0]
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_retryable_error_classified_when_cli_exits_zero(self, mock_exec):
+        """Exit 0 + 503 error NDJSON → RetryableError (retryability preserved on clean exit)."""
+        mock_exec.return_value = create_mock_process(
+            stdout=opencode_error_json("ServiceError", "unavailable", status_code=503),
+            stderr="",
+            returncode=0,
+        )
+        runner = make_opencode_runner()
+
+        with pytest.raises(RetryableError):
+            await runner.run(make_prompt_request(cli="opencode", prompt="x", max_retries=1))

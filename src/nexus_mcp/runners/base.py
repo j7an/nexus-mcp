@@ -194,7 +194,15 @@ class AbstractRunner(RetryMixin, ABC):
 
         # Step 4: Parse output
         await progress(4, 5, "Parsing output")
-        response = self.parse_output(result.stdout, result.stderr)
+        try:
+            response = self.parse_output(result.stdout, result.stderr)
+        except ParseError:
+            # A CLI may exit 0 while emitting a structured error event (e.g.
+            # OpenCode emits {"type":"error",...} on a 403/429 yet returns 0).
+            # Surface it as a structured error — raising RetryableError for
+            # retryable codes — before re-raising the generic ParseError.
+            self._try_extract_error(result.stdout, result.stderr, result.returncode, command)
+            raise
 
         # Step 5: Apply output limiting (stays sync — no signature change)
         await progress(5, 5, "Applying output limits")
