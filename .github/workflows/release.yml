@@ -95,7 +95,13 @@ jobs:
               --index-url https://test.pypi.org/simple/ \
               --extra-index-url https://pypi.org/simple/ \
               "nexus-mcp==${VERSION}" 2>/dev/null; then
-              python -c "import nexus_mcp; print('TestPyPI install OK')"
+              ACTUAL=$(nexus-mcp --version 2>&1)
+              echo "Installed version: ${ACTUAL}"
+              if ! echo "${ACTUAL}" | grep -qF "${VERSION}"; then
+                echo "ERROR: Expected '${VERSION}' in nexus-mcp --version output"
+                exit 1
+              fi
+              echo "TestPyPI install OK"
               exit 0
             fi
             echo "Attempt $i: not yet available, retrying..."
