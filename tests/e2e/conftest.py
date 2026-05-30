@@ -6,7 +6,7 @@ All tests in this directory call the server via FastMCP's in-process Client
 boundary, letting all layers above run for real:
 
     Client (JSON-RPC) → FastMCP server → tool functions → RunnerFactory
-        → GeminiRunner → build_command → [MOCK subprocess]
+        → runner → build_command → [MOCK subprocess]
 """
 
 import contextlib

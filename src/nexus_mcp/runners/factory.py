@@ -6,7 +6,7 @@ that blocking CLI detection (subprocess.run in __init__) only runs once per
 agent per process lifetime.
 
 Usage:
-    runner = RunnerFactory.create("gemini")
+    runner = RunnerFactory.create("codex")
     response = await runner.run(request)
 """
 
@@ -18,7 +18,6 @@ from nexus_mcp.exceptions import UnsupportedAgentError
 from nexus_mcp.runners.base import AbstractRunner
 from nexus_mcp.runners.claude import ClaudeRunner
 from nexus_mcp.runners.codex import CodexRunner
-from nexus_mcp.runners.gemini import GeminiRunner
 from nexus_mcp.runners.opencode import OpenCodeRunner
 from nexus_mcp.runners.opencode_server import OpenCodeServerRunner
 
@@ -38,7 +37,6 @@ class RunnerFactory:
     _REGISTRY: ClassVar[dict[str, type[AbstractRunner]]] = {
         ClaudeRunner.AGENT_NAME: ClaudeRunner,
         CodexRunner.AGENT_NAME: CodexRunner,
-        GeminiRunner.AGENT_NAME: GeminiRunner,
         OpenCodeRunner.AGENT_NAME: OpenCodeRunner,
         OpenCodeServerRunner.AGENT_NAME: OpenCodeServerRunner,
     }
@@ -54,7 +52,7 @@ class RunnerFactory:
         blocking subprocess calls in runner __init__ methods.
 
         Args:
-            name: CLI runner name (case-sensitive: "claude", "codex", "gemini", "opencode").
+            name: CLI runner name (case-sensitive: "claude", "codex", "opencode").
 
         Returns:
             AbstractRunner instance for the name.
@@ -63,7 +61,7 @@ class RunnerFactory:
             UnsupportedAgentError: If name is not recognized.
 
         Example:
-            runner = RunnerFactory.create("gemini")  # → GeminiRunner instance
+            runner = RunnerFactory.create("codex")  # → CodexRunner instance
         """
         cached = cls._instances.get(name)
         if cached is not None:
@@ -96,7 +94,7 @@ class RunnerFactory:
             Sorted list of CLI names that can be passed to create() or get_runner_class().
 
         Example:
-            RunnerFactory.list_clis()  # → ["claude", "codex", "gemini", "opencode"]
+            RunnerFactory.list_clis()  # → ["claude", "codex", "opencode", "opencode_server"]
         """
         return sorted(cls._REGISTRY)
 
@@ -114,7 +112,7 @@ class RunnerFactory:
             UnsupportedAgentError: If name is not in the registry.
 
         Example:
-            cls = RunnerFactory.get_runner_class("gemini")  # → GeminiRunner
+            cls = RunnerFactory.get_runner_class("codex")  # → CodexRunner
         """
         try:
             return cls._REGISTRY[name]

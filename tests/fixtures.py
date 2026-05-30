@@ -16,32 +16,6 @@ from nexus_mcp.types import AgentResponse, AgentTask, PromptRequest, SessionPref
 REPRESENTATIVE_CLI = "fake"
 
 
-def gemini_json(output: str, stats: dict | None = None) -> str:
-    """Build a Gemini CLI JSON response string."""
-    data: dict = {"response": output}
-    if stats is not None:
-        data["stats"] = stats
-    return json.dumps(data)
-
-
-def gemini_error_json(code: int, message: str, status: str) -> str:
-    """Build a Gemini API error JSON string."""
-    return json.dumps({"error": {"code": code, "message": message, "status": status}})
-
-
-GEMINI_JSON_RESPONSE = gemini_json("test output")
-GEMINI_JSON_WITH_STATS = gemini_json("Hello, world!", stats={"models": {"gemini-2.5-flash": 1}})
-
-# Realistic Node.js warning prefix emitted by Gemini CLI v0.29.0+ before JSON output.
-# Used to test parse_output() fallback for noisy stdout.
-GEMINI_NOISY_STDOUT = (
-    "(node:87799) [DEP0040] DeprecationWarning: The `punycode` module is deprecated."
-    " Please use a userland alternative instead.\n"
-    "(Use `node --trace-deprecation ...` to show where the warning was created)\n"
-    "Loaded cached credentials.\n"
-    '{"response": "test output"}'
-)
-
 CODEX_NDJSON_RESPONSE = "\n".join(
     [
         '{"type": "thread.started", "thread_id": "t1"}',
@@ -158,7 +132,7 @@ def strip_runner_header(output: str) -> str:
     """Strip the [cli: ...] metadata header prepended by the server.
 
     Server output format:
-        [cli: gemini | model: default | mode: default]
+        [cli: codex | model: default | mode: default]
 
         <actual runner output>
 
@@ -181,11 +155,11 @@ def strip_runner_header(output: str) -> str:
 
 @contextmanager
 def cli_detection_mocks():
-    """Context manager that mocks Gemini CLI detection for unit tests.
+    """Context manager that mocks CLI detection for unit tests.
 
     Patches detect_cli() and get_cli_version() so tests don't require
-    the real Gemini binary. Version "0.12.0" → supports_json=True,
-    keeping existing command assertions valid.
+    real CLI binaries. Version "1.0.0" keeps JSON support enabled for
+    runners whose detector capabilities are version-based.
 
     Usage in conftest.py::
 
@@ -196,12 +170,12 @@ def cli_detection_mocks():
     """
     with (
         patch("nexus_mcp.runners.base.detect_cli") as mock_detect,
-        patch("nexus_mcp.runners.base.get_cli_version", return_value="0.12.0"),
+        patch("nexus_mcp.runners.base.get_cli_version", return_value="1.0.0"),
         patch("nexus_mcp.resources.detect_cli") as mock_res_detect,
-        patch("nexus_mcp.resources.get_cli_version", return_value="0.12.0"),
+        patch("nexus_mcp.resources.get_cli_version", return_value="1.0.0"),
     ):
-        mock_detect.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
-        mock_res_detect.return_value = CLIInfo(found=True, path="/usr/bin/gemini")
+        mock_detect.return_value = CLIInfo(found=True, path="/usr/bin/fake")
+        mock_res_detect.return_value = CLIInfo(found=True, path="/usr/bin/fake")
         yield mock_detect
     RunnerFactory.clear_cache()
 
@@ -361,7 +335,7 @@ def make_session_preferences(**overrides: Any) -> SessionPreferences:
 
         prefs = make_session_preferences()                         # execution_mode=None, model=None
         prefs = make_session_preferences(execution_mode="yolo")    # override one field
-        prefs = make_session_preferences(execution_mode="yolo", model="gemini-2.5-flash")
+        prefs = make_session_preferences(execution_mode="yolo", model="gpt-5")
     """
     defaults: dict[str, Any] = {
         "execution_mode": None,

@@ -1,9 +1,8 @@
 # tests/integration/test_server_pipeline.py
 """Smoke tests for server-level behavior (no CLI binary required).
 
-The full prompt() pipeline with real CLI is covered by test_gemini_runner.py
-(TestGeminiHappyPath). Progress reporting is covered by unit tests in
-tests/unit/test_server_progress.py.
+Real CLI pipelines are covered by runner-specific integration tests.
+Progress reporting is covered by unit tests in tests/unit/test_server_progress.py.
 """
 
 import pytest
@@ -15,12 +14,13 @@ from nexus_mcp.server import prompt
 class TestServerInstructionsSmokeTest:
     """Smoke tests for server instructions (no CLI required)."""
 
-    def test_instructions_mention_gemini(self) -> None:
-        """Server instructions should always mention 'gemini' runner."""
+    def test_instructions_mention_supported_runners(self) -> None:
+        """Server instructions should mention supported production runners."""
         from nexus_mcp.server import mcp
 
         assert mcp.instructions is not None
-        assert "gemini" in mcp.instructions
+        for runner in ("claude", "codex", "opencode"):
+            assert runner in mcp.instructions
 
 
 class TestServerPromptValidation:

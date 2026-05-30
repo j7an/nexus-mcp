@@ -21,10 +21,10 @@ class TestDetectCLI:
     """Test detect_cli() finds CLI binaries via shutil.which."""
 
     def test_detect_cli_found(self):
-        with patch("nexus_mcp.cli_detector.shutil.which", return_value="/usr/bin/gemini"):
-            info = detect_cli("gemini")
+        with patch("nexus_mcp.cli_detector.shutil.which", return_value="/usr/bin/codex"):
+            info = detect_cli("codex")
         assert info.found is True
-        assert info.path == "/usr/bin/gemini"
+        assert info.path == "/usr/bin/codex"
 
     def test_detect_cli_not_found(self):
         with patch("nexus_mcp.cli_detector.shutil.which", return_value=None):
@@ -33,12 +33,19 @@ class TestDetectCLI:
         assert info.path is None
 
     def test_detect_cli_returns_cli_info(self):
-        with patch("nexus_mcp.cli_detector.shutil.which", return_value="/usr/bin/gemini"):
-            info = detect_cli("gemini")
+        with patch("nexus_mcp.cli_detector.shutil.which", return_value="/usr/bin/codex"):
+            info = detect_cli("codex")
         assert isinstance(info, CLIInfo)
         assert hasattr(info, "found")
         assert hasattr(info, "path")
         assert hasattr(info, "version")
+
+    def test_detect_opencode_server_without_binary(self):
+        info = detect_cli("opencode_server")
+
+        assert info.found is True
+        assert info.path == "http"
+        assert info.version is None
 
 
 class TestGetCLIVersion:
@@ -49,44 +56,44 @@ class TestGetCLIVersion:
         with patch("nexus_mcp.cli_detector.get_cli_detection_timeout", return_value=10):
             yield
 
-    def test_get_cli_version_gemini(self):
+    def test_get_cli_version_codex(self):
         with patch("nexus_mcp.cli_detector.subprocess.run") as mock_run:
-            mock_run.return_value = Mock(stdout="Gemini CLI v0.12.0", stderr="", returncode=0)
-            version = get_cli_version("gemini")
-        assert version == "0.12.0"
+            mock_run.return_value = Mock(stdout="codex-cli 0.107.0", stderr="", returncode=0)
+            version = get_cli_version("codex")
+        assert version == "0.107.0"
         mock_run.assert_called_once_with(
-            ["gemini", "--version"], capture_output=True, text=True, timeout=10
+            ["codex", "--version"], capture_output=True, text=True, timeout=10
         )
 
     def test_get_cli_version_returns_none_on_failure(self):
         with patch("nexus_mcp.cli_detector.subprocess.run", side_effect=FileNotFoundError):
-            version = get_cli_version("gemini")
+            version = get_cli_version("codex")
         assert version is None
 
     def test_get_cli_version_returns_none_on_empty_output(self):
         with patch("nexus_mcp.cli_detector.subprocess.run") as mock_run:
             mock_run.return_value = Mock(stdout="", stderr="", returncode=1)
-            version = get_cli_version("gemini")
+            version = get_cli_version("codex")
         assert version is None
 
     def test_get_cli_version_parses_nonzero_exit(self):
         with patch("nexus_mcp.cli_detector.subprocess.run") as mock_run:
-            mock_run.return_value = Mock(stdout="Gemini CLI v0.12.0", stderr="", returncode=1)
-            version = get_cli_version("gemini")
-        assert version == "0.12.0"
+            mock_run.return_value = Mock(stdout="codex-cli 0.107.0", stderr="", returncode=1)
+            version = get_cli_version("codex")
+        assert version == "0.107.0"
 
     def test_get_cli_version_parses_stderr_fallback(self):
         with patch("nexus_mcp.cli_detector.subprocess.run") as mock_run:
-            mock_run.return_value = Mock(stdout="", stderr="Gemini CLI v0.12.0", returncode=0)
-            version = get_cli_version("gemini")
-        assert version == "0.12.0"
+            mock_run.return_value = Mock(stdout="", stderr="codex-cli 0.107.0", returncode=0)
+            version = get_cli_version("codex")
+        assert version == "0.107.0"
 
     def test_get_cli_version_returns_none_on_timeout(self):
         with patch(
             "nexus_mcp.cli_detector.subprocess.run",
-            side_effect=subprocess.TimeoutExpired("gemini", 10),
+            side_effect=subprocess.TimeoutExpired("codex", 10),
         ):
-            version = get_cli_version("gemini")
+            version = get_cli_version("codex")
         assert version is None
 
     def test_get_cli_version_logs_warning_on_oserror(self, caplog):
@@ -95,12 +102,12 @@ class TestGetCLIVersion:
             caplog.at_level(logging.WARNING, logger="nexus_mcp.cli_detector"),
             patch(
                 "nexus_mcp.cli_detector.subprocess.run",
-                side_effect=FileNotFoundError("gemini"),
+                side_effect=FileNotFoundError("codex"),
             ),
         ):
-            version = get_cli_version("gemini")
+            version = get_cli_version("codex")
         assert version is None
-        assert any("gemini" in r.message for r in caplog.records)
+        assert any("codex" in r.message for r in caplog.records)
 
     def test_get_cli_version_logs_warning_on_timeout(self, caplog):
         """TimeoutExpired during version detection must emit a warning."""
@@ -108,12 +115,19 @@ class TestGetCLIVersion:
             caplog.at_level(logging.WARNING, logger="nexus_mcp.cli_detector"),
             patch(
                 "nexus_mcp.cli_detector.subprocess.run",
-                side_effect=subprocess.TimeoutExpired("gemini", 10),
+                side_effect=subprocess.TimeoutExpired("codex", 10),
             ),
         ):
-            version = get_cli_version("gemini")
+            version = get_cli_version("codex")
         assert version is None
-        assert any("gemini" in r.message for r in caplog.records)
+        assert any("codex" in r.message for r in caplog.records)
+
+    def test_get_cli_version_opencode_server_returns_none_without_subprocess(self):
+        with patch("nexus_mcp.cli_detector.subprocess.run") as mock_run:
+            version = get_cli_version("opencode_server")
+
+        assert version is None
+        mock_run.assert_not_called()
 
     def test_get_cli_version_unknown_cli_returns_none(self):
         """Unknown CLI name: subprocess succeeds but parse_version returns None.
@@ -130,12 +144,6 @@ class TestGetCLIVersion:
 class TestParseVersion:
     """Test parse_version() extracts semver from CLI output strings."""
 
-    def test_parse_version_gemini(self):
-        assert parse_version("Gemini CLI v0.6.0-preview.4", cli="gemini") == "0.6.0-preview.4"
-
-    def test_parse_version_gemini_stable(self):
-        assert parse_version("Gemini CLI v0.12.0", cli="gemini") == "0.12.0"
-
     def test_parse_version_codex(self):
         assert parse_version("codex-cli 0.107.0", cli="codex") == "0.107.0"
 
@@ -146,7 +154,7 @@ class TestParseVersion:
         assert parse_version("Claude Code CLI v2.5.0", cli="claude") == "2.5.0"
 
     def test_parse_version_invalid_output(self):
-        assert parse_version("unknown format", cli="gemini") is None
+        assert parse_version("unknown format", cli="codex") is None
 
     def test_parse_version_opencode(self):
         assert parse_version("opencode v0.1.0", cli="opencode") == "0.1.0"
@@ -161,21 +169,6 @@ class TestParseVersion:
 class TestSupportsJsonOutput:
     """Test version-based JSON output support checking."""
 
-    def test_gemini_supports_json_modern(self):
-        assert supports_json_output("gemini", "0.6.0") is True
-        assert supports_json_output("gemini", "0.6.1") is True
-        assert supports_json_output("gemini", "0.12.0") is True
-
-    def test_gemini_preview_supports_json(self):
-        """Pre-release of v0.6.0+ should still count as supporting JSON."""
-        assert supports_json_output("gemini", "0.6.0-preview.4") is True
-        assert supports_json_output("gemini", "0.12.0-rc.1") is True
-
-    def test_gemini_old_no_json(self):
-        assert supports_json_output("gemini", "0.5.0") is False
-        assert supports_json_output("gemini", "0.5.9") is False
-        assert supports_json_output("gemini", "0.5.9-preview.1") is False
-
     def test_codex_always_supports_json(self):
         assert supports_json_output("codex", "1.0.0") is True
 
@@ -188,37 +181,24 @@ class TestSupportsJsonOutput:
     def test_unknown_cli_no_json(self):
         assert supports_json_output("unknown", "1.0.0") is False
 
-    def test_gemini_invalid_version_string_returns_false(self):
-        """Completely unparseable version after pre-release stripping returns False.
-
-        'not.a.version'.split('-')[0] → 'not.a.version', which raises
-        pkg_version.InvalidVersion since release segments must be integers.
-        """
-        assert supports_json_output("gemini", "not.a.version") is False
-
 
 class TestGetCLICapabilities:
     """Test get_cli_capabilities() aggregates feature support."""
+
+    def test_codex_capabilities(self):
+        caps = get_cli_capabilities("codex", "0.107.0")
+        assert caps.found is True
+        assert caps.supports_json is True
+
+    def test_claude_capabilities(self):
+        caps = get_cli_capabilities("claude", "2.5.0")
+        assert caps.found is True
+        assert caps.supports_json is True
 
     def test_opencode_capabilities(self):
         caps = get_cli_capabilities("opencode", "0.1.0")
         assert caps.found is True
         assert caps.supports_json is True
-
-    def test_gemini_modern(self):
-        caps = get_cli_capabilities("gemini", "0.12.0")
-        assert caps.found is True
-        assert caps.supports_json is True
-
-    def test_gemini_json_only(self):
-        """Gemini v0.6.0 supports JSON but is the minimum version."""
-        caps = get_cli_capabilities("gemini", "0.6.0")
-        assert caps.supports_json is True
-
-    def test_gemini_old(self):
-        caps = get_cli_capabilities("gemini", "0.5.0")
-        assert caps.found is True
-        assert caps.supports_json is False
 
     def test_cli_not_found(self):
         caps = get_cli_capabilities("nonexistent", None)

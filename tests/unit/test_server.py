@@ -575,7 +575,7 @@ class TestServerInstructions:
     def test_instructions_mention_all_runner_names(self):
         """Instructions contain all registered runner names."""
         result = build_server_instructions()
-        for name in ("claude", "codex", "gemini", "opencode"):
+        for name in ("claude", "codex", "opencode", "opencode_server"):
             assert name in result
 
     def test_instructions_include_availability_status(self):
@@ -646,7 +646,6 @@ class TestDynamicCliEnum:
         assert set(cli_schema["enum"]) == {
             "claude",
             "codex",
-            "gemini",
             "opencode",
             "opencode_server",
         }
@@ -667,7 +666,6 @@ class TestDynamicCliEnum:
         assert set(cli_field["enum"]) == {
             "claude",
             "codex",
-            "gemini",
             "opencode",
             "opencode_server",
         }
