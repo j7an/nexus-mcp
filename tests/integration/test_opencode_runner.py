@@ -19,7 +19,9 @@ class TestOpenCodeRunnerIntegration:
 
     async def test_run_returns_valid_response(self, opencode_runner: OpenCodeRunner) -> None:
         """run() with real API returns AgentResponse with output and metadata."""
-        request = make_prompt_request(cli="opencode", prompt=PING_PROMPT)
+        request = make_prompt_request(
+            cli="opencode", prompt=PING_PROMPT, model="ollama-cloud/gpt-oss:20b"
+        )
         response = await opencode_runner.run(request)
 
         assert isinstance(response, AgentResponse)
