@@ -15,7 +15,12 @@ from nexus_mcp.preferences import (
 )
 from nexus_mcp.server import batch_prompt, prompt
 from nexus_mcp.types import AgentTask, SessionPreferences
-from tests.fixtures import make_agent_response, make_session_preferences, strip_runner_header
+from tests.fixtures import (
+    REPRESENTATIVE_CLI,
+    make_agent_response,
+    make_session_preferences,
+    strip_runner_header,
+)
 
 _LOAD = "nexus_mcp.preferences.load_preferences"
 _SAVE = "nexus_mcp.preferences.save_preferences"
@@ -67,10 +72,10 @@ class TestGetSessionPreferences:
 
     @patch(_LOAD)
     async def test_reconstructs_from_dict(self, mock_load, ctx):
-        mock_load.return_value = {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
+        mock_load.return_value = {"execution_mode": "yolo", "model": "test-model"}
         prefs = await _get_session_preferences(ctx)
         assert prefs.execution_mode == "yolo"
-        assert prefs.model == "gemini-2.5-flash"
+        assert prefs.model == "test-model"
 
     @patch(_LOAD)
     async def test_raises_tool_error_for_corrupted_state(self, mock_load, ctx):
@@ -87,104 +92,104 @@ class TestGetSessionPreferences:
 
 class TestApplyPreferences:
     def test_fills_none_execution_mode_from_prefs(self):
-        task = AgentTask(cli="gemini", prompt="hi", execution_mode=None)
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi", execution_mode=None)
         prefs = make_session_preferences(execution_mode="yolo")
         result = _apply_preferences(task, prefs)
         assert result.execution_mode == "yolo"
 
     def test_fills_none_execution_mode_with_default_when_prefs_none(self):
-        task = AgentTask(cli="gemini", prompt="hi", execution_mode=None)
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi", execution_mode=None)
         prefs = make_session_preferences()  # both None
         result = _apply_preferences(task, prefs)
         assert result.execution_mode == "default"
 
     def test_does_not_override_explicit_execution_mode(self):
-        task = AgentTask(cli="gemini", prompt="hi", execution_mode="yolo")
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi", execution_mode="yolo")
         prefs = make_session_preferences(execution_mode="default")
         result = _apply_preferences(task, prefs)
         assert result.execution_mode == "yolo"
 
     def test_fills_none_model_from_prefs(self):
-        task = AgentTask(cli="gemini", prompt="hi", model=None)
-        prefs = make_session_preferences(model="gemini-2.5-flash")
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi", model=None)
+        prefs = make_session_preferences(model="test-model")
         result = _apply_preferences(task, prefs)
-        assert result.model == "gemini-2.5-flash"
+        assert result.model == "test-model"
 
     def test_does_not_override_explicit_model(self):
-        task = AgentTask(cli="gemini", prompt="hi", model="gemini-1.5-pro")
-        prefs = make_session_preferences(model="gemini-2.5-flash")
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi", model="alternate-model")
+        prefs = make_session_preferences(model="test-model")
         result = _apply_preferences(task, prefs)
-        assert result.model == "gemini-1.5-pro"
+        assert result.model == "alternate-model"
 
     def test_does_not_fill_model_when_prefs_model_none(self):
-        task = AgentTask(cli="gemini", prompt="hi", model=None)
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi", model=None)
         prefs = make_session_preferences()  # model=None
         result = _apply_preferences(task, prefs)
         assert result.model is None
 
     def test_returns_equivalent_task_when_no_updates(self):
-        task = AgentTask(cli="gemini", prompt="hi", execution_mode="default")
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi", execution_mode="default")
         prefs = make_session_preferences()
         result = _apply_preferences(task, prefs)
         assert result == task
 
     def test_fills_none_max_retries_from_prefs(self):
-        task = AgentTask(cli="gemini", prompt="hi")
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi")
         prefs = make_session_preferences(max_retries=5)
         result = _apply_preferences(task, prefs)
         assert result.max_retries == 5
 
     def test_does_not_override_explicit_max_retries(self):
-        task = AgentTask(cli="gemini", prompt="hi", max_retries=2)
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi", max_retries=2)
         prefs = make_session_preferences(max_retries=5)
         result = _apply_preferences(task, prefs)
         assert result.max_retries == 2
 
     def test_fills_none_output_limit_from_prefs(self):
-        task = AgentTask(cli="gemini", prompt="hi")
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi")
         prefs = make_session_preferences(output_limit=4096)
         result = _apply_preferences(task, prefs)
         assert result.output_limit == 4096
 
     def test_does_not_override_explicit_output_limit(self):
-        task = AgentTask(cli="gemini", prompt="hi", output_limit=1024)
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi", output_limit=1024)
         prefs = make_session_preferences(output_limit=4096)
         result = _apply_preferences(task, prefs)
         assert result.output_limit == 1024
 
     def test_fills_none_timeout_from_prefs(self):
-        task = AgentTask(cli="gemini", prompt="hi")
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi")
         prefs = make_session_preferences(timeout=30)
         result = _apply_preferences(task, prefs)
         assert result.timeout == 30
 
     def test_does_not_override_explicit_timeout(self):
-        task = AgentTask(cli="gemini", prompt="hi", timeout=10)
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi", timeout=10)
         prefs = make_session_preferences(timeout=30)
         result = _apply_preferences(task, prefs)
         assert result.timeout == 10
 
     def test_fills_none_retry_base_delay_from_prefs(self):
-        task = AgentTask(cli="gemini", prompt="hi")
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi")
         prefs = make_session_preferences(retry_base_delay=1.5)
         result = _apply_preferences(task, prefs)
         assert result.retry_base_delay == 1.5
 
     def test_does_not_override_explicit_retry_base_delay(self):
-        task = AgentTask(cli="gemini", prompt="hi", retry_base_delay=0.5)
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi", retry_base_delay=0.5)
         prefs = make_session_preferences(retry_base_delay=1.5)
         result = _apply_preferences(task, prefs)
         assert result.retry_base_delay == 0.5
 
     def test_zero_retry_base_delay_not_overridden(self):
         """0.0 is a valid delay — must not be treated as falsy and replaced by prefs."""
-        task = AgentTask(cli="gemini", prompt="hi", retry_base_delay=0.0)
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi", retry_base_delay=0.0)
         prefs = make_session_preferences(retry_base_delay=2.0)
         result = _apply_preferences(task, prefs)
         assert result.retry_base_delay == 0.0
 
     def test_fills_none_retry_max_delay_from_prefs(self):
-        task = AgentTask(cli="gemini", prompt="hi")
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="hi")
         prefs = make_session_preferences(retry_max_delay=60.0)
         result = _apply_preferences(task, prefs)
         assert result.retry_max_delay == 60.0
@@ -212,17 +217,17 @@ class TestSetPreferences:
     @patch(_LOAD)
     async def test_sets_model(self, mock_load, mock_save, ctx):
         mock_load.return_value = None
-        await set_preferences(model="gemini-2.5-flash", ctx=ctx)
-        mock_save.assert_awaited_once_with(ctx, {**_ALL_NONE_PREFS, "model": "gemini-2.5-flash"})
+        await set_preferences(model="test-model", ctx=ctx)
+        mock_save.assert_awaited_once_with(ctx, {**_ALL_NONE_PREFS, "model": "test-model"})
 
     @patch(_SAVE)
     @patch(_LOAD)
     async def test_sets_both(self, mock_load, mock_save, ctx):
         mock_load.return_value = None
-        await set_preferences(execution_mode="yolo", model="gemini-2.5-flash", ctx=ctx)
+        await set_preferences(execution_mode="yolo", model="test-model", ctx=ctx)
         mock_save.assert_awaited_once_with(
             ctx,
-            {**_ALL_NONE_PREFS, "execution_mode": "yolo", "model": "gemini-2.5-flash"},
+            {**_ALL_NONE_PREFS, "execution_mode": "yolo", "model": "test-model"},
         )
 
     @patch(_SAVE)
@@ -230,21 +235,21 @@ class TestSetPreferences:
     async def test_merges_with_existing_prefs(self, mock_load, mock_save, ctx):
         """Setting only model preserves existing execution_mode."""
         mock_load.return_value = {"execution_mode": "yolo", "model": None}
-        await set_preferences(model="gemini-2.5-flash", ctx=ctx)
+        await set_preferences(model="test-model", ctx=ctx)
         mock_save.assert_awaited_once_with(
             ctx,
-            {**_ALL_NONE_PREFS, "execution_mode": "yolo", "model": "gemini-2.5-flash"},
+            {**_ALL_NONE_PREFS, "execution_mode": "yolo", "model": "test-model"},
         )
 
     @patch(_SAVE)
     @patch(_LOAD)
     async def test_all_none_params_preserves_existing(self, mock_load, mock_save, ctx):
         """set_preferences() with no args keeps existing state intact."""
-        mock_load.return_value = {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
+        mock_load.return_value = {"execution_mode": "yolo", "model": "test-model"}
         await set_preferences(ctx=ctx)
         mock_save.assert_awaited_once_with(
             ctx,
-            {**_ALL_NONE_PREFS, "execution_mode": "yolo", "model": "gemini-2.5-flash"},
+            {**_ALL_NONE_PREFS, "execution_mode": "yolo", "model": "test-model"},
         )
 
     @patch(_SAVE)
@@ -265,15 +270,15 @@ class TestSetPreferences:
     @patch(_LOAD)
     async def test_clear_execution_mode_resets_to_none(self, mock_load, mock_save, ctx):
         """clear_execution_mode=True resets execution_mode while keeping model."""
-        mock_load.return_value = {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
+        mock_load.return_value = {"execution_mode": "yolo", "model": "test-model"}
         await set_preferences(clear_execution_mode=True, ctx=ctx)
-        mock_save.assert_awaited_once_with(ctx, {**_ALL_NONE_PREFS, "model": "gemini-2.5-flash"})
+        mock_save.assert_awaited_once_with(ctx, {**_ALL_NONE_PREFS, "model": "test-model"})
 
     @patch(_SAVE)
     @patch(_LOAD)
     async def test_clear_model_resets_to_none(self, mock_load, mock_save, ctx):
         """clear_model=True resets model while keeping execution_mode."""
-        mock_load.return_value = {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
+        mock_load.return_value = {"execution_mode": "yolo", "model": "test-model"}
         await set_preferences(clear_model=True, ctx=ctx)
         mock_save.assert_awaited_once_with(ctx, {**_ALL_NONE_PREFS, "execution_mode": "yolo"})
 
@@ -404,12 +409,12 @@ class TestGetPreferences:
 
     @patch(_LOAD)
     async def test_returns_prefs_dict(self, mock_load, ctx):
-        mock_load.return_value = {"execution_mode": "yolo", "model": "gemini-2.5-flash"}
+        mock_load.return_value = {"execution_mode": "yolo", "model": "test-model"}
         result = await get_preferences(ctx=ctx)
         assert result == {
             **_ALL_NONE_PREFS,
             "execution_mode": "yolo",
-            "model": "gemini-2.5-flash",
+            "model": "test-model",
         }
 
     @patch(_LOAD)
@@ -462,7 +467,7 @@ class TestPromptPreferenceFallback:
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {"execution_mode": "yolo", "model": None}
 
-        await prompt(cli="gemini", prompt="test", ctx=ctx)
+        await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.execution_mode == "yolo"
@@ -474,7 +479,7 @@ class TestPromptPreferenceFallback:
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {"execution_mode": "yolo", "model": None}
 
-        await prompt(cli="gemini", prompt="test", execution_mode="default", ctx=ctx)
+        await prompt(cli=REPRESENTATIVE_CLI, prompt="test", execution_mode="default", ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.execution_mode == "default"
@@ -484,31 +489,31 @@ class TestPromptPreferenceFallback:
     async def test_session_model_used_when_no_explicit_model(self, mock_load, mock_factory, ctx):
         """Persistent model is used when prompt() called without explicit model."""
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
-        mock_load.return_value = {"execution_mode": None, "model": "gemini-2.5-flash"}
+        mock_load.return_value = {"execution_mode": None, "model": "test-model"}
 
-        await prompt(cli="gemini", prompt="test", ctx=ctx)
+        await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
-        assert call_args.model == "gemini-2.5-flash"
+        assert call_args.model == "test-model"
 
     @patch("nexus_mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_explicit_model_overrides_session(self, mock_load, mock_factory, ctx):
         """Explicit model overrides persistent model."""
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
-        mock_load.return_value = {"execution_mode": None, "model": "gemini-2.5-flash"}
+        mock_load.return_value = {"execution_mode": None, "model": "test-model"}
 
-        await prompt(cli="gemini", prompt="test", model="gemini-1.5-pro", ctx=ctx)
+        await prompt(cli=REPRESENTATIVE_CLI, prompt="test", model="alternate-model", ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
-        assert call_args.model == "gemini-1.5-pro"
+        assert call_args.model == "alternate-model"
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_no_session_no_explicit_uses_defaults(self, mock_factory):
         """Without persistent prefs or explicit params, execution_mode='default' and model=None."""
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
 
-        await prompt(cli="gemini", prompt="test")  # ctx=None → no prefs
+        await prompt(cli=REPRESENTATIVE_CLI, prompt="test")  # ctx=None → no prefs
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.execution_mode == "default"
@@ -518,7 +523,7 @@ class TestPromptPreferenceFallback:
     async def test_ctx_none_does_not_crash(self, mock_factory):
         """prompt() with ctx=None falls back to defaults without raising."""
         _setup_mock_runner(mock_factory, output="ok")
-        result = await prompt(cli="gemini", prompt="test", ctx=None)
+        result = await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=None)
         assert strip_runner_header(result) == "ok"
 
     @patch("nexus_mcp.server.RunnerFactory")
@@ -534,7 +539,7 @@ class TestPromptPreferenceFallback:
             "timeout": None,
         }
 
-        await prompt(cli="gemini", prompt="test", ctx=ctx)
+        await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.max_retries == 5
@@ -552,7 +557,7 @@ class TestPromptPreferenceFallback:
             "timeout": None,
         }
 
-        await prompt(cli="gemini", prompt="test", max_retries=2, ctx=ctx)
+        await prompt(cli=REPRESENTATIVE_CLI, prompt="test", max_retries=2, ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.max_retries == 2
@@ -570,7 +575,7 @@ class TestPromptPreferenceFallback:
             "timeout": None,
         }
 
-        await prompt(cli="gemini", prompt="test", ctx=ctx)
+        await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.output_limit == 4096
@@ -588,7 +593,7 @@ class TestPromptPreferenceFallback:
             "timeout": 30,
         }
 
-        await prompt(cli="gemini", prompt="test", ctx=ctx)
+        await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.timeout == 30
@@ -602,7 +607,7 @@ class TestPromptPreferenceFallback:
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {**_ALL_NONE_PREFS, "retry_base_delay": 1.5}
 
-        await prompt(cli="gemini", prompt="test", ctx=ctx)
+        await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.retry_base_delay == 1.5
@@ -624,7 +629,7 @@ class TestPromptPreferenceFallback:
             "retry_max_delay": 120.0,
         }
 
-        await prompt(cli="gemini", prompt="test", ctx=ctx)
+        await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.retry_max_delay == 120.0
@@ -643,7 +648,7 @@ class TestBatchPromptPreferenceFallback:
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {"execution_mode": "yolo", "model": None}
 
-        tasks = [AgentTask(cli="gemini", prompt="test", execution_mode=None)]
+        tasks = [AgentTask(cli=REPRESENTATIVE_CLI, prompt="test", execution_mode=None)]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
@@ -656,7 +661,7 @@ class TestBatchPromptPreferenceFallback:
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {"execution_mode": "yolo", "model": None}
 
-        tasks = [AgentTask(cli="gemini", prompt="test", execution_mode="default")]
+        tasks = [AgentTask(cli=REPRESENTATIVE_CLI, prompt="test", execution_mode="default")]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
@@ -667,20 +672,20 @@ class TestBatchPromptPreferenceFallback:
     async def test_session_model_applied_to_tasks(self, mock_load, mock_factory, ctx):
         """Persistent model is applied to tasks with model=None."""
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
-        mock_load.return_value = {"execution_mode": None, "model": "gemini-2.5-flash"}
+        mock_load.return_value = {"execution_mode": None, "model": "test-model"}
 
-        tasks = [AgentTask(cli="gemini", prompt="test")]
+        tasks = [AgentTask(cli=REPRESENTATIVE_CLI, prompt="test")]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
-        assert call_args.model == "gemini-2.5-flash"
+        assert call_args.model == "test-model"
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_no_session_resolves_none_to_default(self, mock_factory):
         """Without persistent prefs, task with execution_mode=None resolves to 'default'."""
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
 
-        tasks = [AgentTask(cli="gemini", prompt="test", execution_mode=None)]
+        tasks = [AgentTask(cli=REPRESENTATIVE_CLI, prompt="test", execution_mode=None)]
         await batch_prompt(tasks=tasks)  # ctx=None
 
         call_args = mock_runner.run.call_args.args[0]
@@ -699,7 +704,7 @@ class TestBatchPromptPreferenceFallback:
             "timeout": None,
         }
 
-        tasks = [AgentTask(cli="gemini", prompt="test")]
+        tasks = [AgentTask(cli=REPRESENTATIVE_CLI, prompt="test")]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
@@ -718,7 +723,7 @@ class TestBatchPromptPreferenceFallback:
             "timeout": None,
         }
 
-        tasks = [AgentTask(cli="gemini", prompt="test")]
+        tasks = [AgentTask(cli=REPRESENTATIVE_CLI, prompt="test")]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
@@ -737,7 +742,7 @@ class TestBatchPromptPreferenceFallback:
             "timeout": 30,
         }
 
-        tasks = [AgentTask(cli="gemini", prompt="test")]
+        tasks = [AgentTask(cli=REPRESENTATIVE_CLI, prompt="test")]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
         call_args = mock_runner.run.call_args.args[0]
@@ -758,8 +763,8 @@ class TestBatchPromptPreferenceFallback:
         mock_load.return_value = {"execution_mode": "yolo", "model": None}
 
         tasks = [
-            AgentTask(cli="gemini", prompt="t1", execution_mode=None),
-            AgentTask(cli="gemini", prompt="t2", execution_mode="default"),
+            AgentTask(cli=REPRESENTATIVE_CLI, prompt="t1", execution_mode=None),
+            AgentTask(cli=REPRESENTATIVE_CLI, prompt="t2", execution_mode="default"),
         ]
         await batch_prompt(tasks=tasks, ctx=ctx)
 

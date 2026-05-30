@@ -65,7 +65,7 @@ class TestReadRunnersResource:
         contents = await mcp_client.read_resource("nexus://runners")
         data = json.loads(contents[0].text)
         names = {r["name"] for r in data["runners"]}
-        assert names == {"claude", "codex", "gemini", "opencode", "opencode_server"}
+        assert names == {"claude", "codex", "opencode", "opencode_server"}
 
     async def test_each_runner_has_required_fields(self, mcp_client):
         contents = await mcp_client.read_resource("nexus://runners")
@@ -100,9 +100,9 @@ class TestReadRunnerTemplate:
     """Verify nexus://runners/{cli} template resource via read_resource()."""
 
     async def test_template_resolves_for_known_cli(self, mcp_client):
-        contents = await mcp_client.read_resource("nexus://runners/gemini")
+        contents = await mcp_client.read_resource("nexus://runners/codex")
         data = json.loads(contents[0].text)
-        assert data["name"] == "gemini"
+        assert data["name"] == "codex"
         assert isinstance(data["supported_modes"], list)
 
     async def test_template_returns_error_for_unknown_cli(self, mcp_client):

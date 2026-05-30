@@ -15,8 +15,6 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-from packaging import version as pkg_version
-
 from nexus_mcp.config import get_cli_detection_timeout
 
 logger = logging.getLogger(__name__)
@@ -72,7 +70,6 @@ def get_cli_version(cli_name: str) -> str | None:
 def parse_version(version_output: str, cli: str) -> str | None:
     """Parse version string from CLI --version output."""
     patterns: dict[str, str] = {
-        "gemini": r"v?(\d+\.\d+\.\d+(?:-[\w.]+)?)",
         "codex": r"(?:codex[-\w]*|version)\s+(\d+\.\d+\.\d+)",
         "claude": r"v?(\d+\.\d+\.\d+)",
         "opencode": r"v?(\d+\.\d+\.\d+)",
@@ -87,15 +84,6 @@ def parse_version(version_output: str, cli: str) -> str | None:
 def supports_json_output(cli: str, version: str) -> bool:
     """Check if CLI version supports JSON output."""
     match cli:
-        case "gemini":
-            try:
-                # Strip pre-release suffix: "0.6.0-preview.4" → "0.6.0"
-                base_version = version.split("-")[0]
-                v = pkg_version.parse(base_version)
-                required = pkg_version.parse("0.6.0")
-                return v >= required
-            except pkg_version.InvalidVersion:
-                return False
         case "codex" | "claude" | "opencode":
             return True
         case _:

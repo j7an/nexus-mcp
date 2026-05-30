@@ -106,7 +106,7 @@ async def set_preferences(
     Args:
         execution_mode: Default execution mode ('default' or 'yolo').
             None retains the current value (use clear_execution_mode=True to reset).
-        model: Default model name (e.g. 'gemini-2.5-flash').
+        model: Default model name (e.g. 'gpt-5.2').
             None retains the current value (use clear_model=True to reset).
         max_retries: Default max retry attempts for transient errors.
             None retains the current value (use clear_max_retries=True to reset).

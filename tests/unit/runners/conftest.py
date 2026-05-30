@@ -13,7 +13,7 @@ import pytest
 def _auto_mock_cli_detection(mock_cli_detection):
     """Auto-activate CLI detection mocking for all runner unit tests.
 
-    GeminiRunner/CodexRunner.__init__ calls detect_cli() and get_cli_version().
+    Runner __init__ calls detect_cli() and get_cli_version().
     Mocking both prevents tests from requiring actual CLI binaries installed.
     RunnerFactory cache is cleared on teardown (via cli_detection_mocks).
     """

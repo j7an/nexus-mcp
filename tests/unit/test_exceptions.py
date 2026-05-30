@@ -9,6 +9,7 @@ from nexus_mcp.exceptions import (
     SubprocessTimeoutError,
     UnsupportedAgentError,
 )
+from tests.fixtures import REPRESENTATIVE_CLI
 
 
 def test_exception_hierarchy():
@@ -32,10 +33,10 @@ def test_subprocess_error_stores_command_and_returncode():
     err = SubprocessError(
         "Command failed",
         stderr="error output",
-        command=["gemini", "-p", "test"],
+        command=[REPRESENTATIVE_CLI, "-p", "test"],
         returncode=1,
     )
-    assert err.command == ["gemini", "-p", "test"]
+    assert err.command == [REPRESENTATIVE_CLI, "-p", "test"]
     assert err.returncode == 1
     assert err.stderr == "error output"
 
@@ -230,12 +231,12 @@ def test_retryable_error_stores_subprocess_fields():
     err = RetryableError(
         "Rate limited",
         stderr="quota exceeded",
-        command=["gemini", "-p", "test"],
+        command=[REPRESENTATIVE_CLI, "-p", "test"],
         returncode=429,
         stdout='{"error": {"code": 429}}',
     )
     assert err.stderr == "quota exceeded"
-    assert err.command == ["gemini", "-p", "test"]
+    assert err.command == [REPRESENTATIVE_CLI, "-p", "test"]
     assert err.returncode == 429
     assert err.stdout == '{"error": {"code": 429}}'
 
@@ -273,14 +274,14 @@ def test_retryable_error_caught_by_subprocess_error_handler():
 
 def test_cli_not_found_error_stores_cli_name():
     """CLINotFoundError.cli_name stores the CLI name passed to constructor."""
-    err = CLINotFoundError("gemini")
-    assert err.cli_name == "gemini"
+    err = CLINotFoundError(REPRESENTATIVE_CLI)
+    assert err.cli_name == REPRESENTATIVE_CLI
 
 
 def test_cli_not_found_error_message():
-    """str(CLINotFoundError) == 'CLI not found in PATH: gemini'."""
-    err = CLINotFoundError("gemini")
-    assert str(err) == "CLI not found in PATH: gemini"
+    """str(CLINotFoundError) includes the CLI name passed to constructor."""
+    err = CLINotFoundError(REPRESENTATIVE_CLI)
+    assert str(err) == f"CLI not found in PATH: {REPRESENTATIVE_CLI}"
 
 
 def test_cli_not_found_error_hierarchy():

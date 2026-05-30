@@ -11,18 +11,19 @@ from nexus_mcp.types import (
     SessionPreferences,
     SubprocessResult,
 )
+from tests.fixtures import REPRESENTATIVE_CLI
 
 
 def test_prompt_request_valid():
-    req = PromptRequest(cli="gemini", prompt="Hello")
-    assert req.cli == "gemini"
+    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello")
+    assert req.cli == REPRESENTATIVE_CLI
     assert req.prompt == "Hello"
     assert req.context == {}
 
 
 def test_prompt_request_empty_prompt_fails():
     with pytest.raises(ValidationError):
-        PromptRequest(cli="gemini", prompt="")
+        PromptRequest(cli=REPRESENTATIVE_CLI, prompt="")
 
 
 def test_prompt_request_empty_agent_rejected():
@@ -32,25 +33,25 @@ def test_prompt_request_empty_agent_rejected():
 
 
 def test_prompt_request_default_execution_mode():
-    req = PromptRequest(cli="gemini", prompt="Hello")
+    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello")
     assert req.execution_mode == "default"
 
 
 def test_prompt_request_yolo_mode():
-    req = PromptRequest(cli="gemini", prompt="Hello", execution_mode="yolo")
+    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", execution_mode="yolo")
     assert req.execution_mode == "yolo"
 
 
 def test_prompt_request_invalid_execution_mode():
     with pytest.raises(ValidationError):
-        PromptRequest(cli="gemini", prompt="Hello", execution_mode="invalid")
+        PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", execution_mode="invalid")
 
 
 def test_agent_response_structure():
     resp = AgentResponse(
-        cli="gemini", output="test output", raw_output='{"response": "test output"}'
+        cli=REPRESENTATIVE_CLI, output="test output", raw_output='{"response": "test output"}'
     )
-    assert resp.cli == "gemini"
+    assert resp.cli == REPRESENTATIVE_CLI
     assert resp.output == "test output"
     assert resp.metadata == {}
 
@@ -70,34 +71,36 @@ def test_subprocess_result_nonzero_returncode():
 
 def test_prompt_request_with_model():
     """Model field should accept valid model names."""
-    req = PromptRequest(cli="gemini", prompt="Hello", model="gemini-2.5-flash")
-    assert req.model == "gemini-2.5-flash"
+    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", model="test-model")
+    assert req.model == "test-model"
 
 
 def test_prompt_request_default_model_is_none():
     """Model field should default to None (uses CLI default)."""
-    req = PromptRequest(cli="gemini", prompt="Hello")
+    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello")
     assert req.model is None
 
 
 def test_prompt_request_empty_string_model_fails():
     """Empty string should fail validation (prevent malformed commands)."""
     with pytest.raises(ValidationError):
-        PromptRequest(cli="gemini", prompt="Hello", model="")
+        PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", model="")
 
 
 # Phase 3.7: File References tests
 def test_prompt_request_with_file_refs():
     """PromptRequest accepts optional file_refs list."""
     request = PromptRequest(
-        cli="gemini", prompt="Analyze this code", file_refs=["src/main.py", "tests/test_main.py"]
+        cli=REPRESENTATIVE_CLI,
+        prompt="Analyze this code",
+        file_refs=["src/main.py", "tests/test_main.py"],
     )
     assert request.file_refs == ["src/main.py", "tests/test_main.py"]
 
 
 def test_prompt_request_file_refs_default_empty():
     """PromptRequest.file_refs defaults to empty list."""
-    request = PromptRequest(cli="gemini", prompt="test")
+    request = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="test")
     assert request.file_refs == []
 
 
@@ -105,7 +108,7 @@ def test_prompt_request_file_refs_must_be_strings():
     """PromptRequest.file_refs must contain only strings."""
     with pytest.raises(ValidationError):
         PromptRequest(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             prompt="test",
             file_refs=["valid.py", 123, None],  # Invalid types
         )
@@ -114,32 +117,34 @@ def test_prompt_request_file_refs_must_be_strings():
 def test_file_refs_rejects_null_byte():
     """file_refs rejects paths containing null bytes."""
     with pytest.raises(ValidationError, match="control characters"):
-        PromptRequest(cli="gemini", prompt="test", file_refs=["/etc/\x00passwd"])
+        PromptRequest(cli=REPRESENTATIVE_CLI, prompt="test", file_refs=["/etc/\x00passwd"])
 
 
 def test_file_refs_rejects_newline():
     """file_refs rejects paths containing newline characters."""
     with pytest.raises(ValidationError, match="control characters"):
-        PromptRequest(cli="gemini", prompt="test", file_refs=["/etc\n/passwd"])
+        PromptRequest(cli=REPRESENTATIVE_CLI, prompt="test", file_refs=["/etc\n/passwd"])
 
 
 def test_file_refs_rejects_carriage_return():
     """file_refs rejects paths containing carriage return characters."""
     with pytest.raises(ValidationError, match="control characters"):
-        PromptRequest(cli="gemini", prompt="test", file_refs=["foo\rbar"])
+        PromptRequest(cli=REPRESENTATIVE_CLI, prompt="test", file_refs=["foo\rbar"])
 
 
 def test_file_refs_accepts_normal_paths():
     """file_refs accepts normal absolute and relative paths."""
     req = PromptRequest(
-        cli="gemini", prompt="test", file_refs=["/home/user/file.py", "relative/path"]
+        cli=REPRESENTATIVE_CLI, prompt="test", file_refs=["/home/user/file.py", "relative/path"]
     )
     assert req.file_refs == ["/home/user/file.py", "relative/path"]
 
 
 def test_agent_response_with_metadata_adds_keys():
     """with_metadata() returns a new response with additional metadata keys."""
-    original = AgentResponse(cli="gemini", output="hello", raw_output="{}", metadata={"k": 1})
+    original = AgentResponse(
+        cli=REPRESENTATIVE_CLI, output="hello", raw_output="{}", metadata={"k": 1}
+    )
     updated = original.with_metadata(new_key="value", count=42)
 
     assert updated.metadata == {"k": 1, "new_key": "value", "count": 42}
@@ -147,7 +152,7 @@ def test_agent_response_with_metadata_adds_keys():
 
 def test_agent_response_with_metadata_preserves_other_fields():
     """with_metadata() preserves agent, output, and raw_output unchanged."""
-    original = AgentResponse(cli="gemini", output="hello", raw_output="{}")
+    original = AgentResponse(cli=REPRESENTATIVE_CLI, output="hello", raw_output="{}")
     updated = original.with_metadata(x=1)
 
     assert updated.cli == original.cli
@@ -157,7 +162,9 @@ def test_agent_response_with_metadata_preserves_other_fields():
 
 def test_agent_response_with_metadata_does_not_mutate_original():
     """with_metadata() returns a new object; the original is unchanged."""
-    original = AgentResponse(cli="gemini", output="hello", raw_output="{}", metadata={"k": 1})
+    original = AgentResponse(
+        cli=REPRESENTATIVE_CLI, output="hello", raw_output="{}", metadata={"k": 1}
+    )
     original.with_metadata(k=999)
 
     assert original.metadata == {"k": 1}
@@ -169,8 +176,8 @@ def test_agent_response_with_metadata_does_not_mutate_original():
 
 
 def test_agent_task_requires_agent_and_prompt():
-    task = AgentTask(cli="gemini", prompt="Hello")
-    assert task.cli == "gemini"
+    task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="Hello")
+    assert task.cli == REPRESENTATIVE_CLI
     assert task.prompt == "Hello"
     assert task.label is None
     assert task.execution_mode is None  # None = use session preference or fall back to "default"
@@ -183,18 +190,18 @@ def test_agent_task_rejects_empty_agent():
 
 def test_agent_task_rejects_empty_prompt():
     with pytest.raises(ValidationError):
-        AgentTask(cli="gemini", prompt="")
+        AgentTask(cli=REPRESENTATIVE_CLI, prompt="")
 
 
 def test_agent_task_result_success():
-    result = AgentTaskResult(label="gemini", output="response text")
+    result = AgentTaskResult(label=REPRESENTATIVE_CLI, output="response text")
     assert result.success is True
     assert result.output == "response text"
     assert result.error is None
 
 
 def test_agent_task_result_error():
-    result = AgentTaskResult(label="gemini", error="something failed")
+    result = AgentTaskResult(label=REPRESENTATIVE_CLI, error="something failed")
     assert result.success is False
     assert result.error == "something failed"
     assert result.output is None
@@ -202,12 +209,12 @@ def test_agent_task_result_error():
 
 def test_agent_task_result_rejects_both_output_and_error():
     with pytest.raises(ValidationError):
-        AgentTaskResult(label="gemini", output="ok", error="fail")
+        AgentTaskResult(label=REPRESENTATIVE_CLI, output="ok", error="fail")
 
 
 def test_agent_task_result_rejects_neither_output_nor_error():
     with pytest.raises(ValidationError):
-        AgentTaskResult(label="gemini")
+        AgentTaskResult(label=REPRESENTATIVE_CLI)
 
 
 def test_multi_prompt_response_counts():
@@ -229,50 +236,50 @@ def test_multi_prompt_response_counts():
 
 def test_prompt_request_max_retries_defaults_to_none():
     """PromptRequest.max_retries defaults to None (falls back to env default)."""
-    req = PromptRequest(cli="gemini", prompt="Hello")
+    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello")
     assert req.max_retries is None
 
 
 def test_prompt_request_max_retries_accepts_custom_value():
     """PromptRequest.max_retries accepts a positive integer."""
-    req = PromptRequest(cli="gemini", prompt="Hello", max_retries=5)
+    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", max_retries=5)
     assert req.max_retries == 5
 
 
 def test_prompt_request_max_retries_accepts_one():
     """max_retries=1 disables retry (run once, no retry on failure)."""
-    req = PromptRequest(cli="gemini", prompt="Hello", max_retries=1)
+    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", max_retries=1)
     assert req.max_retries == 1
 
 
 def test_agent_task_max_retries_defaults_to_none():
     """AgentTask.max_retries defaults to None."""
-    task = AgentTask(cli="gemini", prompt="Hello")
+    task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="Hello")
     assert task.max_retries is None
 
 
 def test_agent_task_max_retries_accepts_custom_value():
     """AgentTask.max_retries accepts a positive integer."""
-    task = AgentTask(cli="gemini", prompt="Hello", max_retries=2)
+    task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="Hello", max_retries=2)
     assert task.max_retries == 2
 
 
 def test_prompt_request_max_retries_zero_fails():
     """max_retries=0 is rejected (ge=1); would cause range(0) → unreachable assertion."""
     with pytest.raises(ValidationError):
-        PromptRequest(cli="gemini", prompt="Hello", max_retries=0)
+        PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", max_retries=0)
 
 
 def test_prompt_request_max_retries_negative_fails():
     """Negative max_retries is rejected by ge=1 validator."""
     with pytest.raises(ValidationError):
-        PromptRequest(cli="gemini", prompt="Hello", max_retries=-1)
+        PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", max_retries=-1)
 
 
 def test_agent_task_max_retries_zero_fails():
     """AgentTask.max_retries=0 is rejected (ge=1)."""
     with pytest.raises(ValidationError):
-        AgentTask(cli="gemini", prompt="Hello", max_retries=0)
+        AgentTask(cli=REPRESENTATIVE_CLI, prompt="Hello", max_retries=0)
 
 
 # ---------------------------------------------------------------------------
@@ -283,18 +290,18 @@ def test_agent_task_max_retries_zero_fails():
 def test_prompt_request_rejects_oversized_prompt():
     """PromptRequest rejects prompts exceeding MAX_PROMPT_LENGTH (128KB)."""
     with pytest.raises(ValidationError):
-        PromptRequest(cli="gemini", prompt="x" * (MAX_PROMPT_LENGTH + 1))
+        PromptRequest(cli=REPRESENTATIVE_CLI, prompt="x" * (MAX_PROMPT_LENGTH + 1))
 
 
 def test_agent_task_rejects_oversized_prompt():
     """AgentTask rejects prompts exceeding MAX_PROMPT_LENGTH (128KB)."""
     with pytest.raises(ValidationError):
-        AgentTask(cli="gemini", prompt="x" * (MAX_PROMPT_LENGTH + 1))
+        AgentTask(cli=REPRESENTATIVE_CLI, prompt="x" * (MAX_PROMPT_LENGTH + 1))
 
 
 def test_prompt_at_max_length_accepted():
     """PromptRequest accepts a prompt exactly at MAX_PROMPT_LENGTH."""
-    req = PromptRequest(cli="gemini", prompt="x" * MAX_PROMPT_LENGTH)
+    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="x" * MAX_PROMPT_LENGTH)
     assert len(req.prompt) == MAX_PROMPT_LENGTH
 
 
@@ -326,20 +333,20 @@ def test_agent_task_to_request_maps_all_fields():
     from nexus_mcp.types import PromptRequest
 
     task = AgentTask(
-        cli="gemini",
+        cli=REPRESENTATIVE_CLI,
         prompt="Hello",
         execution_mode="yolo",
-        model="gemini-2.5-flash",
+        model="test-model",
         max_retries=2,
         output_limit=1024,
         timeout=30,
     )
     req = task.to_request()
     assert isinstance(req, PromptRequest)
-    assert req.cli == "gemini"
+    assert req.cli == REPRESENTATIVE_CLI
     assert req.prompt == "Hello"
     assert req.execution_mode == "yolo"
-    assert req.model == "gemini-2.5-flash"
+    assert req.model == "test-model"
     assert req.max_retries == 2
     assert req.output_limit == 1024
     assert req.timeout == 30
@@ -347,7 +354,7 @@ def test_agent_task_to_request_maps_all_fields():
 
 def test_agent_task_to_request_defaults():
     """to_request() preserves default values when optional fields are unset."""
-    task = AgentTask(cli="gemini", prompt="Hi")
+    task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="Hi")
     req = task.to_request()
     assert req.execution_mode == "default"
     assert req.model is None
@@ -359,49 +366,49 @@ def test_agent_task_to_request_defaults():
 
 def test_prompt_request_output_limit_defaults_to_none():
     """PromptRequest.output_limit defaults to None (falls back to env default)."""
-    req = PromptRequest(cli="gemini", prompt="Hello")
+    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello")
     assert req.output_limit is None
 
 
 def test_prompt_request_output_limit_accepts_positive():
     """PromptRequest.output_limit accepts a positive integer."""
-    req = PromptRequest(cli="gemini", prompt="Hello", output_limit=4096)
+    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", output_limit=4096)
     assert req.output_limit == 4096
 
 
 def test_prompt_request_output_limit_rejects_zero():
     """PromptRequest.output_limit=0 is rejected by ge=1."""
     with pytest.raises(ValidationError):
-        PromptRequest(cli="gemini", prompt="Hello", output_limit=0)
+        PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", output_limit=0)
 
 
 def test_prompt_request_timeout_defaults_to_none():
     """PromptRequest.timeout defaults to None (falls back to env default)."""
-    req = PromptRequest(cli="gemini", prompt="Hello")
+    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello")
     assert req.timeout is None
 
 
 def test_prompt_request_timeout_accepts_positive():
     """PromptRequest.timeout accepts a positive integer."""
-    req = PromptRequest(cli="gemini", prompt="Hello", timeout=60)
+    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", timeout=60)
     assert req.timeout == 60
 
 
 def test_prompt_request_timeout_rejects_zero():
     """PromptRequest.timeout=0 is rejected by ge=1."""
     with pytest.raises(ValidationError):
-        PromptRequest(cli="gemini", prompt="Hello", timeout=0)
+        PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", timeout=0)
 
 
 def test_agent_task_output_limit_defaults_to_none():
     """AgentTask.output_limit defaults to None."""
-    task = AgentTask(cli="gemini", prompt="Hello")
+    task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="Hello")
     assert task.output_limit is None
 
 
 def test_agent_task_timeout_defaults_to_none():
     """AgentTask.timeout defaults to None."""
-    task = AgentTask(cli="gemini", prompt="Hello")
+    task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="Hello")
     assert task.timeout is None
 
 
@@ -467,7 +474,7 @@ class TestSessionPreferences:
         """model_dump() → SessionPreferences(**d) round-trip preserves values."""
         prefs = SessionPreferences(
             execution_mode="yolo",
-            model="gemini-2.5-flash",
+            model="test-model",
             max_retries=3,
             output_limit=1024,
             timeout=30,
@@ -475,7 +482,7 @@ class TestSessionPreferences:
         d = prefs.model_dump()
         reconstructed = SessionPreferences(**d)
         assert reconstructed.execution_mode == "yolo"
-        assert reconstructed.model == "gemini-2.5-flash"
+        assert reconstructed.model == "test-model"
         assert reconstructed.max_retries == 3
         assert reconstructed.output_limit == 1024
         assert reconstructed.timeout == 30
@@ -639,9 +646,9 @@ class TestAgentTaskOptionalCli:
             AgentTask(cli="", prompt="Hello")
 
     def test_cli_valid_string_still_works(self):
-        """cli='gemini' still works as before."""
-        task = AgentTask(cli="gemini", prompt="Hello")
-        assert task.cli == "gemini"
+        """cli='fake' still works as before."""
+        task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="Hello")
+        assert task.cli == REPRESENTATIVE_CLI
 
     def test_to_request_with_cli_none_raises_validation_error(self):
         """to_request() with cli=None raises ValidationError (cli required in PromptRequest)."""

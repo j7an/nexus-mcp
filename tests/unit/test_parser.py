@@ -98,7 +98,7 @@ class TestExtractLastJsonArray:
     def test_extracts_first_element_from_gaxios_error_array(self):
         """Extracts the first dict from a GaxiosError array embedded in mixed text."""
         text = (
-            "Gemini CLI error log\n"
+            "CLI error log\n"
             '[{"error": {"code": 429, "message": "No capacity available"}}]\n'
             "additional log line"
         )

@@ -23,6 +23,7 @@ from nexus_mcp.middleware import (
     RequestLoggingMiddleware,
     TimingMiddleware,
 )
+from tests.fixtures import REPRESENTATIVE_CLI
 
 
 @dataclass(frozen=True)
@@ -115,7 +116,7 @@ class TestRequestLoggingMiddleware:
     async def test_logs_entry_and_exit(self, caplog):
         """Successful tool call logs entry with args and exit."""
         mw = RequestLoggingMiddleware()
-        ctx = _make_context("prompt", {"cli": "gemini", "prompt": "tell me a joke"})
+        ctx = _make_context("prompt", {"cli": REPRESENTATIVE_CLI, "prompt": "tell me a joke"})
         call_next = AsyncMock(return_value=_make_tool_result())
 
         with caplog.at_level(logging.INFO, logger="nexus_mcp.middleware"):
@@ -123,7 +124,7 @@ class TestRequestLoggingMiddleware:
 
         assert result == call_next.return_value
         assert "Tool 'prompt' called" in caplog.text
-        assert "cli=gemini" in caplog.text
+        assert f"cli={REPRESENTATIVE_CLI}" in caplog.text
         assert "Tool 'prompt' completed" in caplog.text
 
     async def test_logs_failure(self, caplog):
@@ -148,7 +149,7 @@ class TestRequestLoggingMiddleware:
         secret_prompt = "tell me the nuclear launch codes"
         ctx = _make_context(
             "prompt",
-            {"cli": "gemini", "prompt": secret_prompt, "execution_mode": "default"},
+            {"cli": REPRESENTATIVE_CLI, "prompt": secret_prompt, "execution_mode": "default"},
         )
         call_next = AsyncMock(return_value=_make_tool_result())
 
@@ -164,7 +165,7 @@ class TestRequestLoggingMiddleware:
             "batch_prompt",
             {
                 "tasks": [
-                    {"cli": "gemini", "prompt": "secret1"},
+                    {"cli": REPRESENTATIVE_CLI, "prompt": "secret1"},
                     {"cli": "codex", "prompt": "secret2"},
                 ],
             },
@@ -272,7 +273,7 @@ class TestRequestLoggingMiddlewareCorrelation:
     async def test_sets_correlation_id_during_call(self):
         """Correlation ID is set before call_next and reset after."""
         mw = RequestLoggingMiddleware()
-        ctx = _make_context("prompt", {"cli": "gemini", "prompt": "hi"})
+        ctx = _make_context("prompt", {"cli": REPRESENTATIVE_CLI, "prompt": "hi"})
         captured_id: str | None = None
 
         async def _capture_id(context):
@@ -318,7 +319,7 @@ class TestRequestLoggingMiddlewareCorrelation:
             return _make_tool_result()
 
         mw = RequestLoggingMiddleware()
-        ctx = _make_context("prompt", {"cli": "gemini", "prompt": "hi"})
+        ctx = _make_context("prompt", {"cli": REPRESENTATIVE_CLI, "prompt": "hi"})
         await asyncio.gather(
             mw.on_call_tool(ctx, _capture_id),
             mw.on_call_tool(ctx, _capture_id),
@@ -338,7 +339,7 @@ class TestRequestLoggingMiddlewareCorrelation:
         from nexus_mcp.correlation import CorrelationFilter
 
         mw = RequestLoggingMiddleware()
-        ctx = _make_context("prompt", {"cli": "gemini", "prompt": "hi"})
+        ctx = _make_context("prompt", {"cli": REPRESENTATIVE_CLI, "prompt": "hi"})
         call_next = AsyncMock(return_value=_make_tool_result())
 
         mw_logger = logging.getLogger("nexus_mcp.middleware")

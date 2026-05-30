@@ -12,7 +12,7 @@ from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
 from nexus_mcp.server import mcp
-from tests.fixtures import create_mock_process, gemini_json
+from tests.fixtures import CODEX_NDJSON_RESPONSE, create_mock_process
 
 
 async def _get_prefs(mcp_client) -> dict:
@@ -152,58 +152,58 @@ class TestPreferencesRoundTrip:
 class TestPreferenceAffectsPrompt:
     async def test_session_execution_mode_reaches_subprocess(self, mock_subprocess, mcp_client):
         """Session execution_mode='yolo' causes --yolo flag in subprocess args."""
-        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
+        mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE)
 
         await mcp_client.call_tool("set_preferences", {"execution_mode": "yolo"})
-        await mcp_client.call_tool("prompt", {"cli": "gemini", "prompt": "test"})
+        await mcp_client.call_tool("prompt", {"cli": "codex", "prompt": "test"})
 
         args = list(mock_subprocess.call_args.args)
-        assert "--yolo" in args
+        assert "--dangerously-bypass-approvals-and-sandbox" in args
 
     async def test_explicit_mode_overrides_session_in_subprocess(self, mock_subprocess, mcp_client):
         """Explicit execution_mode='default' overrides session 'yolo' in subprocess args."""
-        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
+        mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE)
 
         await mcp_client.call_tool("set_preferences", {"execution_mode": "yolo"})
         await mcp_client.call_tool(
-            "prompt", {"cli": "gemini", "prompt": "test", "execution_mode": "default"}
+            "prompt", {"cli": "codex", "prompt": "test", "execution_mode": "default"}
         )
 
         args = list(mock_subprocess.call_args.args)
-        assert "--yolo" not in args
+        assert "--dangerously-bypass-approvals-and-sandbox" not in args
 
     async def test_session_model_reaches_subprocess(self, mock_subprocess, mcp_client):
         """Session model appears as --model flag in subprocess args."""
-        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
+        mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE)
 
-        await mcp_client.call_tool("set_preferences", {"model": "gemini-2.5-flash"})
-        await mcp_client.call_tool("prompt", {"cli": "gemini", "prompt": "test"})
+        await mcp_client.call_tool("set_preferences", {"model": "gpt-5.4-mini"})
+        await mcp_client.call_tool("prompt", {"cli": "codex", "prompt": "test"})
 
         args = list(mock_subprocess.call_args.args)
         assert "--model" in args
-        assert "gemini-2.5-flash" in args
+        assert "gpt-5.4-mini" in args
 
     async def test_explicit_model_overrides_session_model(self, mock_subprocess, mcp_client):
-        """Explicit model='gemini-1.5-pro' overrides session 'gemini-2.5-flash'."""
-        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
+        """Explicit model overrides session model."""
+        mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE)
 
-        await mcp_client.call_tool("set_preferences", {"model": "gemini-2.5-flash"})
+        await mcp_client.call_tool("set_preferences", {"model": "gpt-5.4-mini"})
         await mcp_client.call_tool(
-            "prompt", {"cli": "gemini", "prompt": "test", "model": "gemini-1.5-pro"}
+            "prompt", {"cli": "codex", "prompt": "test", "model": "gpt-5.3-codex"}
         )
 
         args = list(mock_subprocess.call_args.args)
-        assert "gemini-1.5-pro" in args
-        assert "gemini-2.5-flash" not in args
+        assert "gpt-5.3-codex" in args
+        assert "gpt-5.4-mini" not in args
 
     async def test_no_mode_without_session_uses_default(self, mock_subprocess, mcp_client):
         """Without session or explicit mode, prompt uses 'default' (no --yolo flag)."""
-        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
+        mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE)
 
-        await mcp_client.call_tool("prompt", {"cli": "gemini", "prompt": "test"})
+        await mcp_client.call_tool("prompt", {"cli": "codex", "prompt": "test"})
 
         args = list(mock_subprocess.call_args.args)
-        assert "--yolo" not in args
+        assert "--dangerously-bypass-approvals-and-sandbox" not in args
 
 
 # ---------------------------------------------------------------------------
@@ -215,32 +215,32 @@ class TestPreferenceAffectsPrompt:
 class TestPreferenceAffectsBatchPrompt:
     async def test_session_mode_applied_to_task_without_mode(self, mock_subprocess, mcp_client):
         """Session execution_mode='yolo' applies to tasks that don't specify execution_mode."""
-        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
+        mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE)
 
         await mcp_client.call_tool("set_preferences", {"execution_mode": "yolo"})
         result = await mcp_client.call_tool(
             "batch_prompt",
-            {"tasks": [{"cli": "gemini", "prompt": "test"}]},
+            {"tasks": [{"cli": "codex", "prompt": "test"}]},
         )
 
         assert result.is_error is False
         assert result.data.succeeded == 1
         # --yolo appeared in subprocess call
         args = list(mock_subprocess.call_args.args)
-        assert "--yolo" in args
+        assert "--dangerously-bypass-approvals-and-sandbox" in args
 
     async def test_task_explicit_mode_not_overridden_by_session(self, mock_subprocess, mcp_client):
         """Task with explicit execution_mode='default' keeps it despite session 'yolo'."""
-        mock_subprocess.return_value = create_mock_process(stdout=gemini_json("ok"))
+        mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE)
 
         await mcp_client.call_tool("set_preferences", {"execution_mode": "yolo"})
         await mcp_client.call_tool(
             "batch_prompt",
-            {"tasks": [{"cli": "gemini", "prompt": "test", "execution_mode": "default"}]},
+            {"tasks": [{"cli": "codex", "prompt": "test", "execution_mode": "default"}]},
         )
 
         args = list(mock_subprocess.call_args.args)
-        assert "--yolo" not in args
+        assert "--dangerously-bypass-approvals-and-sandbox" not in args
 
 
 # ---------------------------------------------------------------------------

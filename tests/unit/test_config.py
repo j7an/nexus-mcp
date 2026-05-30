@@ -26,6 +26,7 @@ from nexus_mcp.config import (
 )
 from nexus_mcp.exceptions import ConfigurationError
 from nexus_mcp.types import OperationalDefaults
+from tests.fixtures import REPRESENTATIVE_CLI
 
 
 class TestGetGlobalOutputLimit:
@@ -322,22 +323,22 @@ class TestGetCLIDetectionTimeout:
 class TestGetAgentEnv:
     """Test get_agent_env() function."""
 
-    @patch.dict(os.environ, {"NEXUS_GEMINI_PATH": "/custom/gemini"})
+    @patch.dict(os.environ, {"NEXUS_FAKE_PATH": "/custom/fake"})
     def test_get_agent_env_returns_value(self):
         """get_agent_env reads NEXUS_{AGENT}_{KEY} env vars."""
-        path = get_agent_env("gemini", "PATH")
-        assert path == "/custom/gemini"
+        path = get_agent_env(REPRESENTATIVE_CLI, "PATH")
+        assert path == "/custom/fake"
 
     def test_get_agent_env_returns_default(self):
         """get_agent_env returns default if env var not set."""
-        path = get_agent_env("codex", "PATH", default="/usr/bin/codex")
-        assert path == "/usr/bin/codex"
+        path = get_agent_env(REPRESENTATIVE_CLI, "PATH", default="/usr/bin/fake")
+        assert path == "/usr/bin/fake"
 
-    @patch.dict(os.environ, {"NEXUS_GEMINI_MODEL": "gemini-2.5-flash"})
+    @patch.dict(os.environ, {"NEXUS_FAKE_MODEL": "gpt-5.4-mini"})
     def test_get_agent_env_case_insensitive(self):
         """get_agent_env normalizes agent name to uppercase."""
-        model = get_agent_env("gemini", "MODEL")
-        assert model == "gemini-2.5-flash"
+        model = get_agent_env(REPRESENTATIVE_CLI, "MODEL")
+        assert model == "gpt-5.4-mini"
 
 
 # ---------------------------------------------------------------------------
@@ -521,103 +522,103 @@ class TestReadRunnerEnvDefaults:
 
     def test_no_env_vars_returns_all_none(self, monkeypatch):
         for key in ("TIMEOUT", "OUTPUT_LIMIT", "MAX_RETRIES", "MODEL", "EXECUTION_MODE"):
-            monkeypatch.delenv(f"NEXUS_GEMINI_{key}", raising=False)
+            monkeypatch.delenv(f"NEXUS_FAKE_{key}", raising=False)
         for key in ("RETRY_BASE_DELAY", "RETRY_MAX_DELAY"):
-            monkeypatch.delenv(f"NEXUS_GEMINI_{key}", raising=False)
-        result = _read_runner_env_defaults("gemini")
+            monkeypatch.delenv(f"NEXUS_FAKE_{key}", raising=False)
+        result = _read_runner_env_defaults(REPRESENTATIVE_CLI)
         assert result.timeout is None
         assert result.model is None
 
     def test_timeout_from_env(self, monkeypatch):
-        monkeypatch.setenv("NEXUS_GEMINI_TIMEOUT", "900")
-        result = _read_runner_env_defaults("gemini")
+        monkeypatch.setenv("NEXUS_FAKE_TIMEOUT", "900")
+        result = _read_runner_env_defaults(REPRESENTATIVE_CLI)
         assert result.timeout == 900
 
     def test_model_from_env(self, monkeypatch):
-        monkeypatch.setenv("NEXUS_GEMINI_MODEL", "gemini-2.5-flash")
-        result = _read_runner_env_defaults("gemini")
-        assert result.model == "gemini-2.5-flash"
+        monkeypatch.setenv("NEXUS_FAKE_MODEL", "gpt-5.4-mini")
+        result = _read_runner_env_defaults(REPRESENTATIVE_CLI)
+        assert result.model == "gpt-5.4-mini"
 
     def test_execution_mode_from_env(self, monkeypatch):
-        monkeypatch.setenv("NEXUS_GEMINI_EXECUTION_MODE", "yolo")
-        result = _read_runner_env_defaults("gemini")
+        monkeypatch.setenv("NEXUS_FAKE_EXECUTION_MODE", "yolo")
+        result = _read_runner_env_defaults(REPRESENTATIVE_CLI)
         assert result.execution_mode == "yolo"
 
     def test_invalid_execution_mode_silently_skipped(self, monkeypatch):
-        monkeypatch.setenv("NEXUS_GEMINI_EXECUTION_MODE", "turbo")
-        result = _read_runner_env_defaults("gemini")
+        monkeypatch.setenv("NEXUS_FAKE_EXECUTION_MODE", "turbo")
+        result = _read_runner_env_defaults(REPRESENTATIVE_CLI)
         assert result.execution_mode is None  # silently skipped
 
     def test_retry_base_delay_from_env(self, monkeypatch):
-        monkeypatch.setenv("NEXUS_CODEX_RETRY_BASE_DELAY", "0.5")
-        result = _read_runner_env_defaults("codex")
+        monkeypatch.setenv("NEXUS_FAKE_RETRY_BASE_DELAY", "0.5")
+        result = _read_runner_env_defaults(REPRESENTATIVE_CLI)
         assert result.retry_base_delay == 0.5
 
     def test_zero_timeout_silently_skipped(self, monkeypatch):
-        """NEXUS_GEMINI_TIMEOUT=0 must not produce a zero-second timeout."""
-        monkeypatch.setenv("NEXUS_GEMINI_TIMEOUT", "0")
-        result = _read_runner_env_defaults("gemini")
+        """NEXUS_FAKE_TIMEOUT=0 must not produce a zero-second timeout."""
+        monkeypatch.setenv("NEXUS_FAKE_TIMEOUT", "0")
+        result = _read_runner_env_defaults(REPRESENTATIVE_CLI)
         assert result.timeout is None  # zero → skipped
 
     def test_negative_timeout_logs_warning(self, monkeypatch, caplog):
         """Negative per-runner integer env var logs a warning."""
-        monkeypatch.setenv("NEXUS_GEMINI_TIMEOUT", "-5")
+        monkeypatch.setenv("NEXUS_FAKE_TIMEOUT", "-5")
         with caplog.at_level(logging.WARNING, logger="nexus_mcp.config_resolver"):
-            result = _read_runner_env_defaults("gemini")
+            result = _read_runner_env_defaults(REPRESENTATIVE_CLI)
         assert result.timeout is None
-        assert "NEXUS_GEMINI_TIMEOUT" in caplog.text
+        assert "NEXUS_FAKE_TIMEOUT" in caplog.text
 
     def test_negative_max_retries_silently_skipped(self, monkeypatch):
-        """NEXUS_GEMINI_MAX_RETRIES=-5 must not produce range(-5)."""
-        monkeypatch.setenv("NEXUS_GEMINI_MAX_RETRIES", "-5")
-        result = _read_runner_env_defaults("gemini")
+        """NEXUS_FAKE_MAX_RETRIES=-5 must not produce range(-5)."""
+        monkeypatch.setenv("NEXUS_FAKE_MAX_RETRIES", "-5")
+        result = _read_runner_env_defaults(REPRESENTATIVE_CLI)
         assert result.max_retries is None
 
     def test_zero_max_retries_silently_skipped(self, monkeypatch):
-        """NEXUS_GEMINI_MAX_RETRIES=0 must not produce range(0)."""
-        monkeypatch.setenv("NEXUS_GEMINI_MAX_RETRIES", "0")
-        result = _read_runner_env_defaults("gemini")
+        """NEXUS_FAKE_MAX_RETRIES=0 must not produce range(0)."""
+        monkeypatch.setenv("NEXUS_FAKE_MAX_RETRIES", "0")
+        result = _read_runner_env_defaults(REPRESENTATIVE_CLI)
         assert result.max_retries is None
 
     def test_zero_output_limit_silently_skipped(self, monkeypatch):
         """Zero output limit must be silently skipped."""
-        monkeypatch.setenv("NEXUS_GEMINI_OUTPUT_LIMIT", "0")
-        result = _read_runner_env_defaults("gemini")
+        monkeypatch.setenv("NEXUS_FAKE_OUTPUT_LIMIT", "0")
+        result = _read_runner_env_defaults(REPRESENTATIVE_CLI)
         assert result.output_limit is None
 
     def test_invalid_timeout_logs_warning(self, monkeypatch, caplog):
         """Invalid per-runner integer env var logs a warning."""
-        monkeypatch.setenv("NEXUS_GEMINI_TIMEOUT", "not-a-number")
+        monkeypatch.setenv("NEXUS_FAKE_TIMEOUT", "not-a-number")
         with caplog.at_level(logging.WARNING, logger="nexus_mcp.config_resolver"):
-            result = _read_runner_env_defaults("gemini")
+            result = _read_runner_env_defaults(REPRESENTATIVE_CLI)
         assert result.timeout is None
-        assert "NEXUS_GEMINI_TIMEOUT" in caplog.text
+        assert "NEXUS_FAKE_TIMEOUT" in caplog.text
         assert "not-a-number" in caplog.text
 
     def test_invalid_retry_delay_logs_warning(self, monkeypatch, caplog):
         """Invalid per-runner float env var logs a warning."""
-        monkeypatch.setenv("NEXUS_CODEX_RETRY_BASE_DELAY", "banana")
+        monkeypatch.setenv("NEXUS_FAKE_RETRY_BASE_DELAY", "banana")
         with caplog.at_level(logging.WARNING, logger="nexus_mcp.config_resolver"):
-            result = _read_runner_env_defaults("codex")
+            result = _read_runner_env_defaults(REPRESENTATIVE_CLI)
         assert result.retry_base_delay is None
-        assert "NEXUS_CODEX_RETRY_BASE_DELAY" in caplog.text
+        assert "NEXUS_FAKE_RETRY_BASE_DELAY" in caplog.text
         assert "banana" in caplog.text
 
     def test_non_positive_timeout_logs_warning(self, monkeypatch, caplog):
         """Non-positive per-runner integer env var logs a warning."""
-        monkeypatch.setenv("NEXUS_GEMINI_TIMEOUT", "0")
+        monkeypatch.setenv("NEXUS_FAKE_TIMEOUT", "0")
         with caplog.at_level(logging.WARNING, logger="nexus_mcp.config_resolver"):
-            result = _read_runner_env_defaults("gemini")
+            result = _read_runner_env_defaults(REPRESENTATIVE_CLI)
         assert result.timeout is None
-        assert "NEXUS_GEMINI_TIMEOUT" in caplog.text
+        assert "NEXUS_FAKE_TIMEOUT" in caplog.text
 
     def test_negative_retry_delay_logs_warning(self, monkeypatch, caplog):
         """Negative per-runner float env var logs a warning."""
-        monkeypatch.setenv("NEXUS_CODEX_RETRY_BASE_DELAY", "-1.0")
+        monkeypatch.setenv("NEXUS_FAKE_RETRY_BASE_DELAY", "-1.0")
         with caplog.at_level(logging.WARNING, logger="nexus_mcp.config_resolver"):
-            result = _read_runner_env_defaults("codex")
+            result = _read_runner_env_defaults(REPRESENTATIVE_CLI)
         assert result.retry_base_delay is None
-        assert "NEXUS_CODEX_RETRY_BASE_DELAY" in caplog.text
+        assert "NEXUS_FAKE_RETRY_BASE_DELAY" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -629,28 +630,28 @@ class TestGetRunnerModels:
     """Test get_runner_models() env var parsing."""
 
     def test_not_set_returns_empty(self, monkeypatch):
-        monkeypatch.delenv("NEXUS_GEMINI_MODELS", raising=False)
-        assert get_runner_models("gemini") == ()
+        monkeypatch.delenv("NEXUS_FAKE_MODELS", raising=False)
+        assert get_runner_models(REPRESENTATIVE_CLI) == ()
 
     def test_single_model(self, monkeypatch):
-        monkeypatch.setenv("NEXUS_GEMINI_MODELS", "gemini-2.5-flash")
-        assert get_runner_models("gemini") == ("gemini-2.5-flash",)
+        monkeypatch.setenv("NEXUS_FAKE_MODELS", "gpt-5.4-mini")
+        assert get_runner_models(REPRESENTATIVE_CLI) == ("gpt-5.4-mini",)
 
     def test_multiple_models(self, monkeypatch):
-        monkeypatch.setenv("NEXUS_GEMINI_MODELS", "gemini-2.5-flash,gemini-2.5-pro")
-        assert get_runner_models("gemini") == ("gemini-2.5-flash", "gemini-2.5-pro")
+        monkeypatch.setenv("NEXUS_FAKE_MODELS", "gpt-5.4-mini,gpt-5.4")
+        assert get_runner_models(REPRESENTATIVE_CLI) == ("gpt-5.4-mini", "gpt-5.4")
 
     def test_whitespace_stripped(self, monkeypatch):
-        monkeypatch.setenv("NEXUS_GEMINI_MODELS", " flash , pro ")
-        assert get_runner_models("gemini") == ("flash", "pro")
+        monkeypatch.setenv("NEXUS_FAKE_MODELS", " flash , pro ")
+        assert get_runner_models(REPRESENTATIVE_CLI) == ("flash", "pro")
 
     def test_empty_entries_filtered(self, monkeypatch):
-        monkeypatch.setenv("NEXUS_GEMINI_MODELS", "flash,,pro,")
-        assert get_runner_models("gemini") == ("flash", "pro")
+        monkeypatch.setenv("NEXUS_FAKE_MODELS", "flash,,pro,")
+        assert get_runner_models(REPRESENTATIVE_CLI) == ("flash", "pro")
 
     def test_empty_string_returns_empty(self, monkeypatch):
-        monkeypatch.setenv("NEXUS_GEMINI_MODELS", "")
-        assert get_runner_models("gemini") == ()
+        monkeypatch.setenv("NEXUS_FAKE_MODELS", "")
+        assert get_runner_models(REPRESENTATIVE_CLI) == ()
 
 
 class TestGetAgentFallbackModels:
@@ -659,23 +660,23 @@ class TestGetAgentFallbackModels:
     @patch.dict(
         os.environ,
         {
-            "NEXUS_GEMINI_FALLBACK_MODELS": (
-                " gemini-3-flash-preview ,Gemini-3-Flash-Preview,, gemini-2.5-flash "
+            "NEXUS_FAKE_FALLBACK_MODELS": (
+                " gpt-5.3-codex-spark ,GPT-5.3-Codex-Spark,, gpt-5.4-mini "
             )
         },
         clear=False,
     )
     def test_preserves_exact_strings_after_whitespace_strip(self):
-        assert get_agent_fallback_models("gemini") == (
-            "gemini-3-flash-preview",
-            "Gemini-3-Flash-Preview",
-            "gemini-2.5-flash",
+        assert get_agent_fallback_models(REPRESENTATIVE_CLI) == (
+            "gpt-5.3-codex-spark",
+            "GPT-5.3-Codex-Spark",
+            "gpt-5.4-mini",
         )
 
     @patch.dict(os.environ, {}, clear=False)
     def test_returns_empty_tuple_when_env_var_missing(self):
-        os.environ.pop("NEXUS_GEMINI_FALLBACK_MODELS", None)
-        assert get_agent_fallback_models("gemini") == ()
+        os.environ.pop("NEXUS_FAKE_FALLBACK_MODELS", None)
+        assert get_agent_fallback_models(REPRESENTATIVE_CLI) == ()
 
 
 # ---------------------------------------------------------------------------
@@ -692,28 +693,28 @@ class TestGetRunnerDefaults:
 
     @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "300"})
     def test_global_env_overrides_hardcoded(self):
-        result = get_runner_defaults("gemini")
+        result = get_runner_defaults(REPRESENTATIVE_CLI)
         assert result.timeout == 300
 
-    @patch.dict(os.environ, {"NEXUS_GEMINI_TIMEOUT": "900"})
+    @patch.dict(os.environ, {"NEXUS_FAKE_TIMEOUT": "900"})
     def test_runner_env_overrides_global(self):
-        result = get_runner_defaults("gemini")
+        result = get_runner_defaults(REPRESENTATIVE_CLI)
         assert result.timeout == 900
 
-    @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "300", "NEXUS_GEMINI_TIMEOUT": "900"})
+    @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "300", "NEXUS_FAKE_TIMEOUT": "900"})
     def test_runner_env_wins_over_global_env(self):
         """Per-runner env has higher priority than global env."""
-        result = get_runner_defaults("gemini")
+        result = get_runner_defaults(REPRESENTATIVE_CLI)
         assert result.timeout == 900
 
-    @patch.dict(os.environ, {"NEXUS_GEMINI_MODEL": "gemini-2.0-flash"})
+    @patch.dict(os.environ, {"NEXUS_FAKE_MODEL": "gpt-5.3-codex"})
     def test_runner_model_from_env(self):
-        result = get_runner_defaults("gemini")
-        assert result.model == "gemini-2.0-flash"
+        result = get_runner_defaults(REPRESENTATIVE_CLI)
+        assert result.model == "gpt-5.3-codex"
 
     def test_defaults_are_non_none_for_required_fields(self):
         """All required fields are non-None after merge with hardcoded defaults."""
-        result = get_runner_defaults("gemini")
+        result = get_runner_defaults(REPRESENTATIVE_CLI)
         assert result.timeout is not None
         assert result.output_limit is not None
         assert result.max_retries is not None

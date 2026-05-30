@@ -4,6 +4,7 @@ from nexus_mcp.tiers import get_model_tier, get_models_for_tier
 
 
 class TestGetModelTier:
+    # Gemini-family model names can still appear through OpenCode provider/model config.
     def test_flash_models_are_quick(self):
         assert get_model_tier("gemini-2.5-flash") == "quick"
         assert get_model_tier("gemini-2.5-flash-lite") == "quick"

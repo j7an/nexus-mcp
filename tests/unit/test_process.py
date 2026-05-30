@@ -5,7 +5,7 @@ import pytest
 
 from nexus_mcp.exceptions import SubprocessError, SubprocessTimeoutError
 from nexus_mcp.process import run_subprocess
-from tests.fixtures import create_mock_process
+from tests.fixtures import REPRESENTATIVE_CLI, create_mock_process
 
 
 # IMPORTANT: This patch target requires process.py to use "import asyncio" at module level
@@ -68,10 +68,10 @@ async def test_run_subprocess_handles_partial_output(mock_exec):
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
 async def test_run_subprocess_cli_not_found(mock_exec):
     """Handle CLI binary not found in PATH."""
-    mock_exec.side_effect = FileNotFoundError("gemini: command not found")
+    mock_exec.side_effect = FileNotFoundError(f"{REPRESENTATIVE_CLI}: command not found")
 
     with pytest.raises(SubprocessError, match="not found"):
-        await run_subprocess(["gemini", "-p", "test"])
+        await run_subprocess([REPRESENTATIVE_CLI, "-p", "test"])
 
 
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
@@ -110,8 +110,8 @@ async def test_run_subprocess_error_includes_command(mock_exec):
     mock_exec.side_effect = FileNotFoundError("not found")
 
     with pytest.raises(SubprocessError) as exc_info:
-        await run_subprocess(["gemini", "-p", "test"])
-    assert exc_info.value.command == ["gemini", "-p", "test"]
+        await run_subprocess([REPRESENTATIVE_CLI, "-p", "test"])
+    assert exc_info.value.command == [REPRESENTATIVE_CLI, "-p", "test"]
 
 
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")

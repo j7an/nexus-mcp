@@ -121,7 +121,7 @@ def _read_runner_env_defaults(runner_name: str) -> OperationalDefaults:
     """Read per-runner operational defaults from NEXUS_{RUNNER}_{KEY} env vars.
 
     Only populates fields where the corresponding env var is set.
-    E.g., for runner_name="gemini": NEXUS_GEMINI_TIMEOUT, NEXUS_GEMINI_MODEL, etc.
+    E.g., for runner_name="codex": NEXUS_CODEX_TIMEOUT, NEXUS_CODEX_MODEL, etc.
     """
     kwargs: dict[str, Any] = {}
     prefix = runner_name.upper()
@@ -228,7 +228,7 @@ def get_agent_env(agent: str, key: str, default: str | None = None) -> str | Non
     """Get agent-specific environment variable.
 
     Args:
-        agent: Agent name (e.g., "gemini", "codex")
+        agent: Agent name (e.g., "claude", "codex")
         key: Config key (e.g., "PATH", "MODEL")
         default: Default value if env var not set
 
@@ -236,11 +236,11 @@ def get_agent_env(agent: str, key: str, default: str | None = None) -> str | Non
         Environment variable value or default
 
     Environment Variable Format:
-        NEXUS_{AGENT}_{KEY} (e.g., NEXUS_GEMINI_PATH, NEXUS_CODEX_MODEL)
+        NEXUS_{AGENT}_{KEY} (e.g., NEXUS_CLAUDE_PATH, NEXUS_CODEX_MODEL)
 
     Example:
-        >>> get_agent_env("gemini", "PATH")  # Reads NEXUS_GEMINI_PATH
-        "/usr/local/bin/gemini"
+        >>> get_agent_env("claude", "PATH")  # Reads NEXUS_CLAUDE_PATH
+        "/usr/local/bin/claude"
     """
     env_var = f"NEXUS_{agent.upper()}_{key}"
     return os.getenv(env_var, default)

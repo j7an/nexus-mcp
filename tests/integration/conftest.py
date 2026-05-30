@@ -11,31 +11,7 @@ import pytest
 
 from nexus_mcp.runners.claude import ClaudeRunner
 from nexus_mcp.runners.codex import CodexRunner
-from nexus_mcp.runners.gemini import GeminiRunner
 from nexus_mcp.runners.opencode import OpenCodeRunner
-
-
-@pytest.fixture(scope="session")
-def gemini_cli_available() -> str:
-    """Skip all dependent tests if Gemini CLI is not installed.
-
-    Returns:
-        Full path to the gemini binary.
-    """
-    path = shutil.which("gemini")
-    if path is None:
-        pytest.skip("Gemini CLI not found in PATH — install to run integration tests")
-    return path  # type: ignore[return-value]  # pytest.skip() raises, so path is never None here
-
-
-@pytest.fixture
-def gemini_runner(gemini_cli_available: str) -> GeminiRunner:  # noqa: ARG001
-    """Create a real GeminiRunner per test.
-
-    Fresh instance per test to avoid state leakage between tests.
-    Depends on gemini_cli_available to skip if CLI is absent.
-    """
-    return GeminiRunner()
 
 
 @pytest.fixture(scope="session")

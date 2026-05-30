@@ -1,8 +1,8 @@
 # tests/integration/test_cli_detection.py
 """Fallback tests for CLI detection functions (no CLI binary required).
 
-The real CLI detection tests are consolidated into test_gemini_runner.py
-(TestGeminiCLISmoke) to avoid redundancy.
+Real CLI detection is covered by runner-specific integration tests when those
+binaries are available.
 """
 
 from nexus_mcp.cli_detector import detect_cli, get_cli_version
