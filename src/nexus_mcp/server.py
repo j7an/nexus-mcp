@@ -383,7 +383,7 @@ async def prompt(
     This prevents timeouts for long operations (YOLO mode: 2-5 minutes).
 
     Args:
-        cli: CLI runner name (e.g., "gemini"). None triggers interactive selection.
+        cli: CLI runner name (e.g., "codex"). None triggers interactive selection.
         prompt: Prompt text to send to the runner
         context: Optional context metadata
         execution_mode: 'default' (safe) or 'yolo'. None inherits session preference.

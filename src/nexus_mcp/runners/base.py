@@ -82,7 +82,7 @@ class AbstractRunner(RetryMixin, ABC):
     """Abstract base class implementing Template Method pattern for CLI runners.
 
     Subclasses must define:
-    - AGENT_NAME: ClassVar[str]  (e.g., "gemini", "codex")
+    - AGENT_NAME: ClassVar[str]  (e.g., "claude", "codex")
 
     Subclasses must implement:
     - build_command(): Construct CLI command from PromptRequest
@@ -126,8 +126,6 @@ class AbstractRunner(RetryMixin, ABC):
         """Execute one runner-level attempt.
 
         The default implementation is exactly one subprocess/parse/recovery pass.
-        Gemini overrides this method so one runner-level attempt can span multiple
-        models in a fallback chain.
         """
         return await self._execute_single_attempt(request, emit, progress)
 
@@ -376,7 +374,7 @@ class AbstractRunner(RetryMixin, ABC):
             request: Prompt request containing prompt, model, execution_mode, etc.
 
         Returns:
-            Command as list of arguments (e.g., ["gemini", "-p", "prompt"]).
+            Command as list of arguments (e.g., ["claude", "-p", "prompt"]).
         """
         ...
 

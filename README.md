@@ -9,7 +9,7 @@
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://pre-commit.com/)
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io/)
 
-An MCP server that enables AI models to invoke AI CLI agents (Gemini CLI, Codex, Claude Code, OpenCode) as
+An MCP server that enables AI models to invoke AI CLI agents (Codex, Claude Code, OpenCode) as
 tools. Provides parallel execution, automatic retries with exponential backoff, JSON-first response
 parsing, 10 discoverable prompt templates, model tier classification, and persistent preferences
 through seven MCP tools, four MCP resources, and ten MCP prompts.
@@ -50,7 +50,6 @@ parallel rather than sequentially:
 
 | Agent | Status |
 |-------|--------|
-| Gemini CLI | Supported |
 | Codex | Supported |
 | Claude Code | Supported |
 | OpenCode | Supported |
@@ -89,10 +88,10 @@ uvx --reinstall nexus-mcp
       "command": "uvx",
       "args": ["nexus-mcp"],
       "env": {
-        "NEXUS_GEMINI_MODEL": "gemini-3-flash-preview",
-        "NEXUS_GEMINI_MODELS": "gemini-3.1-pro-preview,gemini-3-flash-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite",
         "NEXUS_CODEX_MODEL": "gpt-5.2",
         "NEXUS_CODEX_MODELS": "gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.2-codex,gpt-5.2,gpt-5.1-codex-max,gpt-5.1-codex-mini",
+        "NEXUS_CLAUDE_MODEL": "claude-sonnet-4-6",
+        "NEXUS_CLAUDE_MODELS": "claude-sonnet-4-6,claude-haiku-4-5-20251001",
         "NEXUS_OPENCODE_MODEL": "ollama-cloud/kimi-k2.5",
         "NEXUS_OPENCODE_MODELS": "ollama-cloud/glm-5,ollama-cloud/kimi-k2.5,ollama-cloud/qwen3-coder-next,ollama-cloud/minimax-m2.5,ollama/gemini-3-flash-preview"
       }
@@ -110,10 +109,10 @@ uvx --reinstall nexus-mcp
       "command": "uvx",
       "args": ["nexus-mcp"],
       "env": {
-        "NEXUS_GEMINI_MODEL": "gemini-3-flash-preview",
-        "NEXUS_GEMINI_MODELS": "gemini-3.1-pro-preview,gemini-3-flash-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite",
         "NEXUS_CODEX_MODEL": "gpt-5.2",
         "NEXUS_CODEX_MODELS": "gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.2-codex,gpt-5.2,gpt-5.1-codex-max,gpt-5.1-codex-mini",
+        "NEXUS_CLAUDE_MODEL": "claude-sonnet-4-6",
+        "NEXUS_CLAUDE_MODELS": "claude-sonnet-4-6,claude-haiku-4-5-20251001",
         "NEXUS_OPENCODE_MODEL": "ollama-cloud/kimi-k2.5",
         "NEXUS_OPENCODE_MODELS": "ollama-cloud/glm-5,ollama-cloud/kimi-k2.5,ollama-cloud/qwen3-coder-next,ollama-cloud/minimax-m2.5,ollama/gemini-3-flash-preview"
       }
@@ -126,10 +125,10 @@ uvx --reinstall nexus-mcp
 
 ```bash
 claude mcp add nexus-mcp \
-  -e NEXUS_GEMINI_MODEL=gemini-3-flash-preview \
-  -e NEXUS_GEMINI_MODELS=gemini-3.1-pro-preview,gemini-3-flash-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite \
   -e NEXUS_CODEX_MODEL=gpt-5.2 \
   -e NEXUS_CODEX_MODELS=gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.2-codex,gpt-5.2,gpt-5.1-codex-max,gpt-5.1-codex-mini \
+  -e NEXUS_CLAUDE_MODEL=claude-sonnet-4-6 \
+  -e NEXUS_CLAUDE_MODELS=claude-sonnet-4-6,claude-haiku-4-5-20251001 \
   -e NEXUS_OPENCODE_MODEL=ollama-cloud/kimi-k2.5 \
   -e NEXUS_OPENCODE_MODELS=ollama-cloud/glm-5,ollama-cloud/kimi-k2.5,ollama-cloud/qwen3-coder-next,ollama-cloud/minimax-m2.5,ollama/gemini-3-flash-preview \
   -- uvx nexus-mcp
@@ -143,8 +142,8 @@ claude mcp add nexus-mcp \
   "args": ["nexus-mcp"],
   "transport": "stdio",
   "env": {
-    "NEXUS_GEMINI_MODEL": "gemini-3-flash-preview",
     "NEXUS_CODEX_MODEL": "gpt-5.2",
+    "NEXUS_CLAUDE_MODEL": "claude-sonnet-4-6",
     "NEXUS_OPENCODE_MODEL": "ollama-cloud/kimi-k2.5"
   }
 }
@@ -165,10 +164,14 @@ All `env` keys are optional — see [Configuration](#configuration) for the full
   ```
 
 **Optional (for integration tests):**
-- **Gemini CLI** v0.6.0+ — `npm install -g @google/gemini-cli`
 - **Codex** — check with `codex --version`
 - **Claude Code** — check with `claude --version`
 - **OpenCode** — check with `opencode --version`
+
+> **Claude Code note:** Nexus invokes Claude Code non-interactively via `claude -p`.
+> Anthropic says `claude -p` and Agent SDK usage draw from separate monthly Agent SDK
+> credits starting 2026-06-15; interactive Claude Code usage is not the same billing
+> surface.
 
 > **Note:** Integration tests are optional. Unit tests run without CLI dependencies via subprocess mocking.
 
@@ -228,7 +231,7 @@ The server binds to `127.0.0.1` (localhost only) by default for security. See [d
 ## Usage
 
 Once nexus-mcp is configured in your MCP client, your AI assistant automatically sees its tools.
-The reliable trigger is **explicitly asking for output from an external AI agent** (e.g. Gemini, Codex, Claude Code, OpenCode).
+The reliable trigger is **explicitly asking for output from an external AI agent** (e.g. Codex, Claude Code, OpenCode).
 Generic "do this in parallel" prompts may be handled by the host AI's own capabilities instead.
 The `cli` parameter is optional — if omitted and the client supports MCP elicitation, the server will
 ask which runner to use. The server provides runner metadata (names, models, availability,
@@ -240,13 +243,13 @@ includes a JSON schema enum listing valid runner names.
 
 #### Fan out a research question (batch_prompt)
 
-**You say:** "Get perspectives from Gemini, Codex, and OpenCode on transformer architectures."
+**You say:** "Get perspectives from Codex, Claude Code, and OpenCode on transformer architectures."
 
 ```json
 {
   "tasks": [
-    { "cli": "gemini", "prompt": "Summarize the key findings of the Attention Is All You Need paper", "label": "gemini-summary" },
-    { "cli": "codex", "prompt": "What are the main limitations of transformer architectures?", "label": "codex-limitations" },
+    { "cli": "codex", "prompt": "Summarize the key findings of the Attention Is All You Need paper", "label": "codex-summary" },
+    { "cli": "claude", "prompt": "What are the main limitations of transformer architectures?", "label": "claude-limitations" },
     { "cli": "opencode", "prompt": "List 3 real-world applications of transformers beyond NLP", "label": "opencode-applications" }
   ]
 }
@@ -254,13 +257,13 @@ includes a JSON schema enum listing valid runner names.
 
 #### Code review from multiple angles (batch_prompt)
 
-**You say:** "Have Gemini, Codex, and OpenCode each review this diff in parallel."
+**You say:** "Have Codex, Claude Code, and OpenCode each review this diff in parallel."
 
 ```json
 {
   "tasks": [
-    { "cli": "gemini", "prompt": "Review this diff for security vulnerabilities:\n\n<paste diff>", "label": "gemini-review" },
-    { "cli": "codex", "prompt": "Review this diff for correctness and edge cases:\n\n<paste diff>", "label": "codex-review" },
+    { "cli": "codex", "prompt": "Review this diff for security vulnerabilities:\n\n<paste diff>", "label": "codex-security-review" },
+    { "cli": "claude", "prompt": "Review this diff for correctness and edge cases:\n\n<paste diff>", "label": "claude-correctness-review" },
     { "cli": "opencode", "prompt": "Review this diff for style and maintainability:\n\n<paste diff>", "label": "opencode-review" }
   ]
 }
@@ -268,10 +271,10 @@ includes a JSON schema enum listing valid runner names.
 
 #### Single-agent prompt
 
-**You say:** "Ask Gemini Flash to explain the difference between TCP and UDP."
+**You say:** "Ask Codex to explain the difference between TCP and UDP."
 
 ```json
-{ "cli": "gemini", "prompt": "Explain the difference between TCP and UDP in simple terms", "model": "gemini-3-flash-preview" }
+{ "cli": "codex", "prompt": "Explain the difference between TCP and UDP in simple terms", "model": "gpt-5.2" }
 ```
 
 #### Elicitation (server picks the runner)
@@ -286,10 +289,10 @@ If the client supports MCP elicitation, the server asks which runner to use. Pas
 
 #### Persistent preferences
 
-**You say:** "Use YOLO mode with Gemini Flash from now on."
+**You say:** "Use YOLO mode with Codex from now on."
 
 ```json
-{ "execution_mode": "yolo", "model": "gemini-3-flash-preview", "max_retries": 5 }
+{ "execution_mode": "yolo", "model": "gpt-5.2", "max_retries": 5 }
 ```
 
 Subsequent calls inherit these settings. Preferences persist across MCP sessions until explicitly cleared.
@@ -328,7 +331,7 @@ poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `cli` | No | — | Runner name (e.g. `"gemini"`); if omitted, elicitation asks which runner to use |
+| `cli` | No | — | Runner name (e.g. `"codex"`); if omitted, elicitation asks which runner to use |
 | `prompt` | Yes | — | Prompt text |
 | `label` | No | auto | Display label for results |
 | `context` | No | `{}` | Optional context metadata dict |
@@ -351,7 +354,7 @@ Same parameters as a single task object in `batch_prompt`, plus `elicit` (batch-
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `execution_mode` | No | — | `"default"` or `"yolo"` |
-| `model` | No | — | Model name (e.g. `"gemini-3-flash-preview"`) |
+| `model` | No | — | Model name (e.g. `"gpt-5.2"`) |
 | `max_retries` | No | — | Max total attempts (≥1; 1 = no retries) |
 | `output_limit` | No | — | Max output bytes (≥1) |
 | `timeout` | No | — | Subprocess timeout seconds (≥1) |
@@ -450,7 +453,7 @@ Read-only data endpoints that clients query for runner metadata, configuration, 
 | `nexus://config` | Resolved operational config defaults (timeouts, retries, output limits) |
 | `nexus://preferences` | Current preferences with config fallback |
 
-Models in `nexus://runners` include tier data: `{"name": "gemini-2.5-flash", "tier": "quick"}`. Tiers are `quick` (fast/cheap), `standard` (balanced), or `thorough` (max quality). Models with only heuristic tiers appear in `unclassified_models` — calling `set_model_tiers` moves them out.
+Models in `nexus://runners` include tier data: `{"name": "gpt-5.4-mini", "tier": "quick"}`. Tiers are `quick` (fast/cheap), `standard` (balanced), or `thorough` (max quality). Models with only heuristic tiers appear in `unclassified_models` — calling `set_model_tiers` moves them out.
 
 <details>
 <summary><strong>Model tier enrichment examples</strong></summary>
@@ -460,11 +463,11 @@ Models in `nexus://runners` include tier data: `{"name": "gemini-2.5-flash", "ti
 ```json
 {
   "models": [
-    {"name": "gemini-3.1-pro-preview", "tier": "thorough"},
-    {"name": "gemini-2.5-flash", "tier": "quick"},
-    {"name": "gemini-2.5-flash-lite", "tier": "quick"}
+    {"name": "gpt-5.1-codex-max", "tier": "thorough"},
+    {"name": "gpt-5.4-mini", "tier": "quick"},
+    {"name": "claude-sonnet-4-6", "tier": "standard"}
   ],
-  "unclassified_models": ["gemini-3.1-pro-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+  "unclassified_models": ["gpt-5.1-codex-max", "gpt-5.4-mini", "claude-sonnet-4-6"]
 }
 ```
 
@@ -473,9 +476,9 @@ Models in `nexus://runners` include tier data: `{"name": "gemini-2.5-flash", "ti
 ```json
 {
   "models": [
-    {"name": "gemini-3.1-pro-preview", "tier": "thorough"},
-    {"name": "gemini-2.5-flash", "tier": "quick"},
-    {"name": "gemini-2.5-flash-lite", "tier": "quick"}
+    {"name": "gpt-5.1-codex-max", "tier": "thorough"},
+    {"name": "gpt-5.4-mini", "tier": "quick"},
+    {"name": "claude-sonnet-4-6", "tier": "standard"}
   ],
   "unclassified_models": []
 }
@@ -503,18 +506,18 @@ Models in `nexus://runners` include tier data: `{"name": "gemini-2.5-flash", "ti
 
 Pattern: `NEXUS_{AGENT}_{KEY}` (agent name uppercased). Per-runner values override global values.
 
-Valid `{AGENT}` values: `CLAUDE`, `CODEX`, `GEMINI`, `OPENCODE`
+Valid `{AGENT}` values: `CLAUDE`, `CODEX`, `OPENCODE`, `OPENCODE_SERVER`
 
 | Variable pattern | Example | Description |
 |----------|---------|-------------|
-| `NEXUS_{AGENT}_MODEL` | `NEXUS_GEMINI_MODEL=gemini-3-flash-preview` | Default model for this runner |
-| `NEXUS_{AGENT}_MODELS` | `NEXUS_GEMINI_MODELS=gemini-3-flash-preview,gemini-2.5-pro` | Comma-separated model list (surfaced in server instructions) |
-| `NEXUS_{AGENT}_TIMEOUT` | `NEXUS_GEMINI_TIMEOUT=900` | Subprocess timeout override |
+| `NEXUS_{AGENT}_MODEL` | `NEXUS_CODEX_MODEL=gpt-5.2` | Default model for this runner |
+| `NEXUS_{AGENT}_MODELS` | `NEXUS_CODEX_MODELS=gpt-5.2,gpt-5.4-mini` | Comma-separated model list (surfaced in server instructions) |
+| `NEXUS_{AGENT}_TIMEOUT` | `NEXUS_CODEX_TIMEOUT=900` | Subprocess timeout override |
 | `NEXUS_{AGENT}_OUTPUT_LIMIT` | `NEXUS_CODEX_OUTPUT_LIMIT=100000` | Output limit override |
 | `NEXUS_{AGENT}_MAX_RETRIES` | `NEXUS_CLAUDE_MAX_RETRIES=5` | Max retry attempts override |
-| `NEXUS_{AGENT}_RETRY_BASE_DELAY` | `NEXUS_GEMINI_RETRY_BASE_DELAY=1.0` | Backoff base delay override |
-| `NEXUS_{AGENT}_RETRY_MAX_DELAY` | `NEXUS_GEMINI_RETRY_MAX_DELAY=30.0` | Backoff max delay override |
-| `NEXUS_{AGENT}_EXECUTION_MODE` | `NEXUS_GEMINI_EXECUTION_MODE=yolo` | Execution mode override |
+| `NEXUS_{AGENT}_RETRY_BASE_DELAY` | `NEXUS_CLAUDE_RETRY_BASE_DELAY=1.0` | Backoff base delay override |
+| `NEXUS_{AGENT}_RETRY_MAX_DELAY` | `NEXUS_OPENCODE_RETRY_MAX_DELAY=30.0` | Backoff max delay override |
+| `NEXUS_{AGENT}_EXECUTION_MODE` | `NEXUS_CODEX_EXECUTION_MODE=yolo` | Execution mode override |
 
 Invalid per-runner values are silently ignored (the global or hardcoded default is used instead).
 
@@ -540,7 +543,7 @@ uv run pytest -m "not integration"     # Unit tests only
 uv run pytest -m "not slow"            # Skip slow tests
 
 # Run specific test file
-uv run pytest tests/unit/runners/test_gemini.py
+uv run pytest tests/unit/runners/test_codex.py
 ```
 
 **Test markers:**
@@ -614,8 +617,8 @@ nexus-mcp/
 │       ├── factory.py      # RunnerFactory
 │       ├── claude.py       # ClaudeRunner
 │       ├── codex.py        # CodexRunner
-│       ├── gemini.py       # GeminiRunner
-│       └── opencode.py     # OpenCodeRunner
+│       ├── opencode.py     # OpenCodeRunner
+│       └── opencode_server.py # OpenCode server runner
 ├── tests/
 │   ├── unit/               # Fast, mocked tests
 │   │   └── prompts/        # Prompt template tests

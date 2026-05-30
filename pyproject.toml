@@ -17,8 +17,6 @@ keywords = [
     "codex",
     "codex-cli",
     "fastmcp",
-    "gemini",
-    "gemini-cli",
     "mcp",
     "mcp-server",
     "model-context-protocol",
