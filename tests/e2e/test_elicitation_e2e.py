@@ -14,7 +14,7 @@ import pytest
 from fastmcp.exceptions import ToolError
 
 from nexus_mcp.elicitation import ElicitationGuard
-from tests.fixtures import GEMINI_JSON_RESPONSE, create_mock_process, strip_runner_header
+from tests.fixtures import strip_runner_header
 
 
 @pytest.fixture(autouse=True)
@@ -35,17 +35,17 @@ def _reset_elicitation_cache():
 class TestElicitationGracefulSkip:
     """Verify prompt and batch_prompt tools with elicit=False through full MCP protocol."""
 
-    async def test_prompt_with_elicit_false(self, mock_subprocess, mcp_client):
+    async def test_prompt_with_elicit_false(
+        self, mock_subprocess, mcp_client, fake_runner_registry
+    ):
         """prompt with cli set and elicit=False succeeds without any elicitation."""
-        mock_subprocess.return_value = create_mock_process(stdout=GEMINI_JSON_RESPONSE)
-
         result = await mcp_client.call_tool(
             "prompt",
-            {"cli": "gemini", "prompt": "Hello world test", "elicit": False},
+            {"cli": fake_runner_registry, "prompt": "Hello world test", "elicit": False},
         )
 
         assert result.is_error is False
-        assert strip_runner_header(result.data) == "test output"
+        assert strip_runner_header(result.data) == "fake output"
 
     async def test_prompt_without_cli_and_elicit_false_errors(self, mcp_client):
         """prompt without cli and elicit=False raises ToolError about cli being required."""
@@ -55,14 +55,14 @@ class TestElicitationGracefulSkip:
                 {"prompt": "Hello world test", "elicit": False},
             )
 
-    async def test_batch_prompt_with_elicit_false(self, mock_subprocess, mcp_client):
+    async def test_batch_prompt_with_elicit_false(
+        self, mock_subprocess, mcp_client, fake_runner_registry
+    ):
         """batch_prompt with all tasks having cli set and elicit=False succeeds."""
-        mock_subprocess.return_value = create_mock_process(stdout=GEMINI_JSON_RESPONSE)
-
         result = await mcp_client.call_tool(
             "batch_prompt",
             {
-                "tasks": [{"cli": "gemini", "prompt": "Hello world test"}],
+                "tasks": [{"cli": fake_runner_registry, "prompt": "Hello world test"}],
                 "elicit": False,
             },
         )

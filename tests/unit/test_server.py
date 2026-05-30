@@ -28,8 +28,7 @@ from nexus_mcp.server import (
 )
 from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY, AgentTask, MultiPromptResponse
 from tests.fixtures import (
-    GEMINI_JSON_RESPONSE,
-    create_mock_process,
+    REPRESENTATIVE_CLI,
     make_agent_response,
     make_agent_task,
     strip_runner_header,
@@ -65,12 +64,12 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Agent response")
 
         result = await prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             prompt="Test prompt",
         )
 
         assert strip_runner_header(result) == "Agent response"
-        mock_factory.create.assert_called_once_with("gemini")
+        mock_factory.create.assert_called_once_with(REPRESENTATIVE_CLI)
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.prompt == "Test prompt"
         assert call_args.context == {}
@@ -83,7 +82,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             prompt="Complex task",
             execution_mode="yolo",
         )
@@ -97,13 +96,13 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             prompt="Test prompt",
-            model="gemini-2.5-flash",
+            model="representative-model",
         )
 
         call_args = mock_runner.run.call_args.args[0]
-        assert call_args.model == "gemini-2.5-flash"
+        assert call_args.model == "representative-model"
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_prompt_passes_context(self, mock_factory):
@@ -111,7 +110,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             prompt="Test prompt",
             context={"key": "value"},
         )
@@ -140,7 +139,7 @@ class TestPrompt:
 
         with pytest.raises(ToolError, match="CLI command failed"):
             await prompt(
-                cli="gemini",
+                cli=REPRESENTATIVE_CLI,
                 prompt="Test prompt",
             )
 
@@ -150,7 +149,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             prompt="Test prompt",
             max_retries=7,
         )
@@ -164,7 +163,7 @@ class TestPrompt:
         mock_runner = _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             prompt="Test prompt",
         )
 
@@ -177,7 +176,7 @@ class TestPrompt:
         _setup_mock_runner(mock_factory, output="Done")
 
         await prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             prompt="Test prompt",
             ctx=ctx,
         )
@@ -190,12 +189,12 @@ class TestPrompt:
         """ToolError message includes [ErrorType] prefix when error_type is set."""
         _setup_mock_runner(
             mock_factory,
-            side_effect=ParseError("Invalid JSON from Gemini CLI"),
+            side_effect=ParseError("Invalid runner output"),
         )
 
-        with pytest.raises(ToolError, match=r"\[ParseError\].*Invalid JSON from Gemini CLI"):
+        with pytest.raises(ToolError, match=r"\[ParseError\].*Invalid runner output"):
             await prompt(
-                cli="gemini",
+                cli=REPRESENTATIVE_CLI,
                 prompt="Test prompt",
             )
 
@@ -223,51 +222,54 @@ class TestAssignLabels:
 
     def test_single_task_gets_agent_name(self):
         """A single unlabeled task gets its agent name as label."""
-        tasks = [make_agent_task(cli="gemini")]
+        tasks = [make_agent_task(cli=REPRESENTATIVE_CLI)]
         result = assign_labels(tasks)
-        assert result[0].label == "gemini"
+        assert result[0].label == REPRESENTATIVE_CLI
 
     def test_two_identical_agents_get_suffixes(self):
         """Two tasks with the same agent get 'agent' and 'agent-2'."""
-        tasks = [make_agent_task(cli="gemini"), make_agent_task(cli="gemini")]
+        tasks = [
+            make_agent_task(cli=REPRESENTATIVE_CLI),
+            make_agent_task(cli=REPRESENTATIVE_CLI),
+        ]
         result = assign_labels(tasks)
-        assert result[0].label == "gemini"
-        assert result[1].label == "gemini-2"
+        assert result[0].label == REPRESENTATIVE_CLI
+        assert result[1].label == f"{REPRESENTATIVE_CLI}-2"
 
     def test_three_identical_agents_get_suffixes(self):
         """Three tasks with the same agent get 'agent', 'agent-2', 'agent-3'."""
-        tasks = [make_agent_task(cli="gemini") for _ in range(3)]
+        tasks = [make_agent_task(cli=REPRESENTATIVE_CLI) for _ in range(3)]
         result = assign_labels(tasks)
-        assert result[0].label == "gemini"
-        assert result[1].label == "gemini-2"
-        assert result[2].label == "gemini-3"
+        assert result[0].label == REPRESENTATIVE_CLI
+        assert result[1].label == f"{REPRESENTATIVE_CLI}-2"
+        assert result[2].label == f"{REPRESENTATIVE_CLI}-3"
 
     def test_explicit_label_preserved(self):
         """An explicit label is kept as-is, not overwritten."""
-        tasks = [make_agent_task(cli="gemini", label="my-task")]
+        tasks = [make_agent_task(cli=REPRESENTATIVE_CLI, label="my-task")]
         result = assign_labels(tasks)
         assert result[0].label == "my-task"
 
     def test_explicit_label_blocks_auto_name(self):
-        """If 'gemini' is already an explicit label, auto-assigned gets 'gemini-2'."""
+        """If a representative label exists, auto-assigned labels get suffixes."""
         tasks = [
-            make_agent_task(cli="gemini", label="gemini"),
-            make_agent_task(cli="gemini"),
+            make_agent_task(cli=REPRESENTATIVE_CLI, label=REPRESENTATIVE_CLI),
+            make_agent_task(cli=REPRESENTATIVE_CLI),
         ]
         result = assign_labels(tasks)
-        assert result[0].label == "gemini"
-        assert result[1].label == "gemini-2"
+        assert result[0].label == REPRESENTATIVE_CLI
+        assert result[1].label == f"{REPRESENTATIVE_CLI}-2"
 
     def test_mixed_agents_no_suffix(self):
         """Different agents don't get suffixes when there are no collisions."""
-        tasks = [make_agent_task(cli="gemini"), make_agent_task(cli="codex")]
+        tasks = [make_agent_task(cli=REPRESENTATIVE_CLI), make_agent_task(cli="codex")]
         result = assign_labels(tasks)
-        assert result[0].label == "gemini"
+        assert result[0].label == REPRESENTATIVE_CLI
         assert result[1].label == "codex"
 
     def test_returns_new_list_does_not_mutate(self):
         """assign_labels() returns a new list; input tasks are unchanged."""
-        tasks = [make_agent_task(cli="gemini")]
+        tasks = [make_agent_task(cli=REPRESENTATIVE_CLI)]
         assert tasks[0].label is None
         result = assign_labels(tasks)
         assert tasks[0].label is None  # original unchanged
@@ -379,7 +381,10 @@ class TestBatchPrompt:
         """Unlabeled tasks receive unique auto-assigned labels."""
         _setup_mock_runner(mock_factory)
 
-        tasks = [make_agent_task(cli="gemini"), make_agent_task(cli="gemini")]
+        tasks = [
+            make_agent_task(cli=REPRESENTATIVE_CLI),
+            make_agent_task(cli=REPRESENTATIVE_CLI),
+        ]
         result = await batch_prompt(tasks=tasks)
 
         labels = [r.label for r in result.results]
@@ -422,9 +427,9 @@ class TestBatchPrompt:
         """A single task's label is the agent name without any suffix."""
         _setup_mock_runner(mock_factory)
 
-        result = await batch_prompt(tasks=[make_agent_task(cli="gemini")])
+        result = await batch_prompt(tasks=[make_agent_task(cli=REPRESENTATIVE_CLI)])
 
-        assert result.results[0].label == "gemini"
+        assert result.results[0].label == REPRESENTATIVE_CLI
 
     @patch("nexus_mcp.server.RunnerFactory")
     async def test_ctx_info_called_on_start_and_complete(self, mock_factory, ctx):
@@ -471,7 +476,7 @@ class TestBatchPrompt:
         """error_type is set to the exception class name when runner raises."""
         _setup_mock_runner(
             mock_factory,
-            side_effect=ParseError("Invalid JSON from Gemini CLI"),
+            side_effect=ParseError("Invalid runner output"),
         )
 
         result = await batch_prompt(tasks=[make_agent_task()])
@@ -496,7 +501,7 @@ class TestBatchPrompt:
 
         _setup_mock_runner(
             mock_factory,
-            side_effect=ParseError("Invalid JSON from Gemini CLI"),
+            side_effect=ParseError("Invalid runner output"),
         )
 
         with caplog.at_level(logging.ERROR, logger="nexus_mcp.server"):
@@ -586,17 +591,17 @@ class TestServerInstructions:
         assert "yolo" in result
 
     def test_instructions_include_models_when_set(self, monkeypatch):
-        """When NEXUS_GEMINI_MODELS is set, instructions list those models."""
-        monkeypatch.setenv("NEXUS_GEMINI_MODELS", "gemini-2.5-flash,gemini-2.5-pro")
+        """When NEXUS_CODEX_MODELS is set, instructions list those models."""
+        monkeypatch.setenv("NEXUS_CODEX_MODELS", "gpt-5.4-mini,gpt-5.3-codex")
         result = build_server_instructions()
-        assert "gemini-2.5-flash" in result
-        assert "gemini-2.5-pro" in result
+        assert "gpt-5.4-mini" in result
+        assert "gpt-5.3-codex" in result
 
     def test_instructions_include_default_model_when_configured(self, monkeypatch):
         """When NEXUS_{RUNNER}_MODEL is set, instructions include the default model line."""
-        monkeypatch.setenv("NEXUS_GEMINI_MODEL", "gemini-2.5-pro")
+        monkeypatch.setenv("NEXUS_CODEX_MODEL", "gpt-5.4")
         result = build_server_instructions()
-        assert "- Default model: gemini-2.5-pro" in result
+        assert "- Default model: gpt-5.4" in result
 
 
 class TestInjectCliEnumEdgeCases:
@@ -775,7 +780,8 @@ class TestMakeMcpEmitter:
 
 
 class TestPromptElicitation:
-    async def test_prompt_accepts_elicit_parameter(self, mock_cli_detection, mock_subprocess, ctx):
-        mock_subprocess.return_value = create_mock_process(stdout=GEMINI_JSON_RESPONSE)
-        result = await prompt(cli="gemini", prompt="Hello world test prompt", elicit=False, ctx=ctx)
-        assert "test output" in result
+    async def test_prompt_accepts_elicit_parameter(self, fake_runner_registry, ctx):
+        result = await prompt(
+            cli=fake_runner_registry, prompt="Hello world test prompt", elicit=False, ctx=ctx
+        )
+        assert "fake output" in result

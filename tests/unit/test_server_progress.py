@@ -12,7 +12,7 @@ from nexus_mcp.server import (
     prompt,
 )
 from nexus_mcp.types import AgentTask
-from tests.fixtures import GEMINI_JSON_RESPONSE, create_mock_process
+from tests.fixtures import CODEX_NDJSON_RESPONSE, create_mock_process
 
 
 class TestMakeProgressEmitter:
@@ -77,8 +77,8 @@ class TestBatchPromptProgressWiring:
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_single_task_uses_unwrapped_emitter(self, mock_exec, ctx):
         """Single task via batch_prompt should use unwrapped progress emitter."""
-        mock_exec.return_value = create_mock_process(stdout=GEMINI_JSON_RESPONSE, returncode=0)
-        task = AgentTask(cli="gemini", prompt="test", execution_mode="default")
+        mock_exec.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE, returncode=0)
+        task = AgentTask(cli="codex", prompt="test", execution_mode="default")
 
         await batch_prompt(tasks=[task], ctx=ctx)
 
@@ -95,10 +95,10 @@ class TestBatchPromptProgressWiring:
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_multi_task_uses_wrapped_emitter(self, mock_exec, ctx):
         """Multi-task batch should use wrapped progress emitter with task prefix."""
-        mock_exec.return_value = create_mock_process(stdout=GEMINI_JSON_RESPONSE, returncode=0)
+        mock_exec.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE, returncode=0)
         tasks = [
-            AgentTask(cli="gemini", prompt="task1", label="first", execution_mode="default"),
-            AgentTask(cli="gemini", prompt="task2", label="second", execution_mode="default"),
+            AgentTask(cli="codex", prompt="task1", label="first", execution_mode="default"),
+            AgentTask(cli="codex", prompt="task2", label="second", execution_mode="default"),
         ]
 
         await batch_prompt(tasks=tasks, ctx=ctx)
@@ -118,9 +118,9 @@ class TestPromptProgressWiring:
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_prompt_reports_progress(self, mock_exec, ctx):
         """prompt() should report runner-level progress (unwrapped)."""
-        mock_exec.return_value = create_mock_process(stdout=GEMINI_JSON_RESPONSE, returncode=0)
+        mock_exec.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE, returncode=0)
 
-        await prompt(cli="gemini", prompt="test", ctx=ctx)
+        await prompt(cli="codex", prompt="test", ctx=ctx)
 
         # Verify progress was reported
         assert ctx.report_progress.await_count >= 1

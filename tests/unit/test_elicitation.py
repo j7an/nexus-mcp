@@ -15,6 +15,7 @@ from mcp.types import ErrorData
 
 from nexus_mcp.elicitation import ElicitationGuard
 from nexus_mcp.types import AgentTask, SessionPreferences
+from tests.fixtures import REPRESENTATIVE_CLI
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -30,7 +31,7 @@ def mock_ctx() -> AsyncMock:
 
 @pytest.fixture
 def installed_clis() -> list[str]:
-    return ["gemini", "codex", "claude"]
+    return [REPRESENTATIVE_CLI, "codex", "claude"]
 
 
 # ---------------------------------------------------------------------------
@@ -50,14 +51,14 @@ class TestShortCircuit:
     ) -> None:
         guard = ElicitationGuard(mock_ctx, installed_clis)
         result = await guard.check_prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             model=None,
             execution_mode="default",
             prompt_text="explain quantum computing in depth",
             elicit=False,
         )
         mock_ctx.elicit.assert_not_called()
-        assert result.cli == "gemini"
+        assert result.cli == REPRESENTATIVE_CLI
 
     async def test_unsupported_client_skips_silently(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
@@ -79,14 +80,14 @@ class TestShortCircuit:
     ) -> None:
         guard = ElicitationGuard(mock_ctx, installed_clis)
         result = await guard.check_prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             model="gemini-2.5-flash",
             execution_mode="default",
             prompt_text="explain quantum computing in depth",
             elicit=True,
         )
         mock_ctx.elicit.assert_not_called()
-        assert result.cli == "gemini"
+        assert result.cli == REPRESENTATIVE_CLI
         assert result.model == "gemini-2.5-flash"
         assert result.execution_mode == "default"
 
@@ -106,7 +107,7 @@ class TestCliDisambiguation:
     async def test_fires_when_cli_none(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
-        mock_ctx.elicit.return_value = AcceptedElicitation(data="gemini")
+        mock_ctx.elicit.return_value = AcceptedElicitation(data="fake")
         guard = ElicitationGuard(mock_ctx, installed_clis)
         result = await guard.check_prompt(
             cli=None,
@@ -116,7 +117,7 @@ class TestCliDisambiguation:
             elicit=True,
         )
         mock_ctx.elicit.assert_called_once()
-        assert result.cli == "gemini"
+        assert result.cli == REPRESENTATIVE_CLI
 
     async def test_decline_raises_tool_error(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
@@ -151,14 +152,14 @@ class TestCliDisambiguation:
     ) -> None:
         guard = ElicitationGuard(mock_ctx, installed_clis)
         result = await guard.check_prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             model=None,
             execution_mode="default",
             prompt_text="explain quantum computing in depth",
             elicit=True,
         )
         mock_ctx.elicit.assert_not_called()
-        assert result.cli == "gemini"
+        assert result.cli == REPRESENTATIVE_CLI
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +181,7 @@ class TestModelSelection:
         with patch("nexus_mcp.elicitation.get_runner_models", return_value=("pro", "flash")):
             guard = ElicitationGuard(mock_ctx, installed_clis)
             result = await guard.check_prompt(
-                cli="gemini",
+                cli=REPRESENTATIVE_CLI,
                 model=None,
                 execution_mode="default",
                 prompt_text="explain quantum computing in depth",
@@ -196,7 +197,7 @@ class TestModelSelection:
         with patch("nexus_mcp.elicitation.get_runner_models", return_value=("pro", "flash")):
             guard = ElicitationGuard(mock_ctx, installed_clis)
             result = await guard.check_prompt(
-                cli="gemini",
+                cli=REPRESENTATIVE_CLI,
                 model=None,
                 execution_mode="default",
                 prompt_text="explain quantum computing in depth",
@@ -210,7 +211,7 @@ class TestModelSelection:
         with patch("nexus_mcp.elicitation.get_runner_models", return_value=("pro", "flash")):
             guard = ElicitationGuard(mock_ctx, installed_clis)
             result = await guard.check_prompt(
-                cli="gemini",
+                cli=REPRESENTATIVE_CLI,
                 model="flash",
                 execution_mode="default",
                 prompt_text="explain quantum computing in depth",
@@ -225,7 +226,7 @@ class TestModelSelection:
         with patch("nexus_mcp.elicitation.get_runner_models", return_value=("flash",)):
             guard = ElicitationGuard(mock_ctx, installed_clis)
             await guard.check_prompt(
-                cli="gemini",
+                cli=REPRESENTATIVE_CLI,
                 model=None,
                 execution_mode="default",
                 prompt_text="explain quantum computing in depth",
@@ -239,7 +240,7 @@ class TestModelSelection:
         with patch("nexus_mcp.elicitation.get_runner_models", return_value=()):
             guard = ElicitationGuard(mock_ctx, installed_clis)
             await guard.check_prompt(
-                cli="gemini",
+                cli=REPRESENTATIVE_CLI,
                 model=None,
                 execution_mode="default",
                 prompt_text="explain quantum computing in depth",
@@ -268,7 +269,7 @@ class TestYoloConfirmation:
         ):
             guard = ElicitationGuard(mock_ctx, installed_clis)
             result = await guard.check_prompt(
-                cli="gemini",
+                cli=REPRESENTATIVE_CLI,
                 model=None,
                 execution_mode="yolo",
                 prompt_text="explain quantum computing in depth",
@@ -283,7 +284,7 @@ class TestYoloConfirmation:
         mock_ctx.elicit.return_value = DeclinedElicitation()
         guard = ElicitationGuard(mock_ctx, installed_clis)
         result = await guard.check_prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             model=None,
             execution_mode="yolo",
             prompt_text="explain quantum computing in depth",
@@ -296,7 +297,7 @@ class TestYoloConfirmation:
     ) -> None:
         guard = ElicitationGuard(mock_ctx, installed_clis)
         await guard.check_prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             model=None,
             execution_mode="default",
             prompt_text="explain quantum computing in depth",
@@ -314,7 +315,7 @@ class TestYoloConfirmation:
         ):
             guard = ElicitationGuard(mock_ctx, installed_clis)
             await guard.check_prompt(
-                cli="gemini",
+                cli=REPRESENTATIVE_CLI,
                 model=None,
                 execution_mode="yolo",
                 prompt_text="explain quantum computing in depth",
@@ -331,7 +332,7 @@ class TestYoloConfirmation:
         prefs = SessionPreferences(confirm_yolo=False)
         guard = ElicitationGuard(mock_ctx, installed_clis, prefs=prefs)
         result = await guard.check_prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             model=None,
             execution_mode="yolo",
             prompt_text="explain quantum computing in depth",
@@ -351,7 +352,7 @@ class TestYoloConfirmation:
         ):
             guard = ElicitationGuard(mock_ctx, installed_clis, prefs=prefs)
             await guard.check_prompt(
-                cli="gemini",
+                cli=REPRESENTATIVE_CLI,
                 model=None,
                 execution_mode="yolo",
                 prompt_text="explain quantum computing in depth",
@@ -378,7 +379,7 @@ class TestVaguePromptCheck:
         mock_ctx.elicit.return_value = AcceptedElicitation(data="elaborated prompt text")
         guard = ElicitationGuard(mock_ctx, installed_clis)
         result = await guard.check_prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             model=None,
             execution_mode="default",
             prompt_text="explain QC",
@@ -393,7 +394,7 @@ class TestVaguePromptCheck:
         mock_ctx.elicit.return_value = DeclinedElicitation()
         guard = ElicitationGuard(mock_ctx, installed_clis)
         result = await guard.check_prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             model=None,
             execution_mode="default",
             prompt_text="explain QC",
@@ -406,7 +407,7 @@ class TestVaguePromptCheck:
     ) -> None:
         guard = ElicitationGuard(mock_ctx, installed_clis)
         await guard.check_prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             model=None,
             execution_mode="default",
             prompt_text="explain quantum computing in depth",
@@ -421,7 +422,7 @@ class TestVaguePromptCheck:
         with patch("nexus_mcp.elicitation.save_preferences") as mock_save:
             guard = ElicitationGuard(mock_ctx, installed_clis)
             await guard.check_prompt(
-                cli="gemini",
+                cli=REPRESENTATIVE_CLI,
                 model=None,
                 execution_mode="default",
                 prompt_text="explain QC",
@@ -435,7 +436,7 @@ class TestVaguePromptCheck:
         prefs = SessionPreferences(confirm_vague_prompt=False)
         guard = ElicitationGuard(mock_ctx, installed_clis, prefs=prefs)
         result = await guard.check_prompt(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             model=None,
             execution_mode="default",
             prompt_text="explain QC",
@@ -463,11 +464,21 @@ class TestBatchElicitation:
         """3 out of 5 YOLO tasks triggers a single elicit with count in message."""
         mock_ctx.elicit.return_value = AcceptedElicitation(data={})
         tasks = [
-            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="yolo"),
-            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="yolo"),
-            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="yolo"),
-            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="default"),
-            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="default"),
+            AgentTask(
+                cli=REPRESENTATIVE_CLI, prompt="do something useful here", execution_mode="yolo"
+            ),
+            AgentTask(
+                cli=REPRESENTATIVE_CLI, prompt="do something useful here", execution_mode="yolo"
+            ),
+            AgentTask(
+                cli=REPRESENTATIVE_CLI, prompt="do something useful here", execution_mode="yolo"
+            ),
+            AgentTask(
+                cli=REPRESENTATIVE_CLI, prompt="do something useful here", execution_mode="default"
+            ),
+            AgentTask(
+                cli=REPRESENTATIVE_CLI, prompt="do something useful here", execution_mode="default"
+            ),
         ]
         with (
             patch("nexus_mcp.elicitation.load_preferences", return_value=None),
@@ -485,9 +496,15 @@ class TestBatchElicitation:
         """Declining YOLO confirmation downgrades all YOLO tasks to default."""
         mock_ctx.elicit.return_value = DeclinedElicitation()
         tasks = [
-            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="yolo"),
-            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="yolo"),
-            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="default"),
+            AgentTask(
+                cli=REPRESENTATIVE_CLI, prompt="do something useful here", execution_mode="yolo"
+            ),
+            AgentTask(
+                cli=REPRESENTATIVE_CLI, prompt="do something useful here", execution_mode="yolo"
+            ),
+            AgentTask(
+                cli=REPRESENTATIVE_CLI, prompt="do something useful here", execution_mode="default"
+            ),
         ]
         guard = ElicitationGuard(mock_ctx, installed_clis)
         result = await guard.check_batch(tasks, elicit=True)
@@ -500,7 +517,7 @@ class TestBatchElicitation:
     ) -> None:
         """elicit=False + task with cli=None → ToolError."""
         tasks = [
-            AgentTask(cli="gemini", prompt="do something useful here"),
+            AgentTask(cli=REPRESENTATIVE_CLI, prompt="do something useful here"),
             AgentTask(cli=None, prompt="do something useful here"),
         ]
         guard = ElicitationGuard(mock_ctx, installed_clis)
@@ -512,7 +529,7 @@ class TestBatchElicitation:
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
         """2 tasks with cli=None → single elicit call, both tasks get chosen CLI."""
-        mock_ctx.elicit.return_value = AcceptedElicitation(data="gemini")
+        mock_ctx.elicit.return_value = AcceptedElicitation(data="fake")
         tasks = [
             AgentTask(cli=None, prompt="do something useful here"),
             AgentTask(cli=None, prompt="do something useful here"),
@@ -521,8 +538,8 @@ class TestBatchElicitation:
         guard = ElicitationGuard(mock_ctx, installed_clis)
         result = await guard.check_batch(tasks, elicit=True)
         mock_ctx.elicit.assert_called_once()
-        assert result[0].cli == "gemini"
-        assert result[1].cli == "gemini"
+        assert result[0].cli == REPRESENTATIVE_CLI
+        assert result[1].cli == REPRESENTATIVE_CLI
         assert result[2].cli == "codex"
 
     async def test_batch_cli_decline_raises(
@@ -542,7 +559,9 @@ class TestBatchElicitation:
     ) -> None:
         """elicit=False with all tasks having cli set → no elicit calls, even for YOLO."""
         tasks = [
-            AgentTask(cli="gemini", prompt="do something useful here", execution_mode="yolo"),
+            AgentTask(
+                cli=REPRESENTATIVE_CLI, prompt="do something useful here", execution_mode="yolo"
+            ),
         ]
         guard = ElicitationGuard(mock_ctx, installed_clis)
         result = await guard.check_batch(tasks, elicit=False)

@@ -22,18 +22,19 @@ class TestMiddlewarePipeline:
     async def test_full_pipeline_logs_for_successful_call(self, mock_factory, mcp_client, caplog):
         """A successful prompt call produces timing and request logs."""
         mock_runner = AsyncMock()
-        mock_runner.run.return_value = make_agent_response(output="hello")
+        cli = "fake"
+        mock_runner.run.return_value = make_agent_response(cli=cli, output="hello")
         mock_factory.create.return_value = mock_runner
 
         with caplog.at_level(logging.DEBUG, logger="nexus_mcp.middleware"):
             await mcp_client.call_tool(
                 "prompt",
-                {"cli": "gemini", "prompt": "say hello"},
+                {"cli": cli, "prompt": "say hello"},
             )
 
         # RequestLoggingMiddleware entry + exit
         assert "Tool 'prompt' called" in caplog.text
-        assert "cli=gemini" in caplog.text
+        assert f"cli={cli}" in caplog.text
         assert "Tool 'prompt' completed" in caplog.text
 
         # TimingMiddleware
@@ -68,7 +69,7 @@ class TestMiddlewarePipeline:
             await mcp_client.call_tool(
                 "batch_prompt",
                 {
-                    "tasks": [{"cli": "gemini", "prompt": "hello"}],
+                    "tasks": [{"cli": "fake", "prompt": "hello"}],
                     "max_concurrency": 0,
                 },
             )

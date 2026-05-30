@@ -8,17 +8,52 @@ Verifies all runner features work together in a single execution:
 5. Retry + output truncation work together end-to-end
 """
 
+import json
 import os
 from unittest.mock import patch
 
-from nexus_mcp.runners.gemini import GeminiRunner
-from tests.fixtures import create_mock_process, make_prompt_request
+from nexus_mcp.exceptions import ParseError
+from nexus_mcp.runners.base import AbstractRunner
+from nexus_mcp.types import AgentResponse, PromptRequest
+from tests.fixtures import REPRESENTATIVE_CLI, create_mock_process, make_prompt_request
+
+
+class PipelineFakeRunner(AbstractRunner):
+    """Minimal runner that exercises AbstractRunner's subprocess pipeline."""
+
+    AGENT_NAME = REPRESENTATIVE_CLI
+
+    def __init__(self) -> None:
+        self.timeout = 30
+        self.base_delay = 0.01
+        self.max_delay = 0.01
+        self.default_max_attempts = 1
+        self.output_limit = int(os.environ.get("NEXUS_OUTPUT_LIMIT_BYTES", "50000"))
+        self.default_model = None
+        self.cli_path = self.AGENT_NAME
+
+    def build_command(self, request: PromptRequest) -> list[str]:
+        return [self.cli_path, "-p", self._build_prompt(request)]
+
+    def parse_output(self, stdout: str, stderr: str) -> AgentResponse:
+        try:
+            output = json.loads(stdout)["response"]
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise ParseError("Failed to parse fake output", raw_output=stdout) from exc
+        return AgentResponse(cli=self.AGENT_NAME, output=output, raw_output=stdout)
+
+    def _try_extract_error(
+        self, stdout: str, stderr: str, returncode: int, command: list[str] | None = None
+    ) -> None:
+        error = json.loads(stdout)["error"]
+        self._raise_structured_error(
+            error["message"], error["code"], stdout, stderr, returncode, command
+        )
 
 
 @patch.dict(
     os.environ,
     {
-        "NEXUS_GEMINI_MODEL": "gemini-2.5-flash",
         "NEXUS_OUTPUT_LIMIT_BYTES": "1000",
     },
 )
@@ -34,7 +69,7 @@ async def test_all_enhancements_together(mock_exec):
         returncode=1,  # Error recovery scenario (Step 2)
     )
 
-    runner = GeminiRunner()
+    runner = PipelineFakeRunner()
     request = make_prompt_request(
         prompt="Analyze code",
         file_refs=["src/main.py"],  # File refs (Step 3)
@@ -45,7 +80,7 @@ async def test_all_enhancements_together(mock_exec):
     # Verify all features active:
     # 1. CLI path is the agent name
     args = mock_exec.call_args[0]
-    assert args[0] == "gemini"
+    assert args[0] == REPRESENTATIVE_CLI
 
     # 2. File refs appended to prompt
     assert "src/main.py" in args[2]
@@ -71,7 +106,7 @@ async def test_retry_and_output_truncation_together(mock_exec):
         create_mock_process(stdout='{"response": "' + large_output + '"}', returncode=0),  # success
     ]
 
-    runner = GeminiRunner()
+    runner = PipelineFakeRunner()
     request = make_prompt_request(prompt="test", max_retries=2)
 
     response = await runner.run(request)

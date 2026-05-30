@@ -5,26 +5,21 @@ These tests do NOT implement features — they verify the architecture allows
 adding them without breaking changes (regression guards for extensibility).
 """
 
-from unittest.mock import patch
-
 import pytest
 
 from nexus_mcp.types import AgentResponse, PromptRequest
-from tests.fixtures import create_mock_process, make_prompt_request
+from tests.fixtures import REPRESENTATIVE_CLI, make_prompt_request
 
 
 @pytest.mark.usefixtures("mock_cli_detection")
 class TestCacheExtensionPoint:
     """Verify cache can be added as decorator on runner.run()."""
 
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_runner_run_is_awaitable_and_wrappable(self, mock_exec):
+    async def test_runner_run_is_awaitable_and_wrappable(self, fake_runner_registry):
         """Cache decorator needs to wrap runner.run() without breaking."""
-        mock_exec.return_value = create_mock_process(stdout='{"response": "test"}')
-
         from nexus_mcp.runners.factory import RunnerFactory
 
-        runner = RunnerFactory.create("gemini")
+        runner = RunnerFactory.create(fake_runner_registry)
         request = make_prompt_request(prompt="test")
 
         original_run = runner.run
@@ -34,21 +29,18 @@ class TestCacheExtensionPoint:
 
         runner.run = cache_wrapper
         response = await runner.run(request)
-        assert response.output == "test"
+        assert response.output == "fake output"
 
 
 @pytest.mark.usefixtures("mock_cli_detection")
 class TestValidateExtensionPoint:
     """Verify validation can intercept before runner.run()."""
 
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_can_intercept_request_before_execution(self, mock_exec):
+    async def test_can_intercept_request_before_execution(self, fake_runner_registry):
         """Validation hook needs to inspect request before subprocess."""
-        mock_exec.return_value = create_mock_process(stdout='{"response": "ok"}')
-
         from nexus_mcp.runners.factory import RunnerFactory
 
-        runner = RunnerFactory.create("gemini")
+        runner = RunnerFactory.create(fake_runner_registry)
         request = make_prompt_request(prompt="test")
 
         validation_called = False
@@ -91,7 +83,7 @@ class TestFormatExtensionPoint:
     def test_agent_response_is_serializable(self):
         """Formatter needs structured response to transform."""
         response = AgentResponse(
-            cli="gemini",
+            cli=REPRESENTATIVE_CLI,
             output="test",
             raw_output='{"response": "test"}',
             metadata={"cost": 0.01},

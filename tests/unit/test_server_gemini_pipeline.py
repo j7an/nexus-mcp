@@ -41,6 +41,11 @@ def _gemini_error_json(code: int, message: str, status: str) -> str:
     return json.dumps({"error": {"code": code, "message": message, "status": status}})
 
 
+def _gemini_task(**overrides):
+    """Create a task that preserves Gemini pipeline coverage until Task 3 deletes this file."""
+    return make_agent_task(cli="gemini", **overrides)
+
+
 # ---------------------------------------------------------------------------
 # Class 1: prompt() → GeminiRunner pipeline (10 tests)
 # ---------------------------------------------------------------------------
@@ -198,7 +203,7 @@ class TestBatchPromptGeminiPipeline:
     async def test_all_succeed_with_correct_labels(self, mock_subprocess):
         """Two tasks both succeed; auto-assigned labels are 'gemini' and 'gemini-2'."""
         mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
-        tasks = [make_agent_task(prompt="first"), make_agent_task(prompt="second")]
+        tasks = [_gemini_task(prompt="first"), _gemini_task(prompt="second")]
 
         response = await batch_prompt(tasks=tasks)
 
@@ -218,7 +223,7 @@ class TestBatchPromptGeminiPipeline:
             return create_mock_process(stdout="not valid json", returncode=0)
 
         mock_subprocess.side_effect = side_effect
-        tasks = [make_agent_task(prompt="please succeed"), make_agent_task(prompt="will fail")]
+        tasks = [_gemini_task(prompt="please succeed"), _gemini_task(prompt="will fail")]
 
         response = await batch_prompt(tasks=tasks)
 
@@ -231,8 +236,8 @@ class TestBatchPromptGeminiPipeline:
         """Each task's model flag reaches the subprocess independently."""
         mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
         tasks = [
-            make_agent_task(prompt="task1", model="gemini-2.5-flash"),
-            make_agent_task(prompt="task2", model="gemini-2.0-pro"),
+            _gemini_task(prompt="task1", model="gemini-2.5-flash"),
+            _gemini_task(prompt="task2", model="gemini-2.0-pro"),
         ]
 
         response = await batch_prompt(tasks=tasks)
@@ -246,8 +251,8 @@ class TestBatchPromptGeminiPipeline:
         """--yolo appears in subprocess args for yolo task; default task has no extra flags."""
         mock_subprocess.return_value = create_mock_process(stdout=_gemini_json("ok"))
         tasks = [
-            make_agent_task(prompt="default task"),
-            make_agent_task(prompt="yolo task", execution_mode="yolo"),
+            _gemini_task(prompt="default task"),
+            _gemini_task(prompt="yolo task", execution_mode="yolo"),
         ]
 
         response = await batch_prompt(tasks=tasks)
@@ -274,8 +279,8 @@ class TestBatchPromptGeminiPipeline:
 
         mock_subprocess.side_effect = side_effect
         tasks = [
-            make_agent_task(prompt="retry me", max_retries=2),
-            make_agent_task(prompt="no retry needed"),
+            _gemini_task(prompt="retry me", max_retries=2),
+            _gemini_task(prompt="no retry needed"),
         ]
 
         response = await batch_prompt(tasks=tasks)
@@ -288,8 +293,8 @@ class TestBatchPromptGeminiPipeline:
         error_json = _gemini_error_json(429, "Rate limited", "RESOURCE_EXHAUSTED")
         mock_subprocess.return_value = create_mock_process(stdout=error_json, returncode=1)
         tasks = [
-            make_agent_task(prompt="task a", max_retries=1),
-            make_agent_task(prompt="task b", max_retries=2),
+            _gemini_task(prompt="task a", max_retries=1),
+            _gemini_task(prompt="task b", max_retries=2),
         ]
 
         response = await batch_prompt(tasks=tasks)
@@ -308,7 +313,7 @@ class TestBatchPromptGeminiPipeline:
             return create_mock_process(stdout="bad json", returncode=0)
 
         mock_subprocess.side_effect = side_effect
-        tasks = [make_agent_task(prompt="please succeed"), make_agent_task(prompt="will fail")]
+        tasks = [_gemini_task(prompt="please succeed"), _gemini_task(prompt="will fail")]
 
         await batch_prompt(tasks=tasks, ctx=ctx)
 
