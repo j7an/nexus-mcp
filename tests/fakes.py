@@ -27,6 +27,7 @@ class FakeRunner(AbstractRunner):
         emitter: LogEmitter | None = None,
         progress: ProgressEmitter | None = None,
     ) -> AgentResponse:
+        # Intentionally bypasses AbstractRunner's subprocess pipeline for generic tests.
         output = request.context.get("fake_output", "fake output")
         raw_output = str(output)
         return AgentResponse(cli=self.AGENT_NAME, output=raw_output, raw_output=raw_output)
