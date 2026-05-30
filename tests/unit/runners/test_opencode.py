@@ -862,3 +862,29 @@ class TestOpenCodeRunnerErrorOnZeroExit:
 
         with pytest.raises(RetryableError):
             await runner.run(make_prompt_request(cli="opencode", prompt="x", max_retries=1))
+
+    def test_lifecycle_then_error_does_not_parse_as_empty_success(self):
+        """Lifecycle event before an error event → ParseError, not empty success.
+
+        A non-text lifecycle event (step_start) must not mark the stream as a
+        valid empty (tool-only) run when an error event is also present, or the
+        structured error is silently swallowed as output="".
+        """
+        stdout = '{"type": "step_start", "sessionID": "s"}\n' + opencode_error_json(
+            "ServiceError", "unavailable", status_code=503
+        )
+        runner = make_opencode_runner()
+        with pytest.raises(ParseError):
+            runner.parse_output(stdout, "")
+
+    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+    async def test_error_after_lifecycle_event_surfaces_when_cli_exits_zero(self, mock_exec):
+        """Exit 0 + lifecycle event + error NDJSON → RetryableError, not empty success."""
+        stdout = '{"type": "step_start", "sessionID": "s"}\n' + opencode_error_json(
+            "ServiceError", "unavailable", status_code=503
+        )
+        mock_exec.return_value = create_mock_process(stdout=stdout, stderr="", returncode=0)
+        runner = make_opencode_runner()
+
+        with pytest.raises(RetryableError):
+            await runner.run(make_prompt_request(cli="opencode", prompt="x", max_retries=1))

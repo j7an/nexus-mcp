@@ -120,12 +120,15 @@ class OpenCodeRunner(AbstractRunner):
             stdout: Raw NDJSON output from OpenCode CLI.
 
         Returns:
-            Joined text from all text events, ``""`` if valid NDJSON was parsed
-            but contained no text events (e.g. tool-only runs), or ``None`` if
-            stdout is not NDJSON at all (triggers JSON fallback).
+            Joined text from all text events; ``None`` if an error event was
+            present with no text (falls through to error extraction) or if
+            stdout is not NDJSON at all (triggers JSON fallback); ``""`` if
+            valid NDJSON was parsed but contained no text and no error events
+            (e.g. tool-only runs).
         """
         parts: list[str] = []
         found_json_event = False
+        found_error_event = False
         for line in stdout.splitlines():
             if not line.strip():
                 continue
@@ -136,7 +139,8 @@ class OpenCodeRunner(AbstractRunner):
             if not isinstance(event, dict):
                 continue
             if event.get("type") == "error":
-                continue  # Skipped; _try_extract_error handles these on non-zero exit
+                found_error_event = True
+                continue  # Skipped; _try_extract_error handles these
             if "type" not in event:
                 continue  # Typeless dicts: skip sentinel, let JSON fallback handle them
             found_json_event = True
@@ -150,6 +154,8 @@ class OpenCodeRunner(AbstractRunner):
                 parts.append(text)
         if parts:
             return "\n\n".join(parts)
+        if found_error_event:
+            return None  # Error present with no text: fall through to error extraction.
         return "" if found_json_event else None
 
     def _parse_json_object(self, stdout: str) -> str | None:
