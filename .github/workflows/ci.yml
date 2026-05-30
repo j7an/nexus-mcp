@@ -12,47 +12,7 @@ concurrency:
 permissions: {}
 
 jobs:
-  update-lockfile:
-    if: github.actor == 'dependabot[bot]'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Harden runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ github.head_ref }}
-      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-      - run: uv lock
-      - name: Commit updated lockfile
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if git diff --quiet uv.lock; then
-            echo "No lockfile changes"
-            exit 0
-          fi
-          CONTENT=$(base64 -w0 uv.lock)
-          HEAD_OID=$(git rev-parse HEAD)
-          gh api graphql -f query='
-            mutation($input: CreateCommitOnBranchInput!) {
-              createCommitOnBranch(input: $input) {
-                commit { url }
-              }
-            }
-          ' -f "input[branchRef][repositoryNameWithOwner]=${{ github.repository }}" \
-            -f "input[branchRef][branchName]=${{ github.head_ref }}" \
-            -f "input[expectedHeadOid]=${HEAD_OID}" \
-            -f "input[message][headline]=deps: update uv.lock" \
-            -f "input[fileChanges][additions][0][path]=uv.lock" \
-            -f "input[fileChanges][additions][0][contents]=${CONTENT}"
-
   test:
-    needs: [update-lockfile]
-    if: ${{ !cancelled() && needs.update-lockfile.result != 'failure' }}
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -69,7 +29,6 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ github.actor == 'dependabot[bot]' && github.head_ref || '' }}
           fetch-depth: 0
       - uses: ./.github/actions/setup-uv
         with:
@@ -81,8 +40,6 @@ jobs:
         run: uv run diff-cover coverage.xml --fail-under=90 --compare-branch=origin/${{ github.base_ref }}
 
   lint:
-    needs: [update-lockfile]
-    if: ${{ !cancelled() && needs.update-lockfile.result != 'failure' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -92,8 +49,6 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ github.actor == 'dependabot[bot]' && github.head_ref || '' }}
       - uses: ./.github/actions/setup-uv
       - name: Ruff check
         run: uv run ruff check .
@@ -101,8 +56,6 @@ jobs:
         run: uv run ruff format --check .
 
   typecheck:
-    needs: [update-lockfile]
-    if: ${{ !cancelled() && needs.update-lockfile.result != 'failure' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -112,11 +65,32 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ github.actor == 'dependabot[bot]' && github.head_ref || '' }}
       - uses: ./.github/actions/setup-uv
       - name: Mypy
         run: uv run mypy src/nexus_mcp
+
+  lockfile:
+    name: lockfile
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      - name: Check uv.lock is in sync with pyproject.toml
+        run: |
+          if ! uv lock --check; then
+            echo "::error title=uv.lock is out of sync::uv.lock does not match pyproject.toml."
+            echo "To fix: run 'uv lock' locally, then commit and push the updated uv.lock to this branch."
+            echo "Dependabot's GITHUB_TOKEN cannot trigger fresh required checks, so CI will not"
+            echo "auto-correct this - a maintainer must push the regenerated uv.lock."
+            exit 1
+          fi
 
   dependency-review:
     name: Dependency Review
