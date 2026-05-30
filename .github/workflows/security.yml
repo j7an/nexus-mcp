@@ -118,3 +118,25 @@ jobs:
           format: table
           severity: CRITICAL,HIGH
           exit-code: "1"
+
+  osv-scan:
+    name: OSV-Scanner (full)
+    # Full recursive scan on push-to-main and the weekly schedule (not on PRs).
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+
+  osv-scan-pr:
+    name: OSV-Scanner (PR)
+    # PR diff scan with annotations for newly introduced vulnerabilities.
+    # merge_group intentionally excluded: the reusable PR workflow is PR-context-specific
+    # (uses $GITHUB_BASE_REF + pull_request.number) and would misbehave on merge_group. See issue #176.
+    if: github.event_name == 'pull_request'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
