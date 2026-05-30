@@ -170,8 +170,9 @@ All `env` keys are optional — see [Configuration](#configuration) for the full
 
 > **Claude Code note:** Nexus invokes Claude Code non-interactively via `claude -p`.
 > Anthropic says `claude -p` and Agent SDK usage draw from separate monthly Agent SDK
-> credits starting 2026-06-15; interactive Claude Code usage is not the same billing
-> surface.
+> credits starting 2026-06-15, while interactive Claude Code usage remains on plan usage
+> limits:
+> https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan
 
 > **Note:** Integration tests are optional. Unit tests run without CLI dependencies via subprocess mocking.
 
