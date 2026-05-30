@@ -13,6 +13,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData
 
 from nexus_mcp.runners.factory import RunnerFactory
+from tests.fakes import FakeRunner
 from tests.fixtures import cli_detection_mocks
 
 
@@ -22,6 +23,19 @@ def _clean_runner_cache():
     RunnerFactory.clear_cache()
     yield
     RunnerFactory.clear_cache()
+
+
+@pytest.fixture
+def fake_runner_registry():
+    """Temporarily register the test-only fake runner."""
+    original_registry = RunnerFactory._REGISTRY.copy()
+    RunnerFactory.clear_cache()
+    RunnerFactory._REGISTRY[FakeRunner.AGENT_NAME] = FakeRunner
+    try:
+        yield FakeRunner.AGENT_NAME
+    finally:
+        RunnerFactory._REGISTRY = original_registry
+        RunnerFactory.clear_cache()
 
 
 @pytest.fixture

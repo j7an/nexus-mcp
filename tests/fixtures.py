@@ -13,6 +13,8 @@ from nexus_mcp.types import AgentResponse, AgentTask, PromptRequest, SessionPref
 # Reusable test constants
 # ---------------------------------------------------------------------------
 
+REPRESENTATIVE_CLI = "fake"
+
 
 def gemini_json(output: str, stats: dict | None = None) -> str:
     """Build a Gemini CLI JSON response string."""
