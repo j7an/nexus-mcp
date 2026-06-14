@@ -21,6 +21,8 @@ jobs:
     # dependency-safety-non-bot-gate.yml. `pull_request.user.login` is the
     # spoofing-resistant actor field.
     if: github.event.pull_request.user.login == 'dependabot[bot]'
-    uses: j7an/shared-workflows/.github/workflows/dependency-safety.yml@29bcd576f856e85042ab699dce66523711a44b48 # v3.0.2
+    uses: j7an/shared-workflows/.github/workflows/dependency-safety.yml@dd7254ccf917f2e8385f209986b6139ac4651b88 # v4.0.0
     with:
       auto_merge: true
+      release_age_policy: advisory
+      minimum_release_age_days: 5
