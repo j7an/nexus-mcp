@@ -3,10 +3,21 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "v*.*.*"
 
 permissions:
   contents: read
+
+concurrency:
+  group: pypi-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  PACKAGE_NAME: nexus-mcp
+  PACKAGE_DIR: .
+  VERIFY_COMMAND: nexus-mcp --version
+  DRAFT_RELEASE: "true"
+  ATTACH_ASSETS: "true"
 
 jobs:
   test:
@@ -22,65 +33,54 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-
       - uses: ./.github/actions/setup-uv
-
       - name: Ruff check
         run: uv run ruff check .
-
       - name: Ruff format check
         run: uv run ruff format --check .
-
       - name: Mypy
         run: uv run mypy src/nexus_mcp
-
       - name: Run tests
         run: uv run pytest -m "not integration"
 
   build:
     name: Build distributions
-    needs: [test]
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Checkout at tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
-          fetch-tags: true
-
-      - name: Verify tag is on main
+      - name: Verify tag is ancestor of main
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
+          TAG_SHA=$(git rev-list -n1 "$TAG")
           git fetch origin main
-          if ! git merge-base --is-ancestor ${{ github.sha }} origin/main; then
-            echo "ERROR: Tagged commit $(git rev-parse --short HEAD) is not on main"
+          if ! git merge-base --is-ancestor "$TAG_SHA" origin/main; then
+            echo "::error::Tag ${TAG} (${TAG_SHA}) is not an ancestor of origin/main"
             exit 1
           fi
-
       - uses: ./.github/actions/setup-uv
-
-      - name: Build sdist and wheel
+      - name: Build wheel and sdist
+        working-directory: ${{ env.PACKAGE_DIR }}
         run: uv build
-
-      - name: Verify distributions
-        run: |
-          ls -la dist/
-          WHEEL=$(ls dist/*.whl 2>/dev/null | wc -l)
-          SDIST=$(ls dist/*.tar.gz 2>/dev/null | wc -l)
-          if [ "$WHEEL" -eq 0 ] || [ "$SDIST" -eq 0 ]; then
-            echo "ERROR: Expected both a wheel and sdist in dist/"
-            ls dist/
-            exit 1
-          fi
-          echo "Build produced: $(ls dist/)"
-
-      - name: Upload build artifacts
+      - name: Verify built version matches tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: bash scripts/derive-published-version.sh "${PACKAGE_DIR}/dist" "$TAG"
+      - name: Upload dist artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: dist
-          path: dist/
+          name: pypi-dist
+          path: ${{ env.PACKAGE_DIR }}/dist/
+          if-no-files-found: error
           retention-days: 7
 
   publish-testpypi:
@@ -98,53 +98,81 @@ jobs:
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
-      - name: Download build artifacts
+      - name: Download dist artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: dist
+          name: pypi-dist
           path: dist/
-
       - name: Publish to TestPyPI
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
         with:
           repository-url: https://test.pypi.org/legacy/
-          skip-existing: true
+          packages-dir: dist/
+          skip-existing: false
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+  verify-testpypi:
+    name: Verify TestPyPI install
+    needs: publish-testpypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
-          python-version: "3.13"
-
-      - name: Verify TestPyPI install
+          egress-policy: audit
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Verify install from TestPyPI
+        env:
+          PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
+          VERIFY_COMMAND: ${{ env.VERIFY_COMMAND }}
+          VERSION_TAG: ${{ github.ref_name }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "Waiting for nexus-mcp==${VERSION} to appear on TestPyPI..."
-          for i in 1 2 3 4 5; do
-            sleep $((i * 30))
-            if pip install \
+          VERSION="${VERSION_TAG##*/}"
+          VERSION="${VERSION#v}"
+          echo "Verifying TestPyPI install of ${PACKAGE_NAME}==${VERSION}"
+          INSTALLED=false
+          ATTEMPT=0
+          for SLEEP_SECONDS in 30 60 90 120 150; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Attempt ${ATTEMPT}/5: sleeping ${SLEEP_SECONDS}s before install..."
+            sleep "$SLEEP_SECONDS"
+            rm -rf .verify
+            uv venv .verify
+            . .verify/bin/activate
+            if uv pip install \
               --index-url https://test.pypi.org/simple/ \
               --extra-index-url https://pypi.org/simple/ \
-              "nexus-mcp==${VERSION}" 2>/dev/null; then
-              if ! ACTUAL=$(nexus-mcp --version 2>&1); then
-                echo "ERROR: 'nexus-mcp --version' failed to run:"
-                echo "${ACTUAL}"
-                exit 1
-              fi
-              echo "Installed version: ${ACTUAL}"
-              if ! echo "${ACTUAL}" | grep -qF "${VERSION}"; then
-                echo "ERROR: Expected '${VERSION}' in nexus-mcp --version output"
-                exit 1
-              fi
-              echo "TestPyPI install OK"
-              exit 0
+              "${PACKAGE_NAME}==${VERSION}"; then
+              INSTALLED=true
+              break
             fi
-            echo "Attempt $i: not yet available, retrying..."
+            echo "Attempt ${ATTEMPT} failed; retrying."
           done
-          echo "ERROR: nexus-mcp==${VERSION} not available on TestPyPI after 7.5 minutes"
-          exit 1
+          if [ "$INSTALLED" != "true" ]; then
+            echo "::error::TestPyPI install verification failed after 5 attempts"
+            exit 1
+          fi
+          if [ -n "${VERIFY_COMMAND:-}" ]; then
+            if ! VERIFY_OUTPUT=$(bash -euo pipefail -c "$VERIFY_COMMAND" 2>&1); then
+              printf '%s\n' "$VERIFY_OUTPUT"
+              echo "::error::Verification command failed"
+              exit 1
+            fi
+            printf '%s\n' "$VERIFY_OUTPUT"
+            case "$VERIFY_OUTPUT" in
+              *"$VERSION"*) ;;
+              *)
+                echo "::error::Verification command output did not contain version '${VERSION}'"
+                exit 1
+                ;;
+            esac
+          fi
 
   publish-pypi:
     name: Publish to PyPI
-    needs: [build, publish-testpypi]
+    needs: verify-testpypi
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -157,19 +185,19 @@ jobs:
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
-      - name: Download build artifacts
+      - name: Download dist artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: dist
+          name: pypi-dist
           path: dist/
-
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        with:
+          packages-dir: dist/
 
   github-release:
     name: Create GitHub Release
-    needs: [build, publish-pypi]
-    if: needs.publish-pypi.result == 'success'
+    needs: publish-pypi
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -178,34 +206,36 @@ jobs:
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Checkout at tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          fetch-depth: 0
-
-      - name: Download build artifacts
+          ref: ${{ github.ref_name }}
+      - name: Download dist artifact
+        if: env.ATTACH_ASSETS == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: dist
+          name: pypi-dist
           path: dist/
-
-      - name: Classify tag (stable vs prerelease)
-        id: classify
+      - name: Create GitHub Release
         env:
-          REF: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION_TAG: ${{ github.ref_name }}
         run: |
-          if [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(\.post[0-9]+)?$ ]]; then
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          VERSION="${VERSION_TAG##*/}"
+          VERSION="${VERSION#v}"
+          IS_PRERELEASE=$(bash scripts/classify-prerelease.sh "$VERSION")
+          ARGS=( "$TAG" --generate-notes --title "$TAG" )
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            ARGS+=( --prerelease )
           fi
-
-      - name: Create GitHub Release with assets
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
-        with:
-          generate_release_notes: true
-          draft: true
-          prerelease: ${{ steps.classify.outputs.prerelease }}
-          files: dist/*
+          if [ "$DRAFT_RELEASE" = "true" ]; then
+            ARGS+=( --draft )
+          fi
+          if [ "$ATTACH_ASSETS" = "true" ]; then
+            ARGS+=( dist/*.whl dist/*.tar.gz )
+          fi
+          gh release create "${ARGS[@]}"
 
   publish-mcp-registry:
     name: Publish to MCP Registry
@@ -220,14 +250,11 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
       - name: Install mcp-publisher
         run: |
           curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
           sudo mv mcp-publisher /usr/local/bin/
-
       - name: Authenticate to MCP Registry
         run: mcp-publisher login github-oidc
-
       - name: Publish to MCP Registry
         run: mcp-publisher publish
