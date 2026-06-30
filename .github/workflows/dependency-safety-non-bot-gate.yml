@@ -1,16 +1,5 @@
 name: Dependency Safety Non-Bot Gate
 
-# Status-only gate for non-Dependabot pull requests.
-#
-# External fork PRs get a read-only GITHUB_TOKEN under `pull_request`, so the
-# reusable dependency-safety scanner cannot write the required
-# `dependency-safety / gate` commit status and the PR is wedged by the ruleset.
-# This workflow runs under `pull_request_target` (base-branch privileges) and
-# posts ONLY that required status. It deliberately performs NO checkout, NO
-# dependency install, NO build/test, and uses NO third-party actions and NO
-# PR-authored file - the only shell executed is the inline `gh api` call below.
-# That no-PR-code-execution property is what makes the privileged trigger safe.
-
 on:
   pull_request_target: # zizmor: ignore[dangerous-triggers] status-only path; never checks out or runs PR code
     types: [opened, synchronize, reopened]
@@ -24,22 +13,6 @@ concurrency:
 
 jobs:
   gate:
-    # Dependabot PRs are handled by the real reusable scanner in
-    # dependency-safety.yml; every other PR gets this status-only gate.
-    # `pull_request.user.login` is the spoofing-resistant actor field.
-    if: github.event.pull_request.user.login != 'dependabot[bot]'
-    runs-on: ubuntu-latest
     permissions:
       statuses: write
-    steps:
-      - name: Post dependency-safety gate status
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          gh api "repos/${GH_REPO}/statuses/${HEAD_SHA}" \
-            -f state=success \
-            -f context="dependency-safety / gate" \
-            -f description="Non-bot PR: dependency-safety scan not required" \
-            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+    uses: j7an/shared-workflows/.github/workflows/dependency-safety-non-bot-gate.yml@5997f2092ef3fea11a5bcdca8ec81382bcc30eba # v4.1.0
