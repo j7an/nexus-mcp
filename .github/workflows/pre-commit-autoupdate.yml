@@ -14,7 +14,8 @@ concurrency:
 jobs:
   autoupdate:
     permissions:
-      contents: read
+      contents: write
+      pull-requests: write
     uses: j7an/shared-workflows/.github/workflows/pre-commit-autoupdate.yml@5997f2092ef3fea11a5bcdca8ec81382bcc30eba # v4.1.0
     secrets:
       RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
