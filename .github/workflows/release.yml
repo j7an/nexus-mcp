@@ -124,6 +124,8 @@ jobs:
           egress-policy: audit
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: false
       - name: Verify install from TestPyPI
         env:
           PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
