@@ -55,6 +55,21 @@ uv run pre-commit run --all-files
 - Do not use `git add -A` or `git add .`; stage explicit paths.
 - Ask before adding new dependencies or making destructive changes.
 
+## Release Workflow Guidance
+
+- Keep PyPI and TestPyPI Trusted Publishing jobs caller-owned in
+  `.github/workflows/release.yml`. Do not replace them with
+  `j7an/shared-workflows/.github/workflows/publish-pypi.yml`; PyPI does not
+  authorize cross-repo reusable workflows as trusted-publisher workflows.
+- When porting fixes from `shared-workflows`, use the caller-owned PyPI
+  Trusted Publishing template and preserve Nexus-specific safeguards:
+  `VERIFY_PYTHON: "3.13"`, `VERIFY_COMMAND: nexus-mcp --version`,
+  `scripts/derive-published-version.sh` before upload, TestPyPI and PyPI
+  environment URLs, and MCP Registry publishing gated on GitHub release success.
+- Pin reusable `shared-workflows` callers to immutable commit SHAs with a
+  version comment, but keep PyPI publishing inline unless PyPI explicitly
+  supports cross-repo reusable workflows for Trusted Publishing.
+
 ## Python Code Style
 
 ### Modern Syntax (Python 3.13+)
