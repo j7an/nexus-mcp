@@ -66,6 +66,11 @@ uv run pre-commit run --all-files
   `VERIFY_PYTHON: "3.13"`, `VERIFY_COMMAND: nexus-mcp --version`,
   `scripts/derive-published-version.sh` before upload, TestPyPI and PyPI
   environment URLs, and MCP Registry publishing gated on GitHub release success.
+- Keep `setup-uv` caching disabled in the TestPyPI verification job while it
+  intentionally skips checkout and creates the throwaway `.verify` project
+  later. If caching is re-enabled, the job must first provide real dependency
+  files for `setup-uv` to hash so release runs do not emit empty-workdir or
+  cache-dependency warnings.
 - Pin reusable `shared-workflows` callers to immutable commit SHAs with a
   version comment, but keep PyPI publishing inline unless PyPI explicitly
   supports cross-repo reusable workflows for Trusted Publishing.
