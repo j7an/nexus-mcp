@@ -1,5 +1,11 @@
 """Framework-independent job application and persistence contracts."""
 
+from nexus_mcp.jobs.configuration import (
+    NexusConfigResolver,
+    read_config_file,
+    user_config_path,
+    workspace_config_path,
+)
 from nexus_mcp.jobs.events import (
     EventNotifier,
     EventPollingPolicy,
@@ -45,6 +51,7 @@ __all__ = [
     "JobQuery",
     "JobStore",
     "LeaseToken",
+    "NexusConfigResolver",
     "PrunePolicy",
     "PruneResult",
     "ResolveInputCommand",
@@ -54,4 +61,7 @@ __all__ = [
     "SucceededTerminalOutcome",
     "TerminalOutcome",
     "subscribe_events",
+    "read_config_file",
+    "user_config_path",
+    "workspace_config_path",
 ]
