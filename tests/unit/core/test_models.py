@@ -18,6 +18,7 @@ from nexus_mcp.core.models import (
     JobStatus,
     RequestedExecutionConfig,
     ResolvedExecutionConfig,
+    RetryPolicy,
     WorkspaceSelector,
     validate_job_transition,
 )
@@ -143,6 +144,23 @@ def test_configuration_rejects_secret_bearing_fields():
     """Snapshots persist policy values, never credentials."""
     with pytest.raises(ValidationError):
         ExecutionConfigValues.model_validate({"model": "model-a", "api_key": "secret"})
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("base_delay_seconds", float("inf")),
+        ("base_delay_seconds", float("-inf")),
+        ("base_delay_seconds", float("nan")),
+        ("max_delay_seconds", float("inf")),
+        ("max_delay_seconds", float("-inf")),
+        ("max_delay_seconds", float("nan")),
+    ],
+)
+def test_retry_policy_rejects_non_finite_delays(field_name: str, value: float):
+    """Retry scheduling admits only finite non-negative delay bounds."""
+    with pytest.raises(ValidationError):
+        RetryPolicy.model_validate({field_name: value})
 
 
 def test_configuration_snapshot_requires_utc_timestamp():

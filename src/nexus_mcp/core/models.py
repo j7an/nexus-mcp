@@ -151,8 +151,8 @@ class RetryPolicy(FrozenModel):
     """Bounded retry settings captured with an execution request."""
 
     max_attempts: int = Field(default=1, ge=1)
-    base_delay_seconds: float = Field(default=1.0, ge=0)
-    max_delay_seconds: float = Field(default=30.0, ge=0)
+    base_delay_seconds: float = Field(default=1.0, ge=0, allow_inf_nan=False)
+    max_delay_seconds: float = Field(default=30.0, ge=0, allow_inf_nan=False)
 
 
 class AccessContext(FrozenModel):

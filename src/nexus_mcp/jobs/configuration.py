@@ -35,7 +35,7 @@ __all__ = [
 class TOMLExecutionConfigValues(BaseModel):
     """One closed TOML configuration section before retry fields are normalized."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
     model: str | None = Field(default=None, min_length=1, max_length=256)
     reasoning_effort: str | None = Field(default=None, min_length=1, max_length=64)
@@ -66,7 +66,7 @@ class TOMLExecutionConfigValues(BaseModel):
 class TOMLConfigurationFile(BaseModel):
     """The complete, closed Nexus TOML document schema."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
     defaults: TOMLExecutionConfigValues = Field(default_factory=TOMLExecutionConfigValues)
     backends: dict[str, TOMLExecutionConfigValues] = Field(default_factory=dict)
@@ -89,9 +89,9 @@ def user_config_path() -> Path:
     if sys.platform == "darwin":
         root = Path.home() / "Library" / "Application Support"
     elif sys.platform == "win32":
-        root = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        root = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
     else:
-        root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+        root = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     return root / "nexus-mcp" / "config.toml"
 
 
@@ -166,9 +166,12 @@ def _parse_config_contents(
     try:
         parsed: dict[str, Any] = tomllib.loads(contents.decode("utf-8"))
         configuration = TOMLConfigurationFile.model_validate(parsed)
-        return configuration.execution_values(backend_id)
-    except (UnicodeDecodeError, tomllib.TOMLDecodeError, ValidationError) as error:
-        raise ConfigurationError("invalid Nexus configuration", config_key=config_key) from error
+        values = configuration.execution_values(backend_id)
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError, ValidationError):
+        sanitized_error = ConfigurationError("invalid Nexus configuration", config_key=config_key)
+    else:
+        return values
+    raise sanitized_error
 
 
 def _environment_snapshot(backend_id: str) -> ConfigLayerSnapshot | None:
@@ -225,10 +228,11 @@ def _environment_values(backend_id: str) -> ExecutionConfigValues | None:
     except ValidationError as error:
         location = error.errors()[0]["loc"]
         field_name = ".".join(str(part) for part in location)
-        raise ConfigurationError(
+        sanitized_error = ConfigurationError(
             "invalid Nexus environment configuration",
             config_key=source_keys.get(field_name),
-        ) from error
+        )
+    raise sanitized_error
 
 
 def _set_environment_value(

@@ -1,6 +1,7 @@
 """Immutable configuration snapshots captured at Nexus admission."""
 
 import hashlib
+import traceback
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,20 @@ def clear_task_nine_environment(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv(name, raising=False)
 
 
+def _assert_only_sanitized_error_is_reachable(error: ConfigurationError, *sentinels: str) -> None:
+    """Prove no rejected input survives in the public exception chain or traceback."""
+    reachable: list[BaseException] = []
+    current: BaseException | None = error
+    while current is not None:
+        reachable.append(current)
+        current = current.__cause__ or current.__context__
+
+    assert reachable == [error]
+    formatted = "".join(traceback.format_exception(error))
+    for sentinel in sentinels:
+        assert sentinel not in formatted
+
+
 def test_linux_user_config_path_honors_xdg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Linux configuration follows XDG_CONFIG_HOME when no override exists."""
     monkeypatch.delenv("NEXUS_CONFIG_PATH", raising=False)
@@ -91,6 +106,32 @@ def test_user_config_path_uses_platform_default(
     assert user_config_path() == tmp_path / expected
 
 
+@pytest.mark.parametrize(
+    ("platform", "environment_name", "expected"),
+    [
+        ("linux", "XDG_CONFIG_HOME", Path(".config/nexus-mcp/config.toml")),
+        ("win32", "APPDATA", Path("AppData/Roaming/nexus-mcp/config.toml")),
+    ],
+)
+def test_empty_path_environment_values_use_absolute_home_fallbacks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    platform: str,
+    environment_name: str,
+    expected: Path,
+):
+    """Empty overrides are absent and never produce process-relative configuration paths."""
+    monkeypatch.setattr(configuration.sys, "platform", platform)
+    monkeypatch.setattr(configuration.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("NEXUS_CONFIG_PATH", "")
+    monkeypatch.setenv(environment_name, "")
+
+    path = user_config_path()
+
+    assert path == tmp_path / expected
+    assert path.is_absolute()
+
+
 def test_workspace_config_path_is_scoped_to_canonical_workspace(workspace: Workspace):
     """Workspace configuration cannot be redirected outside its durable workspace."""
     assert workspace_config_path(workspace) == workspace.canonical_path / ".nexus" / "config.toml"
@@ -111,6 +152,53 @@ def test_unknown_or_secret_keys_are_rejected(tmp_path: Path, content: str):
 
     with pytest.raises(ConfigurationError):
         read_config_file(path, backend_id="codex")
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        'timeout_seconds = "600"',
+        "output_limit_bytes = 50000.0",
+        'max_attempts = "2"',
+        'retry_base_delay_seconds = "1.0"',
+        'retry_max_delay_seconds = "30.0"',
+    ],
+)
+def test_toml_rejects_coercible_wrong_scalar_types(tmp_path: Path, assignment: str):
+    """Typed TOML values cannot change scalar type through Pydantic coercion."""
+    path = tmp_path / "config.toml"
+    path.write_text(f"[defaults]\n{assignment}\n", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError) as caught:
+        read_config_file(path, backend_id="codex")
+
+    assert caught.value.config_key == str(path)
+
+
+@pytest.mark.parametrize(
+    ("contents", "sentinel"),
+    [
+        (b"\xffSENTINEL_INVALID_UTF8", "SENTINEL_INVALID_UTF8"),
+        (b'[defaults]\nmodel = "SENTINEL_INVALID_TOML\n', "SENTINEL_INVALID_TOML"),
+        (
+            b'[defaults]\ntimeout_seconds = "SENTINEL_INVALID_VALUE"\n',
+            "SENTINEL_INVALID_VALUE",
+        ),
+    ],
+)
+def test_invalid_toml_does_not_retain_untrusted_exception_details(
+    tmp_path: Path, contents: bytes, sentinel: str
+):
+    """Decode, parse, and schema failures expose only the generic source diagnostic."""
+    path = tmp_path / "config.toml"
+    path.write_bytes(contents)
+
+    with pytest.raises(ConfigurationError) as caught:
+        read_config_file(path, backend_id="codex")
+
+    assert caught.value.args == ("invalid Nexus configuration",)
+    assert caught.value.config_key == str(path)
+    _assert_only_sanitized_error_is_reachable(caught.value, sentinel)
 
 
 def test_backend_section_overrides_defaults_within_one_file(tmp_path: Path):
@@ -139,6 +227,28 @@ max_attempts = 4
         timeout_seconds=30,
         retry_policy=RetryPolicy(max_attempts=4, base_delay_seconds=1.5, max_delay_seconds=20.0),
     )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("retry_base_delay_seconds", "inf"),
+        ("retry_base_delay_seconds", "-inf"),
+        ("retry_base_delay_seconds", "nan"),
+        ("retry_max_delay_seconds", "inf"),
+        ("retry_max_delay_seconds", "-inf"),
+        ("retry_max_delay_seconds", "nan"),
+    ],
+)
+def test_toml_retry_delays_reject_non_finite_numbers(tmp_path: Path, field_name: str, value: str):
+    """TOML cannot bypass the core finite-delay retry invariant."""
+    path = tmp_path / "config.toml"
+    path.write_text(f"[defaults]\n{field_name} = {value}\n", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError) as caught:
+        read_config_file(path, backend_id="codex")
+
+    assert caught.value.config_key == str(path)
 
 
 def test_resolution_precedence_is_explicit_provider_workspace_user_environment():
@@ -243,6 +353,24 @@ def test_invalid_environment_value_is_rejected_by_execution_config_schema(
     assert error.value.config_key == "NEXUS_TIMEOUT_SECONDS"
 
 
+def test_invalid_environment_does_not_retain_untrusted_validation_details(
+    monkeypatch: pytest.MonkeyPatch,
+    workspace: Workspace,
+):
+    """Rejected environment content is absent from the public exception chain and traceback."""
+    sentinel = "SENTINEL_INVALID_ENVIRONMENT_VALUE"
+    monkeypatch.setenv("NEXUS_TIMEOUT_SECONDS", sentinel)
+
+    with pytest.raises(ConfigurationError) as caught:
+        NexusConfigResolver(user_path=workspace.canonical_path / "missing.toml").snapshot(
+            "codex", workspace, ExecutionConfigValues()
+        )
+
+    assert caught.value.args == ("invalid Nexus environment configuration",)
+    assert caught.value.config_key == "NEXUS_TIMEOUT_SECONDS"
+    _assert_only_sanitized_error_is_reachable(caught.value, sentinel)
+
+
 def test_invalid_retry_environment_value_identifies_the_rejected_setting(
     monkeypatch: pytest.MonkeyPatch,
     workspace: Workspace,
@@ -260,6 +388,34 @@ def test_invalid_retry_environment_value_identifies_the_rejected_setting(
         )
 
     assert error.value.config_key == "NEXUS_RETRY_MAX_ATTEMPTS"
+
+
+@pytest.mark.parametrize(
+    ("environment_name", "value"),
+    [
+        ("NEXUS_RETRY_BASE_DELAY", "inf"),
+        ("NEXUS_RETRY_BASE_DELAY", "-inf"),
+        ("NEXUS_RETRY_BASE_DELAY", "nan"),
+        ("NEXUS_RETRY_MAX_DELAY", "inf"),
+        ("NEXUS_RETRY_MAX_DELAY", "-inf"),
+        ("NEXUS_RETRY_MAX_DELAY", "nan"),
+    ],
+)
+def test_environment_retry_delays_reject_non_finite_numbers(
+    monkeypatch: pytest.MonkeyPatch,
+    workspace: Workspace,
+    environment_name: str,
+    value: str,
+):
+    """Environment parsing cannot bypass the core finite-delay retry invariant."""
+    monkeypatch.setenv(environment_name, value)
+
+    with pytest.raises(ConfigurationError) as caught:
+        NexusConfigResolver(user_path=workspace.canonical_path / "missing.toml").snapshot(
+            "codex", workspace, ExecutionConfigValues()
+        )
+
+    assert caught.value.config_key == environment_name
 
 
 def test_snapshot_does_not_change_when_file_changes(
