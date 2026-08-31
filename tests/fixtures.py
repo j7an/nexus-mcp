@@ -7,14 +7,19 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 from nexus_mcp.cli_detector import CLIInfo
+from nexus_mcp.core.interaction import PendingInput, PermissionRequest
 from nexus_mcp.core.models import (
     AccessContext,
+    AgentJob,
     AgentSession,
     ConfigLayerSnapshot,
     ExecutionConfigValues,
+    JobHandle,
     RequestedExecutionConfig,
     Workspace,
 )
+from nexus_mcp.core.operations import TurnOperation
+from nexus_mcp.core.results import JobError, TurnResult
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import AgentResponse, AgentTask, PromptRequest, SessionPreferences
 
@@ -71,6 +76,58 @@ def make_requested_config(**overrides: Any) -> RequestedExecutionConfig:
             source_hash="0" * 64,
         )
     return RequestedExecutionConfig(**values)
+
+
+def make_agent_job(**overrides: Any) -> AgentJob:
+    """Create a stable durable job with a typed turn operation."""
+    defaults = {
+        "job_id": "job-test",
+        "workspace_id": "ws-test",
+        "backend_id": "codex",
+        "owner_id": "local:501",
+        "session_id": "session-test",
+        "operation": TurnOperation(prompt="Inspect the workspace"),
+        "requested_config": RequestedExecutionConfig(),
+        "request_hash": "0" * 64,
+    }
+    return AgentJob(**(defaults | overrides))
+
+
+def make_job_handle(**overrides: Any) -> JobHandle:
+    """Create a stable public handle for an admitted turn operation."""
+    defaults = {
+        "job_id": "job-test",
+        "session_id": "session-test",
+        "operation": TurnOperation(prompt="Inspect the workspace"),
+    }
+    return JobHandle(**(defaults | overrides))
+
+
+def make_turn_result(**overrides: Any) -> TurnResult:
+    """Create a stable normalized turn result."""
+    return TurnResult(**({"message": "Inspection complete"} | overrides))
+
+
+def make_job_error(**overrides: Any) -> JobError:
+    """Create a stable normalized provider failure."""
+    defaults = {"code": "provider_failed", "message": "Provider execution failed"}
+    return JobError(**(defaults | overrides))
+
+
+def make_pending_permission(**overrides: Any) -> PendingInput:
+    """Create a stable pending permission request."""
+    values = dict(overrides)
+    requested = values.pop("requested", ["network:api.example.com"])
+    request = values.pop(
+        "request",
+        PermissionRequest(prompt="Allow requested access?", requested=requested),
+    )
+    defaults = {
+        "input_id": "input-test",
+        "job_id": "job-test",
+        "request": request,
+    }
+    return PendingInput(**(defaults | values))
 
 
 CODEX_NDJSON_RESPONSE = "\n".join(

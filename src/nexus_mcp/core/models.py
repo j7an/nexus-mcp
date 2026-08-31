@@ -18,12 +18,14 @@ from pydantic import (
 )
 
 from nexus_mcp.core.errors import InvalidJobTransitionError
+from nexus_mcp.core.operations import AgentOperation, OperationKind
 
 __all__ = [
     "ALLOWED_TRANSITIONS",
     "TERMINAL_STATES",
     "AccessContext",
     "AccessPolicy",
+    "AgentJob",
     "AgentSession",
     "ApprovalPolicy",
     "BackendEvent",
@@ -33,8 +35,11 @@ __all__ = [
     "JobAttempt",
     "JobEvent",
     "JobEventType",
+    "JobHandle",
+    "JobListPage",
     "JobPhase",
     "JobState",
+    "JobStatus",
     "ProviderReference",
     "RequestedExecutionConfig",
     "ResolvedExecutionConfig",
@@ -435,6 +440,105 @@ class ResolvedExecutionConfig(FrozenModel):
             retry_policy=cast("RetryPolicy | None", values["retry_policy"]),
             sources=sources,
         )
+
+
+class AgentJob(FrozenModel):
+    """One durable, typed operation and its immutable request snapshot."""
+
+    job_id: str = Field(min_length=1, max_length=256)
+    workspace_id: str = Field(min_length=1, max_length=256)
+    backend_id: str = Field(min_length=1, max_length=256)
+    owner_id: str = Field(min_length=1, max_length=256)
+    operation: AgentOperation
+    requested_config: RequestedExecutionConfig
+    request_hash: str = Field(min_length=64, max_length=64)
+    access_policy: AccessPolicy = "private"
+    session_id: str | None = Field(default=None, min_length=1, max_length=256)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=512)
+    source_checkpoint: tuple[ProviderReference, ...] = Field(default=(), max_length=256)
+    state: JobState = "queued"
+    resolved_config: ResolvedExecutionConfig | None = None
+    cancel_requested_at: datetime | None = None
+    lease_owner_id: str | None = Field(default=None, min_length=1, max_length=256)
+    lease_generation: int | None = Field(default=None, ge=1)
+    lease_expires_at: datetime | None = None
+    retry_at: datetime | None = None
+    terminal_result_reference: str | None = Field(default=None, min_length=1, max_length=4096)
+    created_at: datetime = Field(default_factory=_utc_now)
+    updated_at: datetime = Field(default_factory=_utc_now)
+    completed_at: datetime | None = None
+
+    @property
+    def operation_kind(self) -> OperationKind:
+        """Return the operation discriminator through the closed public kind type."""
+        return self.operation.kind
+
+    @field_validator(
+        "cancel_requested_at",
+        "lease_expires_at",
+        "retry_at",
+        "created_at",
+        "updated_at",
+        "completed_at",
+        mode="after",
+    )
+    @classmethod
+    def normalize_timestamps(cls, value: datetime | None) -> datetime | None:
+        """Store all durable job timestamps in UTC."""
+        return None if value is None else _normalize_utc(value)
+
+
+class JobHandle(FrozenModel):
+    """The stable identity returned when a typed operation is admitted."""
+
+    job_id: str = Field(min_length=1, max_length=256)
+    session_id: str | None = Field(default=None, min_length=1, max_length=256)
+    operation: AgentOperation
+    state: JobState = "queued"
+
+
+class JobStatus(FrozenModel):
+    """A bounded public projection of current durable job state."""
+
+    job_id: str = Field(min_length=1, max_length=256)
+    workspace_id: str = Field(min_length=1, max_length=256)
+    backend_id: str = Field(min_length=1, max_length=256)
+    session_id: str | None = Field(default=None, min_length=1, max_length=256)
+    operation: AgentOperation
+    state: JobState
+    cancel_requested: bool = False
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+
+    @field_validator("created_at", "updated_at", "completed_at", mode="after")
+    @classmethod
+    def normalize_timestamps(cls, value: datetime | None) -> datetime | None:
+        """Store public status timestamps in UTC."""
+        return None if value is None else _normalize_utc(value)
+
+    @classmethod
+    def from_job(cls, job: AgentJob) -> "JobStatus":
+        """Project a durable job without exposing internal lease details."""
+        return cls(
+            job_id=job.job_id,
+            workspace_id=job.workspace_id,
+            backend_id=job.backend_id,
+            session_id=job.session_id,
+            operation=job.operation,
+            state=job.state,
+            cancel_requested=job.cancel_requested_at is not None,
+            created_at=job.created_at,
+            updated_at=job.updated_at,
+            completed_at=job.completed_at,
+        )
+
+
+class JobListPage(FrozenModel):
+    """An ordered page of public job status values and an opaque cursor."""
+
+    items: tuple[JobStatus, ...] = Field(default=(), max_length=100)
+    next_cursor: str | None = Field(default=None, min_length=1, max_length=4096)
 
 
 def _coerce_execution_values(
