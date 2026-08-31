@@ -23,10 +23,13 @@ from nexus_mcp.core import (
     RetryPolicy,
     TurnOperation,
     Workspace,
+    WorkspaceInvalidError,
+    WorkspaceSelector,
 )
+from nexus_mcp.exceptions import ConfigurationError
 from nexus_mcp.jobs.events import EventNotifier
 from nexus_mcp.jobs.store import CreateJobCommand, LeaseToken
-from nexus_mcp.jobs.worker import JobWorker, WorkerPolicy
+from nexus_mcp.jobs.worker import JobWorker, WorkerPolicy, WorkerPool
 from tests.fixtures import make_turn_result
 from tests.job_fakes import (
     EmitEventAction,
@@ -278,6 +281,112 @@ async def test_backend_health_failure_becomes_durable_without_unregistering(
     assert backend.execute_calls == []
 
 
+async def test_backend_lookup_error_becomes_typed_durable_failure():
+    """A stale admitted backend id cannot escape run_once or leave the job leased."""
+    store = InMemoryJobStore()
+    backend = ScriptedBackend(backend_id="registered")
+    job = await admit(store, backend_id="missing")
+
+    await make_worker(store, backend).run_once()
+
+    result = await store.get_job_result(job.job_id)
+    assert isinstance(result, JobError)
+    assert result.code == "backend_unknown"
+    assert backend.execute_calls == []
+
+
+class WorkspaceErrorStore(InMemoryJobStore):
+    """Store that reports a durable workspace resolution failure after claim."""
+
+    async def resolve_workspace(self, selector: WorkspaceSelector) -> Workspace:
+        raise WorkspaceInvalidError(selector.workspace_id or "unknown", "workspace disappeared")
+
+
+async def test_workspace_resolution_error_becomes_typed_durable_failure():
+    """A post-admission workspace failure terminalizes under the current fence."""
+    store = WorkspaceErrorStore()
+    backend = ScriptedBackend()
+    job = await admit(store)
+
+    await make_worker(store, backend).run_once()
+
+    result = await store.get_job_result(job.job_id)
+    assert isinstance(result, JobError)
+    assert result.code == "workspace_invalid"
+    assert backend.execute_calls == []
+
+
+class AvailabilityErrorBackend(ScriptedBackend):
+    """Backend whose health observation raises before any provider execution side effect."""
+
+    async def check_availability(self, workspace: Workspace) -> BackendAvailability:
+        raise RuntimeError("secret availability diagnostic")
+
+
+async def test_availability_exception_becomes_sanitized_internal_error():
+    """Unexpected health-probe failure is durable and does not disclose raw diagnostics."""
+    store = InMemoryJobStore()
+    backend = AvailabilityErrorBackend()
+    job = await admit(store)
+
+    await make_worker(store, backend).run_once()
+
+    result = await store.get_job_result(job.job_id)
+    assert isinstance(result, JobError)
+    assert result.code == "internal_error"
+    assert "secret" not in result.message
+    assert backend.config_calls == []
+    assert backend.execute_calls == []
+
+
+class ConfigurationErrorOnceBackend(ScriptedBackend):
+    """Backend whose first config resolution fails before later jobs can execute."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.resolve_attempts = 0
+
+    async def resolve_execution_config(
+        self,
+        requested: RequestedExecutionConfig,
+        workspace: Workspace,
+    ):
+        self.resolve_attempts += 1
+        if self.resolve_attempts == 1:
+            raise ConfigurationError("secret invalid provider configuration")
+        return await super().resolve_execution_config(requested, workspace)
+
+
+async def test_config_exception_terminalizes_and_pool_continues_to_next_job():
+    """A pre-provider config failure cannot terminate the worker loop or block later work."""
+    store = InMemoryJobStore()
+    notifier = EventNotifier()
+    backend = ConfigurationErrorOnceBackend()
+    first = await admit(store, session_id="session-config-first")
+    second = await admit(store, session_id="session-config-second")
+    backend.queue_execute(ReturnResultAction(make_turn_result(message="second job completed")))
+    pool = WorkerPool(
+        store=store,
+        backends=BackendManager([backend]),
+        notifier=notifier,
+        worker_count=1,
+        retry_delay=lambda attempt, retry_after, policy: 0.0,
+    )
+
+    assert await pool.run_until_idle() == 2
+
+    results = {
+        first.job_id: await store.get_job_result(first.job_id),
+        second.job_id: await store.get_job_result(second.job_id),
+    }
+    errors = [result for result in results.values() if isinstance(result, JobError)]
+    successes = [result for result in results.values() if not isinstance(result, JobError)]
+    assert len(errors) == 1 and errors[0].code == "internal_error"
+    assert "secret" not in errors[0].message
+    assert len(successes) == 1 and successes[0] is not None
+    assert len(backend.execute_calls) == 1
+
+
 async def test_reconcile_required_imports_completion_without_replaying_execute():
     """Once a provider reference exists, only reconciliation may finish the operation."""
     store = InMemoryJobStore()
@@ -333,6 +442,39 @@ async def test_unknown_reconciliation_terminalizes_outcome_unknown_without_repla
     assert await store.get_job_result(job.job_id) == unknown
     assert len(backend.execute_calls) == 1
     assert len(backend.reconcile_calls) == 1
+
+
+async def test_mismatched_reconciliation_result_terminalizes_internal_error_without_replay():
+    """Imported completion must match the admitted operation before output or terminal commit."""
+    store = InMemoryJobStore()
+    backend = ScriptedBackend()
+    job = await admit(store)
+    reference = ProviderReference(kind="thread", value="thread-mismatch")
+    uncertain = JobError(
+        code="process_lost",
+        message="Provider observation disconnected",
+        retry_disposition="reconcile_required",
+    )
+    backend.queue_execute(
+        RecordReferenceAction(reference),
+        RaiseFailureAction(BackendFailure(uncertain, "reconcile_required")),
+    )
+    backend.queue_reconcile(
+        ReturnReconciliationAction(
+            CompletedReconciliationOutcome(result=DiagnosticsResult(available=True))
+        )
+    )
+
+    await make_worker(store, backend).run_once()
+
+    result = await store.get_job_result(job.job_id)
+    assert isinstance(result, JobError)
+    assert result.code == "internal_error"
+    assert len(backend.execute_calls) == 1
+    assert len(backend.reconcile_calls) == 1
+    events = (await store.read_events(job.job_id, 0, 100)).events
+    assert events[-1].type == "job_failed"
+    assert all(event.type not in {"message", "job_completed"} for event in events)
 
 
 async def test_active_reconciliation_reattaches_on_next_generation_without_execute():

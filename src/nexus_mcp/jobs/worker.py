@@ -7,7 +7,7 @@ from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
 from nexus_mcp.backends import (
     ActiveReconciliationOutcome,
@@ -25,6 +25,8 @@ from nexus_mcp.backends.manager import BackendManager
 from nexus_mcp.core import (
     BackendEvent,
     JobError,
+    JobErrorCode,
+    NexusCoreError,
     OperationResult,
     ProviderReference,
     RetryPolicy,
@@ -52,6 +54,8 @@ __all__ = [
 ]
 
 type Clock = Callable[[], datetime]
+
+_JOB_ERROR_CODE_ADAPTER: TypeAdapter[JobErrorCode] = TypeAdapter(JobErrorCode)
 
 
 class WorkerPolicy(BaseModel):
@@ -206,6 +210,7 @@ class JobWorker:
         observation_holder: list[asyncio.Task[None]],
     ) -> None:
         token = claimed.token
+        context: StoreBackedExecutionContext | None = None
         try:
             if claimed.job.state == "queued":
                 await self._store.mark_running(
@@ -290,6 +295,91 @@ class JobWorker:
                 raise
         except StaleLeaseError:
             return
+        except asyncio.CancelledError:
+            raise
+        except BackendFailure as failure:
+            if context is not None:
+                raise
+            await self._handle_preparation_failure(claimed, failure)
+        except NexusCoreError as error:
+            if context is not None:
+                raise
+            try:
+                code = _JOB_ERROR_CODE_ADAPTER.validate_python(error.code)
+            except ValidationError:
+                code = "internal_error"
+            message = str(error) if code != "internal_error" else "Backend preparation failed"
+            await self._terminalize_preparation_error(
+                token,
+                JobError(code=code, message=message),
+            )
+        except Exception:
+            if context is not None:
+                raise
+            await self._terminalize_preparation_error(
+                token,
+                JobError(
+                    code="internal_error",
+                    message="Backend preparation failed",
+                ),
+            )
+
+    async def _handle_preparation_failure(
+        self,
+        claimed: ClaimedJob,
+        failure: BackendFailure,
+    ) -> None:
+        """Apply an explicit backend classification before provider execution begins."""
+        error = failure.error.model_copy(update={"retry_disposition": failure.retry_disposition})
+        try:
+            if failure.retry_disposition == "reconcile_required":
+                await self._store.mark_reconciling(
+                    claimed.token,
+                    error,
+                    event=BackendEvent(
+                        type="reconciliation",
+                        payload={"status": "required"},
+                    ),
+                )
+                self._notifier.notify()
+                return
+            if failure.retry_disposition == "safe_to_retry":
+                retry_policy = (
+                    claimed.job.resolved_config.retry_policy
+                    if claimed.job.resolved_config is not None
+                    else claimed.job.requested_config.explicit.retry_policy
+                ) or RetryPolicy()
+                if claimed.attempt.attempt_number < retry_policy.max_attempts:
+                    delay = self._retry_delay(
+                        claimed.attempt.attempt_number,
+                        _retry_after_seconds(error),
+                        retry_policy,
+                    )
+                    await self._store.schedule_retry(
+                        claimed.token,
+                        self._now() + timedelta(seconds=delay),
+                        error,
+                        event=BackendEvent(
+                            type="retry_scheduled",
+                            payload={"attempt": claimed.attempt.attempt_number + 1},
+                        ),
+                    )
+                    self._notifier.notify()
+                    return
+            await self._terminalize_error(claimed.token, error)
+        except StaleLeaseError:
+            return
+
+    async def _terminalize_preparation_error(
+        self,
+        token: LeaseToken,
+        error: JobError,
+    ) -> None:
+        """Commit a pre-context error only while the original claim remains current."""
+        try:
+            await self._terminalize_error(token, error)
+        except StaleLeaseError:
+            return
 
     async def _observe(
         self,
@@ -329,9 +419,6 @@ class JobWorker:
         except Exception:
             await self._handle_unexpected_execution(claimed, backend, context)
         else:
-            if result.kind != claimed.job.operation.kind:
-                await self._handle_unexpected_execution(claimed, backend, context)
-                return
             await self._terminalize_success(claimed.token, context, result)
 
     async def _handle_execution_failure(
@@ -501,6 +588,16 @@ class JobWorker:
         context: StoreBackedExecutionContext,
         result: OperationResult,
     ) -> None:
+        if result.kind != context.job.operation.kind:
+            await self._terminalize_error(
+                token,
+                JobError(
+                    code="internal_error",
+                    message="Backend result kind does not match the admitted operation",
+                ),
+                context=context,
+            )
+            return
         await context.flush_output()
         if isinstance(result, TurnResult):
             await context.emit(
@@ -567,13 +664,9 @@ class JobWorker:
                 return
             except TimeoutError:
                 pass
-            try:
-                renewed = await self._store.renew_lease(
-                    token,
-                    self._now() + timedelta(seconds=self._policy.lease_seconds),
-                )
-            except Exception:
-                renewed = False
+            renewed = await self._renew_lease_interruptibly(token, stop)
+            if renewed is None:
+                return
             if renewed:
                 continue
             lease_lost.set()
@@ -583,6 +676,36 @@ class JobWorker:
             if observation_holder and not observation_holder[0].done():
                 observation_holder[0].cancel()
             return
+
+    async def _renew_lease_interruptibly(
+        self,
+        token: LeaseToken,
+        stop: asyncio.Event,
+    ) -> bool | None:
+        """Renew once, or cancel and await the renewal when worker shutdown wins."""
+        renewal_task = asyncio.create_task(
+            self._store.renew_lease(
+                token,
+                self._now() + timedelta(seconds=self._policy.lease_seconds),
+            )
+        )
+        stop_task = asyncio.create_task(stop.wait())
+        tasks = (renewal_task, stop_task)
+        try:
+            completed, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            if stop_task in completed:
+                return None
+            if renewal_task.cancelled():
+                return False
+            try:
+                return await renewal_task
+            except Exception:
+                return False
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def _now(self) -> datetime:
         now = self._clock()

@@ -460,6 +460,25 @@ class ShutdownAwareBackend(ScriptedBackend):
         await asyncio.Event().wait()
 
 
+class BlockingRenewalStore(InMemoryJobStore):
+    """Store whose in-flight lease renewal remains blocked until cancelled or released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.renewal_started = asyncio.Event()
+        self.release_renewal = asyncio.Event()
+        self.renewal_cancelled = asyncio.Event()
+
+    async def renew_lease(self, token: LeaseToken, lease_until: datetime) -> bool:
+        self.renewal_started.set()
+        try:
+            await self.release_renewal.wait()
+        except asyncio.CancelledError:
+            self.renewal_cancelled.set()
+            raise
+        return await super().renew_lease(token, lease_until)
+
+
 async def test_worker_pool_stop_flushes_and_delivers_runtime_shutdown():
     """Pool shutdown detaches shared observation without a false provider terminal state."""
     store = InMemoryJobStore()
@@ -484,6 +503,40 @@ async def test_worker_pool_stop_flushes_and_delivers_runtime_shutdown():
     assert dict([event for event in events if event.type == "message"][-1].payload) == {
         "text": "before shutdown"
     }
+
+
+async def test_worker_pool_stop_cancels_and_awaits_blocked_heartbeat_renewal():
+    """Pool shutdown cannot wait for an external lease-renewal operation to release."""
+    store = BlockingRenewalStore()
+    notifier = EventNotifier()
+    backend = ShutdownAwareBackend()
+    await admit(store)
+    pool = WorkerPool(
+        store=store,
+        backends=BackendManager([backend]),
+        notifier=notifier,
+        policy=WorkerPolicy(
+            lease_seconds=0.05,
+            heartbeat_seconds=0.01,
+            idle_poll_seconds=0.01,
+            reconciliation_timeout_seconds=0.05,
+        ),
+    )
+    await pool.start()
+    await backend.started.wait()
+    await store.renewal_started.wait()
+    stop_task = asyncio.create_task(pool.stop())
+
+    try:
+        async with asyncio.timeout(0.1):
+            await asyncio.shield(stop_task)
+    except TimeoutError:
+        store.release_renewal.set()
+        await stop_task
+        pytest.fail("pool.stop() waited for blocked heartbeat renewal")
+
+    assert store.renewal_cancelled.is_set()
+    assert pool.running is False
 
 
 class AvailabilityGateBackend(ScriptedBackend):
