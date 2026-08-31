@@ -66,17 +66,17 @@ class TestEmitterCorrelation:
         mock_ctx.error = AsyncMock()
         emitter = make_mcp_emitter(mock_ctx)
 
-        emitter_logger = logging.getLogger("nexus_mcp.emitters")
+        emitter_logger = logging.getLogger("nexus_mcp.mcp.emitters")
         filt = CorrelationFilter()
         emitter_logger.addFilter(filt)
 
         token = set_correlation_id()
         expected_id = correlation_id.get()
         try:
-            with caplog.at_level(logging.INFO, logger="nexus_mcp.emitters"):
+            with caplog.at_level(logging.INFO, logger="nexus_mcp.mcp.emitters"):
                 await emitter("info", "test message")
             for record in caplog.records:
-                if record.name == "nexus_mcp.emitters":
+                if record.name == "nexus_mcp.mcp.emitters":
                     assert record.req_id == expected_id  # type: ignore[attr-defined]
         finally:
             correlation_id.reset(token)

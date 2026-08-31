@@ -18,7 +18,7 @@ from tests.fixtures import make_agent_response
 class TestMiddlewarePipeline:
     """Verify middleware fires for real MCP tool calls."""
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     async def test_full_pipeline_logs_for_successful_call(self, mock_factory, mcp_client, caplog):
         """A successful prompt call produces timing and request logs."""
         mock_runner = AsyncMock()
@@ -26,7 +26,7 @@ class TestMiddlewarePipeline:
         mock_runner.run.return_value = make_agent_response(cli=cli, output="hello")
         mock_factory.create.return_value = mock_runner
 
-        with caplog.at_level(logging.DEBUG, logger="nexus_mcp.middleware"):
+        with caplog.at_level(logging.DEBUG, logger="nexus_mcp.mcp.middleware"):
             await mcp_client.call_tool(
                 "prompt",
                 {"cli": cli, "prompt": "say hello"},
@@ -43,7 +43,7 @@ class TestMiddlewarePipeline:
 
         # Prompt text not leaked in middleware logs
         middleware_text = " ".join(
-            r.message for r in caplog.records if r.name == "nexus_mcp.middleware"
+            r.message for r in caplog.records if r.name == "nexus_mcp.mcp.middleware"
         )
         assert "say hello" not in middleware_text
 
@@ -63,7 +63,7 @@ class TestMiddlewarePipeline:
         from fastmcp.exceptions import ToolError
 
         with (
-            caplog.at_level(logging.DEBUG, logger="nexus_mcp.middleware"),
+            caplog.at_level(logging.DEBUG, logger="nexus_mcp.mcp.middleware"),
             pytest.raises(ToolError),
         ):
             await mcp_client.call_tool(

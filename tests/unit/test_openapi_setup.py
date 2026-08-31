@@ -262,11 +262,11 @@ class TestSetupOpenCodeTools:
 
         with (
             patch(
-                "nexus_mcp.openapi_setup.fetch_openapi_spec",
+                "nexus_mcp.mcp.openapi_setup.fetch_openapi_spec",
                 new=AsyncMock(return_value=invalid_spec),
             ),
             patch(
-                "nexus_mcp.openapi_setup.OpenAPIProvider",
+                "nexus_mcp.mcp.openapi_setup.OpenAPIProvider",
                 side_effect=ValueError("invalid spec"),
             ),
         ):
@@ -283,7 +283,7 @@ class TestSetupOpenCodeTools:
         )
         mcp = MagicMock(spec=FastMCP)
 
-        with patch("nexus_mcp.openapi_setup.OpenAPIProvider") as mock_provider_cls:
+        with patch("nexus_mcp.mcp.openapi_setup.OpenAPIProvider") as mock_provider_cls:
             mock_provider_cls.return_value = MagicMock()
             result = await setup_opencode_tools(mcp, client)
 

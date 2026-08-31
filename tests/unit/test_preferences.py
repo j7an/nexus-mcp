@@ -22,9 +22,9 @@ from tests.fixtures import (
     strip_runner_header,
 )
 
-_LOAD = "nexus_mcp.preferences.load_preferences"
-_SAVE = "nexus_mcp.preferences.save_preferences"
-_DELETE = "nexus_mcp.preferences._delete_prefs"
+_LOAD = "nexus_mcp.mcp.preferences.load_preferences"
+_SAVE = "nexus_mcp.mcp.preferences.save_preferences"
+_DELETE = "nexus_mcp.mcp.preferences._delete_prefs"
 
 _ALL_NONE_PREFS = {
     "execution_mode": None,
@@ -460,7 +460,7 @@ class TestClearPreferences:
 
 
 class TestPromptPreferenceFallback:
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_session_mode_used_when_no_explicit_mode(self, mock_load, mock_factory, ctx):
         """Persistent execution_mode='yolo' is used when prompt() called without explicit mode."""
@@ -472,7 +472,7 @@ class TestPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.execution_mode == "yolo"
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_explicit_mode_overrides_session(self, mock_load, mock_factory, ctx):
         """Explicit execution_mode='default' overrides persistent 'yolo'."""
@@ -484,7 +484,7 @@ class TestPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.execution_mode == "default"
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_session_model_used_when_no_explicit_model(self, mock_load, mock_factory, ctx):
         """Persistent model is used when prompt() called without explicit model."""
@@ -496,7 +496,7 @@ class TestPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.model == "test-model"
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_explicit_model_overrides_session(self, mock_load, mock_factory, ctx):
         """Explicit model overrides persistent model."""
@@ -508,7 +508,7 @@ class TestPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.model == "alternate-model"
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     async def test_no_session_no_explicit_uses_defaults(self, mock_factory):
         """Without persistent prefs or explicit params, execution_mode='default' and model=None."""
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
@@ -519,14 +519,14 @@ class TestPromptPreferenceFallback:
         assert call_args.execution_mode == "default"
         assert call_args.model is None
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     async def test_ctx_none_does_not_crash(self, mock_factory):
         """prompt() with ctx=None falls back to defaults without raising."""
         _setup_mock_runner(mock_factory, output="ok")
         result = await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=None)
         assert strip_runner_header(result) == "ok"
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_session_max_retries_used_when_no_explicit(self, mock_load, mock_factory, ctx):
         """Persistent max_retries is used when prompt() called without explicit max_retries."""
@@ -544,7 +544,7 @@ class TestPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.max_retries == 5
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_explicit_max_retries_overrides_session(self, mock_load, mock_factory, ctx):
         """Explicit max_retries overrides persistent max_retries."""
@@ -562,7 +562,7 @@ class TestPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.max_retries == 2
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_session_output_limit_used_when_no_explicit(self, mock_load, mock_factory, ctx):
         """Persistent output_limit is used when prompt() called without explicit output_limit."""
@@ -580,7 +580,7 @@ class TestPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.output_limit == 4096
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_session_timeout_used_when_no_explicit(self, mock_load, mock_factory, ctx):
         """Persistent timeout is used when prompt() called without explicit timeout."""
@@ -598,7 +598,7 @@ class TestPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.timeout == 30
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_session_retry_base_delay_used_when_no_explicit(
         self, mock_load, mock_factory, ctx
@@ -612,7 +612,7 @@ class TestPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.retry_base_delay == 1.5
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_session_retry_max_delay_used_when_no_explicit(
         self, mock_load, mock_factory, ctx
@@ -641,7 +641,7 @@ class TestPromptPreferenceFallback:
 
 
 class TestBatchPromptPreferenceFallback:
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_session_mode_applied_to_tasks_with_none_mode(self, mock_load, mock_factory, ctx):
         """Persistent execution_mode='yolo' is applied to tasks with execution_mode=None."""
@@ -654,7 +654,7 @@ class TestBatchPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.execution_mode == "yolo"
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_explicit_task_mode_not_overridden(self, mock_load, mock_factory, ctx):
         """Task with explicit execution_mode='default' keeps it despite persistent 'yolo'."""
@@ -667,7 +667,7 @@ class TestBatchPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.execution_mode == "default"
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_session_model_applied_to_tasks(self, mock_load, mock_factory, ctx):
         """Persistent model is applied to tasks with model=None."""
@@ -680,7 +680,7 @@ class TestBatchPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.model == "test-model"
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     async def test_no_session_resolves_none_to_default(self, mock_factory):
         """Without persistent prefs, task with execution_mode=None resolves to 'default'."""
         mock_runner = _setup_mock_runner(mock_factory, output="ok")
@@ -691,7 +691,7 @@ class TestBatchPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.execution_mode == "default"
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_session_max_retries_applied_to_tasks(self, mock_load, mock_factory, ctx):
         """Persistent max_retries is applied to tasks with max_retries=None."""
@@ -710,7 +710,7 @@ class TestBatchPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.max_retries == 5
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_session_output_limit_applied_to_tasks(self, mock_load, mock_factory, ctx):
         """Persistent output_limit is applied to tasks with output_limit=None."""
@@ -729,7 +729,7 @@ class TestBatchPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.output_limit == 4096
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_session_timeout_applied_to_tasks(self, mock_load, mock_factory, ctx):
         """Persistent timeout is applied to tasks with timeout=None."""
@@ -748,7 +748,7 @@ class TestBatchPromptPreferenceFallback:
         call_args = mock_runner.run.call_args.args[0]
         assert call_args.timeout == 30
 
-    @patch("nexus_mcp.server.RunnerFactory")
+    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_mixed_tasks_selective_apply(self, mock_load, mock_factory, ctx):
         """Persistent mode applies to None-mode tasks; explicit-mode tasks keep theirs."""

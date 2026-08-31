@@ -308,8 +308,8 @@ def cli_detection_mocks():
     with (
         patch("nexus_mcp.runners.base.detect_cli") as mock_detect,
         patch("nexus_mcp.runners.base.get_cli_version", return_value="1.0.0"),
-        patch("nexus_mcp.resources.detect_cli") as mock_res_detect,
-        patch("nexus_mcp.resources.get_cli_version", return_value="1.0.0"),
+        patch("nexus_mcp.mcp.resources.detect_cli") as mock_res_detect,
+        patch("nexus_mcp.mcp.resources.get_cli_version", return_value="1.0.0"),
     ):
         mock_detect.return_value = CLIInfo(found=True, path="/usr/bin/fake")
         mock_res_detect.return_value = CLIInfo(found=True, path="/usr/bin/fake")

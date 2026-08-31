@@ -18,7 +18,7 @@ from pydantic import ValidationError
 
 from nexus_mcp.correlation import correlation_id
 from nexus_mcp.exceptions import CLINotFoundError, UnsupportedAgentError
-from nexus_mcp.middleware import (
+from nexus_mcp.mcp.middleware import (
     ErrorNormalizationMiddleware,
     RequestLoggingMiddleware,
     TimingMiddleware,
@@ -71,8 +71,8 @@ class TestTimingMiddleware:
         call_next = AsyncMock(return_value=_make_tool_result())
 
         with (
-            patch("nexus_mcp.middleware.perf_counter", side_effect=[0.0, 1.5]),
-            caplog.at_level(logging.DEBUG, logger="nexus_mcp.middleware"),
+            patch("nexus_mcp.mcp.middleware.perf_counter", side_effect=[0.0, 1.5]),
+            caplog.at_level(logging.DEBUG, logger="nexus_mcp.mcp.middleware"),
         ):
             result = await mw.on_call_tool(ctx, call_next)
 
@@ -87,8 +87,8 @@ class TestTimingMiddleware:
         call_next = AsyncMock(side_effect=ToolError("boom"))
 
         with (
-            patch("nexus_mcp.middleware.perf_counter", side_effect=[0.0, 2.0]),
-            caplog.at_level(logging.DEBUG, logger="nexus_mcp.middleware"),
+            patch("nexus_mcp.mcp.middleware.perf_counter", side_effect=[0.0, 2.0]),
+            caplog.at_level(logging.DEBUG, logger="nexus_mcp.mcp.middleware"),
             pytest.raises(ToolError, match="boom"),
         ):
             await mw.on_call_tool(ctx, call_next)
@@ -102,8 +102,8 @@ class TestTimingMiddleware:
         call_next = AsyncMock(return_value=_make_tool_result())
 
         with (
-            patch("nexus_mcp.middleware.perf_counter", side_effect=[100.0, 100.003]),
-            caplog.at_level(logging.DEBUG, logger="nexus_mcp.middleware"),
+            patch("nexus_mcp.mcp.middleware.perf_counter", side_effect=[100.0, 100.003]),
+            caplog.at_level(logging.DEBUG, logger="nexus_mcp.mcp.middleware"),
         ):
             await mw.on_call_tool(ctx, call_next)
 
@@ -119,7 +119,7 @@ class TestRequestLoggingMiddleware:
         ctx = _make_context("prompt", {"cli": REPRESENTATIVE_CLI, "prompt": "tell me a joke"})
         call_next = AsyncMock(return_value=_make_tool_result())
 
-        with caplog.at_level(logging.INFO, logger="nexus_mcp.middleware"):
+        with caplog.at_level(logging.INFO, logger="nexus_mcp.mcp.middleware"):
             result = await mw.on_call_tool(ctx, call_next)
 
         assert result == call_next.return_value
@@ -134,7 +134,7 @@ class TestRequestLoggingMiddleware:
         call_next = AsyncMock(side_effect=ToolError("codex not found"))
 
         with (
-            caplog.at_level(logging.INFO, logger="nexus_mcp.middleware"),
+            caplog.at_level(logging.INFO, logger="nexus_mcp.mcp.middleware"),
             pytest.raises(ToolError),
         ):
             await mw.on_call_tool(ctx, call_next)
@@ -153,7 +153,7 @@ class TestRequestLoggingMiddleware:
         )
         call_next = AsyncMock(return_value=_make_tool_result())
 
-        with caplog.at_level(logging.DEBUG, logger="nexus_mcp.middleware"):
+        with caplog.at_level(logging.DEBUG, logger="nexus_mcp.mcp.middleware"):
             await mw.on_call_tool(ctx, call_next)
 
         assert secret_prompt not in caplog.text
@@ -172,7 +172,7 @@ class TestRequestLoggingMiddleware:
         )
         call_next = AsyncMock(return_value=_make_tool_result())
 
-        with caplog.at_level(logging.INFO, logger="nexus_mcp.middleware"):
+        with caplog.at_level(logging.INFO, logger="nexus_mcp.mcp.middleware"):
             await mw.on_call_tool(ctx, call_next)
 
         assert "tasks=2" in caplog.text
@@ -188,7 +188,7 @@ class TestRequestLoggingMiddleware:
         )
         call_next = AsyncMock(return_value=_make_tool_result())
 
-        with caplog.at_level(logging.INFO, logger="nexus_mcp.middleware"):
+        with caplog.at_level(logging.INFO, logger="nexus_mcp.mcp.middleware"):
             await mw.on_call_tool(ctx, call_next)
 
         assert "execution_mode" in caplog.text
@@ -259,7 +259,7 @@ class TestErrorNormalizationMiddleware:
         call_next = AsyncMock(side_effect=RuntimeError("something broke"))
 
         with (
-            caplog.at_level(logging.ERROR, logger="nexus_mcp.middleware"),
+            caplog.at_level(logging.ERROR, logger="nexus_mcp.mcp.middleware"),
             pytest.raises(ToolError, match="Internal error: RuntimeError: something broke"),
         ):
             await mw.on_call_tool(ctx, call_next)
@@ -342,15 +342,15 @@ class TestRequestLoggingMiddlewareCorrelation:
         ctx = _make_context("prompt", {"cli": REPRESENTATIVE_CLI, "prompt": "hi"})
         call_next = AsyncMock(return_value=_make_tool_result())
 
-        mw_logger = logging.getLogger("nexus_mcp.middleware")
+        mw_logger = logging.getLogger("nexus_mcp.mcp.middleware")
         filt = CorrelationFilter()
         mw_logger.addFilter(filt)
         try:
-            with caplog.at_level(logging.INFO, logger="nexus_mcp.middleware"):
+            with caplog.at_level(logging.INFO, logger="nexus_mcp.mcp.middleware"):
                 await mw.on_call_tool(ctx, call_next)
             # Verify that log records have req_id attribute
             for record in caplog.records:
-                if record.name == "nexus_mcp.middleware":
+                if record.name == "nexus_mcp.mcp.middleware":
                     assert hasattr(record, "req_id")
                     assert record.req_id != "-"  # type: ignore[attr-defined]
         finally:

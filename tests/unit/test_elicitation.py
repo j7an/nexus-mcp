@@ -178,7 +178,7 @@ class TestModelSelection:
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
         mock_ctx.elicit.return_value = AcceptedElicitation(data="pro")
-        with patch("nexus_mcp.elicitation.get_runner_models", return_value=("pro", "flash")):
+        with patch("nexus_mcp.mcp.elicitation.get_runner_models", return_value=("pro", "flash")):
             guard = ElicitationGuard(mock_ctx, installed_clis)
             result = await guard.check_prompt(
                 cli=REPRESENTATIVE_CLI,
@@ -194,7 +194,7 @@ class TestModelSelection:
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
         mock_ctx.elicit.return_value = DeclinedElicitation()
-        with patch("nexus_mcp.elicitation.get_runner_models", return_value=("pro", "flash")):
+        with patch("nexus_mcp.mcp.elicitation.get_runner_models", return_value=("pro", "flash")):
             guard = ElicitationGuard(mock_ctx, installed_clis)
             result = await guard.check_prompt(
                 cli=REPRESENTATIVE_CLI,
@@ -208,7 +208,7 @@ class TestModelSelection:
     async def test_does_not_fire_when_model_provided(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
-        with patch("nexus_mcp.elicitation.get_runner_models", return_value=("pro", "flash")):
+        with patch("nexus_mcp.mcp.elicitation.get_runner_models", return_value=("pro", "flash")):
             guard = ElicitationGuard(mock_ctx, installed_clis)
             result = await guard.check_prompt(
                 cli=REPRESENTATIVE_CLI,
@@ -223,7 +223,7 @@ class TestModelSelection:
     async def test_does_not_fire_when_single_model(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
-        with patch("nexus_mcp.elicitation.get_runner_models", return_value=("flash",)):
+        with patch("nexus_mcp.mcp.elicitation.get_runner_models", return_value=("flash",)):
             guard = ElicitationGuard(mock_ctx, installed_clis)
             await guard.check_prompt(
                 cli=REPRESENTATIVE_CLI,
@@ -237,7 +237,7 @@ class TestModelSelection:
     async def test_does_not_fire_when_no_models(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
-        with patch("nexus_mcp.elicitation.get_runner_models", return_value=()):
+        with patch("nexus_mcp.mcp.elicitation.get_runner_models", return_value=()):
             guard = ElicitationGuard(mock_ctx, installed_clis)
             await guard.check_prompt(
                 cli=REPRESENTATIVE_CLI,
@@ -264,8 +264,8 @@ class TestYoloConfirmation:
     async def test_fires_when_yolo(self, mock_ctx: AsyncMock, installed_clis: list[str]) -> None:
         mock_ctx.elicit.return_value = AcceptedElicitation(data={})
         with (
-            patch("nexus_mcp.elicitation.load_preferences", return_value=None),
-            patch("nexus_mcp.elicitation.save_preferences"),
+            patch("nexus_mcp.mcp.elicitation.load_preferences", return_value=None),
+            patch("nexus_mcp.mcp.elicitation.save_preferences"),
         ):
             guard = ElicitationGuard(mock_ctx, installed_clis)
             result = await guard.check_prompt(
@@ -310,8 +310,8 @@ class TestYoloConfirmation:
     ) -> None:
         mock_ctx.elicit.return_value = AcceptedElicitation(data={})
         with (
-            patch("nexus_mcp.elicitation.load_preferences", return_value=None) as mock_load,
-            patch("nexus_mcp.elicitation.save_preferences") as mock_save,
+            patch("nexus_mcp.mcp.elicitation.load_preferences", return_value=None) as mock_load,
+            patch("nexus_mcp.mcp.elicitation.save_preferences") as mock_save,
         ):
             guard = ElicitationGuard(mock_ctx, installed_clis)
             await guard.check_prompt(
@@ -347,8 +347,8 @@ class TestYoloConfirmation:
         mock_ctx.elicit.return_value = AcceptedElicitation(data={})
         prefs = SessionPreferences(confirm_yolo=None)
         with (
-            patch("nexus_mcp.elicitation.load_preferences", return_value=None),
-            patch("nexus_mcp.elicitation.save_preferences"),
+            patch("nexus_mcp.mcp.elicitation.load_preferences", return_value=None),
+            patch("nexus_mcp.mcp.elicitation.save_preferences"),
         ):
             guard = ElicitationGuard(mock_ctx, installed_clis, prefs=prefs)
             await guard.check_prompt(
@@ -419,7 +419,7 @@ class TestVaguePromptCheck:
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
         mock_ctx.elicit.return_value = AcceptedElicitation(data="elaborated prompt text")
-        with patch("nexus_mcp.elicitation.save_preferences") as mock_save:
+        with patch("nexus_mcp.mcp.elicitation.save_preferences") as mock_save:
             guard = ElicitationGuard(mock_ctx, installed_clis)
             await guard.check_prompt(
                 cli=REPRESENTATIVE_CLI,
@@ -481,8 +481,8 @@ class TestBatchElicitation:
             ),
         ]
         with (
-            patch("nexus_mcp.elicitation.load_preferences", return_value=None),
-            patch("nexus_mcp.elicitation.save_preferences"),
+            patch("nexus_mcp.mcp.elicitation.load_preferences", return_value=None),
+            patch("nexus_mcp.mcp.elicitation.save_preferences"),
         ):
             guard = ElicitationGuard(mock_ctx, installed_clis)
             await guard.check_batch(tasks, elicit=True)
