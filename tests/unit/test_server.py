@@ -41,6 +41,22 @@ def test_root_server_mcp_is_implementation_instance() -> None:
     assert mcp is implementation_mcp
 
 
+def test_root_server_set_preferences_is_implementation_function() -> None:
+    """The legacy server module preserves the set_preferences import."""
+    from nexus_mcp.mcp.preferences import set_preferences as implementation_set_preferences
+    from nexus_mcp.server import set_preferences as compatibility_set_preferences
+
+    assert compatibility_set_preferences is implementation_set_preferences
+
+
+def test_root_server_clear_preferences_is_implementation_function() -> None:
+    """The legacy server module preserves the clear_preferences import."""
+    from nexus_mcp.mcp.preferences import clear_preferences as implementation_clear_preferences
+    from nexus_mcp.server import clear_preferences as compatibility_clear_preferences
+
+    assert compatibility_clear_preferences is implementation_clear_preferences
+
+
 def _setup_mock_runner(mock_factory, *, output: str = "test output", side_effect=None) -> AsyncMock:
     """Configure mock_factory.create() to return a runner with preset run() behavior.
 
