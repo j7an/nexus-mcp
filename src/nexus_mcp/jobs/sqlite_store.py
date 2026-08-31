@@ -43,7 +43,11 @@ class _SQLiteWorker:
             await loop.run_in_executor(self._executor, self._open_in_worker)
 
     async def _call(self, operation: Callable[[sqlite3.Connection], _ResultT]) -> _ResultT:
-        """Run one connection operation on the dedicated worker thread."""
+        """Run one trusted internal connection operation on the dedicated worker thread.
+
+        Direct connection and cursor results are rejected. Internal operations are trusted
+        not to smuggle SQLite handles through closures or wrapper containers.
+        """
         if self._closed:
             raise RuntimeError("SQLite worker is closed")
         loop = asyncio.get_running_loop()
@@ -82,6 +86,8 @@ class _SQLiteWorker:
         result = operation(connection)
         if isinstance(result, sqlite3.Connection):
             raise RuntimeError("SQLite connection cannot escape its worker")
+        if isinstance(result, sqlite3.Cursor):
+            raise RuntimeError("SQLite cursor cannot escape its worker")
         return result
 
     def _close_in_worker(self) -> None:

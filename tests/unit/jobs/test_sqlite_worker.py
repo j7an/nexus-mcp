@@ -81,6 +81,18 @@ async def test_worker_prevents_connection_escape(tmp_path):
         await worker.close()
 
 
+async def test_worker_prevents_cursor_escape(tmp_path):
+    """An operation cannot return a cursor that retains the owned connection."""
+    worker = _SQLiteWorker(tmp_path / "private-cursor.sqlite3")
+
+    await worker.open()
+    try:
+        with pytest.raises(RuntimeError, match="cursor cannot escape"):
+            await worker._call(lambda connection: connection.execute("SELECT 1"))
+    finally:
+        await worker.close()
+
+
 async def test_worker_close_is_idempotent_and_final(tmp_path):
     """Repeated close is safe and no work can run after executor shutdown."""
     worker = _SQLiteWorker(tmp_path / "closed.sqlite3")
