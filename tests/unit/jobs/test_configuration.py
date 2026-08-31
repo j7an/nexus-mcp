@@ -2,7 +2,9 @@
 
 import hashlib
 import traceback
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -60,6 +62,51 @@ def _assert_only_sanitized_error_is_reachable(error: ConfigurationError, *sentin
     formatted = "".join(traceback.format_exception(error))
     for sentinel in sentinels:
         assert sentinel not in formatted
+
+
+def _value_references_sentinel(value: object, sentinel: str, seen: set[int]) -> bool:
+    """Search nested local values without following the traceback under test."""
+    identity = id(value)
+    if identity in seen:
+        return False
+    seen.add(identity)
+
+    try:
+        if sentinel in str(value):
+            return True
+    except Exception:  # pragma: no cover - defensive inspection of arbitrary frame locals
+        pass
+    if isinstance(value, Mapping):
+        return any(
+            _value_references_sentinel(item, sentinel, seen)
+            for pair in value.items()
+            for item in pair
+        )
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return any(_value_references_sentinel(item, sentinel, seen) for item in value)
+    try:
+        attributes: dict[str, Any] = vars(value)
+    except TypeError:
+        return False
+    return _value_references_sentinel(attributes, sentinel, seen)
+
+
+def _assert_configuration_traceback_frames_are_sanitized(
+    error: ConfigurationError, sentinel: str
+) -> None:
+    """Inspect every retained production configuration frame for rejected input."""
+    configuration_frames = 0
+    current = error.__traceback__
+    while current is not None:
+        frame = current.tb_frame
+        if frame.f_globals.get("__name__") == "nexus_mcp.jobs.configuration":
+            configuration_frames += 1
+            for local_name, local_value in frame.f_locals.items():
+                assert not _value_references_sentinel(local_value, sentinel, set()), (
+                    f"{frame.f_code.co_name}.{local_name} retained rejected input"
+                )
+        current = current.tb_next
+    assert configuration_frames > 0
 
 
 def test_linux_user_config_path_honors_xdg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -184,21 +231,36 @@ def test_toml_rejects_coercible_wrong_scalar_types(tmp_path: Path, assignment: s
             b'[defaults]\ntimeout_seconds = "SENTINEL_INVALID_VALUE"\n',
             "SENTINEL_INVALID_VALUE",
         ),
+        (
+            b'[defaults]\nmodel = "SENTINEL_INVALID_RETRY"\nretry_base_delay_seconds = inf\n',
+            "SENTINEL_INVALID_RETRY",
+        ),
     ],
 )
+@pytest.mark.parametrize("entrypoint", ["direct", "snapshot"])
 def test_invalid_toml_does_not_retain_untrusted_exception_details(
-    tmp_path: Path, contents: bytes, sentinel: str
+    workspace: Workspace,
+    tmp_path: Path,
+    contents: bytes,
+    sentinel: str,
+    entrypoint: str,
 ):
     """Decode, parse, and schema failures expose only the generic source diagnostic."""
     path = tmp_path / "config.toml"
     path.write_bytes(contents)
 
     with pytest.raises(ConfigurationError) as caught:
-        read_config_file(path, backend_id="codex")
+        if entrypoint == "direct":
+            read_config_file(path, backend_id="codex")
+        else:
+            NexusConfigResolver(user_path=path).snapshot(
+                "codex", workspace, ExecutionConfigValues()
+            )
 
     assert caught.value.args == ("invalid Nexus configuration",)
     assert caught.value.config_key == str(path)
     _assert_only_sanitized_error_is_reachable(caught.value, sentinel)
+    _assert_configuration_traceback_frames_are_sanitized(caught.value, sentinel)
 
 
 def test_backend_section_overrides_defaults_within_one_file(tmp_path: Path):
@@ -359,7 +421,7 @@ def test_invalid_environment_does_not_retain_untrusted_validation_details(
 ):
     """Rejected environment content is absent from the public exception chain and traceback."""
     sentinel = "SENTINEL_INVALID_ENVIRONMENT_VALUE"
-    monkeypatch.setenv("NEXUS_TIMEOUT_SECONDS", sentinel)
+    monkeypatch.setenv("NEXUS_RETRY_BASE_DELAY", sentinel)
 
     with pytest.raises(ConfigurationError) as caught:
         NexusConfigResolver(user_path=workspace.canonical_path / "missing.toml").snapshot(
@@ -367,8 +429,9 @@ def test_invalid_environment_does_not_retain_untrusted_validation_details(
         )
 
     assert caught.value.args == ("invalid Nexus environment configuration",)
-    assert caught.value.config_key == "NEXUS_TIMEOUT_SECONDS"
+    assert caught.value.config_key == "NEXUS_RETRY_BASE_DELAY"
     _assert_only_sanitized_error_is_reachable(caught.value, sentinel)
+    _assert_configuration_traceback_frames_are_sanitized(caught.value, sentinel)
 
 
 def test_invalid_retry_environment_value_identifies_the_rejected_setting(

@@ -102,8 +102,9 @@ def workspace_config_path(workspace: Workspace) -> Path:
 
 def read_config_file(path: Path, *, backend_id: str) -> ExecutionConfigValues:
     """Read one strict TOML file and select its backend-adjusted values."""
-    contents = _read_config_contents(path)
-    return _parse_config_contents(contents, backend_id=backend_id, config_key=str(path))
+    return _parse_config_contents(
+        _read_config_contents(path), backend_id=backend_id, config_key=str(path)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,12 +139,18 @@ def _file_snapshot(path: Path, backend_id: str) -> ConfigLayerSnapshot | None:
     if not path.exists():
         return None
     contents = _read_config_contents(path)
-    values = _parse_config_contents(contents, backend_id=backend_id, config_key=str(path))
-    return ConfigLayerSnapshot(
-        values=values,
-        source=str(path),
-        source_hash=hashlib.sha256(contents).hexdigest(),
-    )
+    try:
+        values = _parse_config_contents(contents, backend_id=backend_id, config_key=str(path))
+    except ConfigurationError as error:
+        propagated_error = error
+        contents = b""
+    else:
+        return ConfigLayerSnapshot(
+            values=values,
+            source=str(path),
+            source_hash=hashlib.sha256(contents).hexdigest(),
+        )
+    raise propagated_error
 
 
 def _read_config_contents(path: Path) -> bytes:
@@ -163,13 +170,21 @@ def _parse_config_contents(
     config_key: str,
 ) -> ExecutionConfigValues:
     """Parse strict TOML without retaining its text or validation input in errors."""
+    parsed: dict[str, Any] | None = None
+    configuration: TOMLConfigurationFile | None = None
+    values: ExecutionConfigValues | None = None
     try:
-        parsed: dict[str, Any] = tomllib.loads(contents.decode("utf-8"))
+        parsed = tomllib.loads(contents.decode("utf-8"))
         configuration = TOMLConfigurationFile.model_validate(parsed)
         values = configuration.execution_values(backend_id)
     except (UnicodeDecodeError, tomllib.TOMLDecodeError, ValidationError):
         sanitized_error = ConfigurationError("invalid Nexus configuration", config_key=config_key)
+        contents = b""
+        parsed = None
+        configuration = None
+        values = None
     else:
+        assert values is not None
         return values
     raise sanitized_error
 
@@ -232,6 +247,9 @@ def _environment_values(backend_id: str) -> ExecutionConfigValues | None:
             "invalid Nexus environment configuration",
             config_key=source_keys.get(field_name),
         )
+        values.clear()
+        retry_values.clear()
+        source_keys.clear()
     raise sanitized_error
 
 
