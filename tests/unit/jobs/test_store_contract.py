@@ -27,6 +27,7 @@ from nexus_mcp.core import (
     WorkspaceInvalidError,
     WorkspaceSelector,
 )
+from nexus_mcp.jobs.sqlite_store import SQLiteJobStore
 from nexus_mcp.jobs.store import (
     CancelJobCommand,
     CancelledTerminalOutcome,
@@ -45,6 +46,7 @@ from tests.job_fakes import InMemoryJobStore
 NOW = datetime(2026, 8, 30, 20, 0, tzinfo=UTC)
 OLD = datetime(2025, 1, 1, tzinfo=UTC)
 LEASE_UNTIL = datetime(2099, 1, 1, tzinfo=UTC)
+WORKSPACE_PATH = Path(__file__).resolve().parents[3]
 
 
 def make_event(event_type: JobEventType = "progress", **payload: JsonValue) -> BackendEvent:
@@ -57,7 +59,7 @@ def make_create_job_command(**overrides: Any) -> CreateJobCommand:
     defaults: dict[str, object] = {
         "workspace": Workspace(
             workspace_id="ws-test",
-            canonical_path=Path("/tmp/nexus-workspace"),
+            canonical_path=WORKSPACE_PATH,
             created_at=NOW,
             updated_at=NOW,
         ),
@@ -75,10 +77,25 @@ def make_create_job_command(**overrides: Any) -> CreateJobCommand:
 
 
 @pytest.fixture(params=["memory", "sqlite"], ids=["memory", "sqlite"])
+async def admission_store(request: pytest.FixtureRequest, tmp_path: Path):
+    """Run admission, identity, and query assertions against every implementation."""
+    store = (
+        SQLiteJobStore(tmp_path / "jobs.sqlite3")
+        if request.param == "sqlite"
+        else InMemoryJobStore()
+    )
+    await store.open()
+    try:
+        yield store
+    finally:
+        await store.close()
+
+
+@pytest.fixture(params=["memory", "sqlite"], ids=["memory", "sqlite"])
 async def job_store(request: pytest.FixtureRequest):
-    """Run the same persistence assertions against every implementation."""
+    """Keep Task 7 lifecycle cases shared while SQLite lifecycle is intentionally absent."""
     if request.param == "sqlite":
-        pytest.skip("SQLiteJobStore is added in Task 6")
+        pytest.skip("SQLite lifecycle is added in Task 7")
     store = InMemoryJobStore()
     await store.open()
     try:
@@ -161,24 +178,24 @@ def test_prune_policy_couples_raw_cutoff_and_positive_byte_cap():
         PrunePolicy(raw_diagnostic_before=NOW, raw_diagnostic_max_bytes=0)
 
 
-async def test_create_job_replays_matching_idempotency_key(job_store):
+async def test_create_job_replays_matching_idempotency_key(admission_store):
     """The same scoped request key returns its original handle without another event."""
     command = make_create_job_command(idempotency_key="request-1")
-    first = await job_store.create_job(command)
-    second = await job_store.create_job(command)
+    first = await admission_store.create_job(command)
+    second = await admission_store.create_job(command)
 
     assert second.handle == first.handle
     assert second.created is False
-    page = await job_store.read_events(first.handle.job_id, after_sequence=0, limit=10)
+    page = await admission_store.read_events(first.handle.job_id, after_sequence=0, limit=10)
     assert [event.sequence for event in page.events] == [1]
 
 
-async def test_idempotency_key_rejects_a_different_request(job_store):
+async def test_idempotency_key_rejects_a_different_request(admission_store):
     """A key cannot alias two different immutable operation requests."""
-    await job_store.create_job(make_create_job_command(idempotency_key="request-1"))
+    await admission_store.create_job(make_create_job_command(idempotency_key="request-1"))
 
     with pytest.raises(IdempotencyConflictError):
-        await job_store.create_job(
+        await admission_store.create_job(
             make_create_job_command(
                 idempotency_key="request-1",
                 operation=TurnOperation(prompt="Do something else"),
@@ -206,29 +223,24 @@ async def test_idempotency_replay_after_terminal_returns_original_handle(job_sto
     assert stored is not None and stored.state == "cancelled"
 
 
-async def test_same_idempotency_key_is_independent_across_source_sessions(job_store):
+async def test_same_idempotency_key_is_independent_across_source_sessions(admission_store):
     """Continuation idempotency is scoped to the session from which work derives."""
     for session_id in ("source-a", "source-b"):
-        root = await job_store.create_job(make_create_job_command(session_id=session_id))
-        await job_store.request_cancel(
-            CancelJobCommand(
-                job_id=root.handle.job_id,
-                requested_at=NOW,
-                event=make_event("job_cancelled"),
-            )
+        await admission_store.create_job(
+            make_create_job_command(session_id=session_id, idempotency_key=None)
         )
 
-    first = await job_store.create_job(
+    first = await admission_store.create_job(
         make_create_job_command(
-            session_id="source-a",
-            create_session=False,
+            session_id="child-a",
+            parent_session_id="source-a",
             idempotency_key="same-key",
         )
     )
-    second = await job_store.create_job(
+    second = await admission_store.create_job(
         make_create_job_command(
-            session_id="source-b",
-            create_session=False,
+            session_id="child-b",
+            parent_session_id="source-b",
             idempotency_key="same-key",
         )
     )
@@ -238,12 +250,12 @@ async def test_same_idempotency_key_is_independent_across_source_sessions(job_st
     assert second.handle.job_id != first.handle.job_id
 
 
-async def test_second_nonterminal_job_for_session_is_rejected(job_store):
+async def test_second_nonterminal_job_for_session_is_rejected(admission_store):
     """One session cannot admit overlapping provider operations."""
-    await job_store.create_job(make_create_job_command(session_id="session-1"))
+    await admission_store.create_job(make_create_job_command(session_id="session-1"))
 
     with pytest.raises(SessionBusyError):
-        await job_store.create_job(make_create_job_command(session_id="session-1"))
+        await admission_store.create_job(make_create_job_command(session_id="session-1"))
 
 
 async def test_terminal_session_accepts_a_new_job(job_store):
@@ -284,27 +296,49 @@ async def test_claimed_queued_cancellation_closes_the_attempt(job_store):
     assert attempts[-1].ended_at == NOW
 
 
-async def test_create_persists_workspace_session_and_queued_event(job_store):
+async def test_create_persists_workspace_session_and_queued_event(admission_store):
     """Admission atomically persists its durable identities and initial history."""
     command = make_create_job_command()
-    created = await job_store.create_job(command)
+    created = await admission_store.create_job(command)
 
     assert (
-        await job_store.resolve_workspace(WorkspaceSelector(workspace_id="ws-test"))
+        await admission_store.resolve_workspace(WorkspaceSelector(workspace_id="ws-test"))
         == command.workspace
     )
     assert (
-        await job_store.resolve_workspace(WorkspaceSelector(path=Path("/tmp/nexus-workspace")))
+        await admission_store.resolve_workspace(WorkspaceSelector(path=WORKSPACE_PATH))
         == command.workspace
     )
-    session = await job_store.get_session("session-test")
+    session = await admission_store.get_session("session-test")
     assert session is not None
     assert session.workspace_id == "ws-test"
-    events = await job_store.read_events(created.handle.job_id, after_sequence=0, limit=10)
+    events = await admission_store.read_events(created.handle.job_id, after_sequence=0, limit=10)
     assert [(event.sequence, event.type) for event in events.events] == [(1, "job_queued")]
 
 
-async def test_failed_create_job_leaves_no_partial_workspace(job_store):
+async def test_create_round_trips_typed_job_and_session_snapshots(admission_store):
+    """Admission reads reconstruct closed job and session models without untyped payloads."""
+    command = make_create_job_command(idempotency_key="round-trip")
+    created = await admission_store.create_job(command)
+
+    job = await admission_store.get_job(created.handle.job_id)
+    session = await admission_store.get_session("session-test")
+
+    assert job is not None
+    assert job.operation == command.operation
+    assert job.requested_config == command.requested_config
+    assert job.owner_id == command.owner_id
+    assert job.access_policy == command.access_policy
+    assert job.idempotency_key == command.idempotency_key
+    assert job.source_checkpoint == command.source_checkpoint
+    assert session is not None
+    assert session.workspace_id == command.workspace.workspace_id
+    assert session.backend_id == command.backend_id
+    assert session.owner_id == command.owner_id
+    assert session.access_policy == command.access_policy
+
+
+async def test_failed_create_job_leaves_no_partial_workspace(admission_store):
     """An admission failure rolls back every identity that would have accompanied the job."""
     command = make_create_job_command(
         workspace=Workspace(
@@ -318,12 +352,12 @@ async def test_failed_create_job_leaves_no_partial_workspace(job_store):
     )
 
     with pytest.raises(SessionNotFoundError):
-        await job_store.create_job(command)
+        await admission_store.create_job(command)
     with pytest.raises(WorkspaceInvalidError):
-        await job_store.resolve_workspace(WorkspaceSelector(workspace_id="ws-rollback"))
+        await admission_store.resolve_workspace(WorkspaceSelector(workspace_id="ws-rollback"))
 
 
-async def test_source_checkpoint_requires_existing_source_before_any_mutation(job_store):
+async def test_source_checkpoint_requires_existing_source_before_any_mutation(admission_store):
     """A missing checkpoint source rolls back workspace, child session, job, event, and key."""
     workspace = Workspace(
         workspace_id="ws-missing-source",
@@ -340,10 +374,12 @@ async def test_source_checkpoint_requires_existing_source_before_any_mutation(jo
     )
 
     with pytest.raises(SessionNotFoundError):
-        await job_store.create_job(command)
-    assert await job_store.get_session("child-missing-source") is None
+        await admission_store.create_job(command)
+    assert await admission_store.get_session("child-missing-source") is None
     with pytest.raises(WorkspaceInvalidError):
-        await job_store.resolve_workspace(WorkspaceSelector(workspace_id=workspace.workspace_id))
+        await admission_store.resolve_workspace(
+            WorkspaceSelector(workspace_id=workspace.workspace_id)
+        )
 
 
 async def test_source_checkpoint_must_belong_to_source_session_atomically(job_store):
@@ -653,9 +689,9 @@ async def test_terminalize_atomically_stores_each_outcome(
     assert len((await job_store.read_events(created.handle.job_id, 0, 20)).events) == event_count
 
 
-async def test_list_jobs_applies_access_order_and_opaque_cursor(job_store):
+async def test_list_jobs_applies_access_order_and_opaque_cursor(admission_store):
     """Stored pages expose only caller-visible jobs in deterministic descending order."""
-    own = await job_store.create_job(
+    own = await admission_store.create_job(
         make_create_job_command(
             operation=DiagnosticsOperation(),
             session_id=None,
@@ -663,7 +699,7 @@ async def test_list_jobs_applies_access_order_and_opaque_cursor(job_store):
             owner_id="local:501",
         )
     )
-    await job_store.create_job(
+    await admission_store.create_job(
         make_create_job_command(
             operation=DiagnosticsOperation(),
             session_id=None,
@@ -672,7 +708,7 @@ async def test_list_jobs_applies_access_order_and_opaque_cursor(job_store):
             access_policy="private",
         )
     )
-    shared = await job_store.create_job(
+    shared = await admission_store.create_job(
         make_create_job_command(
             operation=DiagnosticsOperation(),
             session_id=None,
@@ -688,9 +724,9 @@ async def test_list_jobs_applies_access_order_and_opaque_cursor(job_store):
         limit=1,
     )
 
-    first = await job_store.list_jobs(query)
-    second = await job_store.list_jobs(query.model_copy(update={"cursor": first.next_cursor}))
-    private = await job_store.list_jobs(
+    first = await admission_store.list_jobs(query)
+    second = await admission_store.list_jobs(query.model_copy(update={"cursor": first.next_cursor}))
+    private = await admission_store.list_jobs(
         query.model_copy(
             update={
                 "access": JobAccessFilter(principal_id="local:501"),
@@ -700,9 +736,13 @@ async def test_list_jobs_applies_access_order_and_opaque_cursor(job_store):
         )
     )
 
-    assert [job.job_id for job in first.jobs] == [shared.handle.job_id]
+    visible = (*first.jobs, *second.jobs)
+    assert {job.job_id for job in visible} == {own.handle.job_id, shared.handle.job_id}
+    assert [job.job_id for job in visible] == [
+        job.job_id
+        for job in sorted(visible, key=lambda job: (job.created_at, job.job_id), reverse=True)
+    ]
     assert first.next_cursor is not None
-    assert [job.job_id for job in second.jobs] == [own.handle.job_id]
     assert [job.job_id for job in private.jobs] == [own.handle.job_id]
 
 
