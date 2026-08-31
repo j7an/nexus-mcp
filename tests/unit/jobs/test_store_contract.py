@@ -435,6 +435,12 @@ async def test_claim_allocates_attempt_event_and_new_fencing_generation(job_stor
     assert second.token.generation == 2
     assert second.attempt.attempt_number == 2
     assert second.attempt.phase == "reconciling"
+    attempts = await job_store.get_job_attempts(created.handle.job_id)
+    assert attempts[0].lease_expires_at == OLD
+    assert attempts[0].heartbeat_at is not None
+    assert attempts[0].ended_at is not None
+    assert attempts[1].lease_expires_at == LEASE_UNTIL
+    assert attempts[1].heartbeat_at is not None
     events = await job_store.read_events(created.handle.job_id, 0, 10)
     assert [event.sequence for event in events.events] == [1, 2, 3]
 
@@ -452,7 +458,13 @@ async def test_stale_job_lease_cannot_publish_worker_state(job_store):
     with pytest.raises(StaleLeaseError):
         await job_store.append_events(stale.token, (make_event("message"),))
     assert await job_store.renew_lease(stale.token, LEASE_UNTIL + timedelta(minutes=10)) is False
-    assert await job_store.renew_lease(current.token, LEASE_UNTIL + timedelta(minutes=10)) is True
+    renewed_until = LEASE_UNTIL + timedelta(minutes=10)
+    assert await job_store.renew_lease(current.token, renewed_until) is True
+    attempts = await job_store.get_job_attempts(current.job.job_id)
+    assert attempts[-1].lease_expires_at == renewed_until
+    assert attempts[-1].heartbeat_at is not None
+    assert current.attempt.heartbeat_at is not None
+    assert attempts[-1].heartbeat_at >= current.attempt.heartbeat_at
 
 
 async def test_expired_active_job_is_reclaimed_for_reconciliation(job_store):
@@ -603,6 +615,38 @@ async def test_reconciliation_and_retry_create_a_new_attempt_without_reopening_s
     assert job.state == "running"
     assert second.token.generation == 2
     assert [attempt.attempt_number for attempt in attempts] == [1, 2]
+    assert attempts[0].reconciliation_classification == error.code
+    assert attempts[0].retry_classification == error.retry_disposition
+    assert attempts[0].lease_expires_at == LEASE_UNTIL
+    assert attempts[0].heartbeat_at is not None
+
+
+async def test_reconciliation_classification_survives_terminal_attempt_closure(job_store):
+    """Terminal failure preserves why reconciliation began without inventing retry metadata."""
+    created = await job_store.create_job(make_create_job_command())
+    claimed = await job_store.claim_next("worker-1", LEASE_UNTIL, event=make_event("progress"))
+    assert claimed is not None
+    await job_store.mark_running(claimed.token, (), event=make_event("job_started"))
+    reconciliation_error = make_job_error(code="outcome_unknown")
+    terminal_error = make_job_error(code="provider_failed")
+    await job_store.mark_reconciling(
+        claimed.token,
+        reconciliation_error,
+        event=make_event("reconciliation"),
+    )
+
+    await job_store.terminalize(
+        claimed.token,
+        FailedTerminalOutcome(error=terminal_error, completed_at=NOW),
+        event=make_event("job_failed"),
+    )
+
+    attempt = (await job_store.get_job_attempts(created.handle.job_id))[-1]
+    assert attempt.reconciliation_classification == reconciliation_error.code
+    assert attempt.retry_classification is None
+    assert attempt.error_code == terminal_error.code
+    assert attempt.lease_expires_at == LEASE_UNTIL
+    assert attempt.heartbeat_at is not None
 
 
 async def test_active_cancellation_is_idempotent_and_completion_may_win(job_store):
@@ -678,6 +722,7 @@ async def test_terminalize_atomically_stores_each_outcome(
     if result_type == "error":
         assert attempts[-1].error_code == outcome.error.code
         assert attempts[-1].error_message == outcome.error.message
+        assert attempts[-1].retry_classification is None
 
     event_count = len((await job_store.read_events(created.handle.job_id, 0, 20)).events)
     receipt = await job_store.request_cancel(

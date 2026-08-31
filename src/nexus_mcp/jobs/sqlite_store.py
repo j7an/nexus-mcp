@@ -396,6 +396,7 @@ class SQLiteJobStore:
                 connection,
                 token,
                 error_json,
+                error.code,
                 event,
             )
         )
@@ -417,6 +418,7 @@ class SQLiteJobStore:
                 token,
                 retry_at,
                 error_json,
+                error.retry_disposition,
                 event,
             )
         )
@@ -851,10 +853,20 @@ def _claim_next_transaction(
         connection.execute(
             """
             INSERT INTO job_attempts (
-              job_id, attempt_number, phase, owner_id, lease_generation, started_at_ms
-            ) VALUES (?, ?, ?, ?, ?, ?)
+              job_id, attempt_number, phase, owner_id, lease_generation,
+              lease_expires_at_ms, heartbeat_at_ms, started_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (job_id, attempt_number, phase, owner_id, generation, now_ms),
+            (
+                job_id,
+                attempt_number,
+                phase,
+                owner_id,
+                generation,
+                _datetime_to_ms(lease_until),
+                now_ms,
+                now_ms,
+            ),
         )
         _insert_job_event(connection, job_id, event, attempt_number, now_ms)
         job = _read_job(connection, job_id)
@@ -920,7 +932,28 @@ def _renew_lease_transaction(
                 token.generation,
             ),
         )
-        return cursor.rowcount == 1
+        if cursor.rowcount != 1:
+            return False
+        attempt_cursor = connection.execute(
+            """
+            UPDATE job_attempts
+            SET lease_expires_at_ms = ?, heartbeat_at_ms = ?
+            WHERE job_id = ? AND attempt_number = ?
+              AND owner_id = ? AND lease_generation = ?
+              AND ended_at_ms IS NULL
+            """,
+            (
+                _datetime_to_ms(lease_until),
+                now_ms,
+                token.job_id,
+                token.attempt_number,
+                token.owner_id,
+                token.generation,
+            ),
+        )
+        if attempt_cursor.rowcount != 1:
+            raise StoreSchemaError("current job lease has no matching active attempt")
+        return True
 
     return _run_immediate(connection, renew)
 
@@ -1183,6 +1216,7 @@ def _mark_reconciling_transaction(
     connection: sqlite3.Connection,
     token: LeaseToken,
     error_json: str,
+    reconciliation_classification: str,
     event: BackendEvent,
 ) -> None:
     def mark() -> None:
@@ -1193,8 +1227,11 @@ def _mark_reconciling_transaction(
             connection,
             token,
             now_ms,
-            "phase = 'reconciling', error_json = ?, error_schema_version = ?",
-            (error_json, _JSON_SCHEMA_VERSION),
+            """
+            phase = 'reconciling', error_json = ?, error_schema_version = ?,
+            reconciliation_classification = ?
+            """,
+            (error_json, _JSON_SCHEMA_VERSION, reconciliation_classification),
         )
         _insert_job_event(connection, token.job_id, event, token.attempt_number, now_ms)
 
@@ -1206,6 +1243,7 @@ def _schedule_retry_transaction(
     token: LeaseToken,
     retry_at: datetime,
     error_json: str,
+    retry_classification: str,
     event: BackendEvent,
 ) -> None:
     def schedule() -> None:
@@ -1217,9 +1255,10 @@ def _schedule_retry_transaction(
             token,
             now_ms,
             """
-            phase = 'finalizing', ended_at_ms = ?, error_json = ?, error_schema_version = ?
+            phase = 'finalizing', ended_at_ms = ?, error_json = ?, error_schema_version = ?,
+            retry_classification = ?
             """,
-            (now_ms, error_json, _JSON_SCHEMA_VERSION),
+            (now_ms, error_json, _JSON_SCHEMA_VERSION, retry_classification),
         )
         _insert_job_event(connection, token.job_id, event, token.attempt_number, now_ms)
         cursor = connection.execute(
@@ -1928,39 +1967,88 @@ def _read_job_result(
 ) -> JobResultEnvelope | JobError | None:
     row = _fetch_one_mapping(
         connection,
-        "SELECT * FROM job_results WHERE job_id = ?",
+        """
+        SELECT j.state AS job_state,
+               r.job_id AS result_job_id,
+               r.outcome_kind,
+               r.payload_json,
+               r.payload_schema_version,
+               r.error_json,
+               r.error_schema_version,
+               r.created_at_ms
+        FROM jobs AS j
+        LEFT JOIN job_results AS r ON r.job_id = j.job_id
+        WHERE j.job_id = ?
+        """,
         (job_id,),
     )
-    if row is None or row["outcome_kind"] == "cancelled":
+    if row is None:
         return None
-    if row["outcome_kind"] == "failed":
-        if row["error_json"] is None:
-            raise StoreSchemaError("failed job result has no error payload")
+    job_state = row["job_state"]
+    has_result = row["result_job_id"] is not None
+    if job_state not in TERMINAL_STATES:
+        if has_result:
+            raise StoreSchemaError("nonterminal job has a terminal result row")
+        return None
+    if not has_result:
+        raise StoreSchemaError("terminal job is missing its result row")
+
+    outcome_kind = row["outcome_kind"]
+    payload_json = row["payload_json"]
+    payload_version = row["payload_schema_version"]
+    error_json = row["error_json"]
+    error_version = row["error_schema_version"]
+    if outcome_kind == "failed":
+        if (
+            job_state != "failed"
+            or error_json is None
+            or error_version is None
+            or payload_json is not None
+            or payload_version is not None
+        ):
+            raise StoreSchemaError("failed job result row has an invalid state or shape")
         return _decode_model(
-            row["error_json"],
-            row["error_schema_version"],
+            error_json,
+            error_version,
             "error_schema_version",
             JobError,
         )
-    if row["outcome_kind"] != "succeeded" or row["payload_json"] is None:
-        raise StoreSchemaError("job result row has an invalid outcome payload")
-    _require_json_version(row["payload_schema_version"], "payload_schema_version")
-    try:
-        payload = _OPERATION_RESULT_ADAPTER.validate_json(row["payload_json"])
-    except (ValidationError, ValueError) as error:
-        raise StoreSchemaError("job result payload is invalid") from error
-    return JobResultEnvelope(
-        job_id=job_id,
-        payload=payload,
-        completed_at=_ms_to_datetime(row["created_at_ms"]),
-    )
+    if outcome_kind == "succeeded":
+        if (
+            job_state != "completed"
+            or payload_json is None
+            or payload_version is None
+            or error_json is not None
+            or error_version is not None
+        ):
+            raise StoreSchemaError("succeeded job result row has an invalid state or shape")
+        _require_json_version(payload_version, "payload_schema_version")
+        try:
+            payload = _OPERATION_RESULT_ADAPTER.validate_json(payload_json)
+        except (ValidationError, ValueError) as error:
+            raise StoreSchemaError("job result payload is invalid") from error
+        return JobResultEnvelope(
+            job_id=job_id,
+            payload=payload,
+            completed_at=_ms_to_datetime(row["created_at_ms"]),
+        )
+    if outcome_kind == "cancelled":
+        if (
+            job_state != "cancelled"
+            or payload_json is not None
+            or payload_version is not None
+            or error_json is not None
+            or error_version is not None
+        ):
+            raise StoreSchemaError("cancelled job result row has an invalid state or shape")
+        return None
+    raise StoreSchemaError(f"unknown job result outcome: {outcome_kind}")
 
 
 def _read_job_attempts(
     connection: sqlite3.Connection,
     job_id: str,
 ) -> tuple[JobAttempt, ...]:
-    job_row = _fetch_one_mapping(connection, "SELECT * FROM jobs WHERE job_id = ?", (job_id,))
     rows = _fetch_all_mappings(
         connection,
         "SELECT * FROM job_attempts WHERE job_id = ? ORDER BY attempt_number",
@@ -1978,16 +2066,6 @@ def _read_job_attempts(
             )
         elif row["error_schema_version"] is not None:
             raise StoreSchemaError("attempt error schema version has no payload")
-        is_current = (
-            job_row is not None
-            and job_row["lease_generation"] == row["lease_generation"]
-            and job_row["lease_owner"] == row["owner_id"]
-        )
-        lease_expires_at = None
-        heartbeat_at = None
-        if is_current and job_row is not None:
-            lease_expires_at = _optional_ms(job_row["lease_expires_at_ms"])
-            heartbeat_at = _optional_ms(job_row["updated_at_ms"])
         attempts.append(
             JobAttempt(
                 job_id=row["job_id"],
@@ -1995,16 +2073,10 @@ def _read_job_attempts(
                 phase=cast("JobPhase", row["phase"]),
                 worker_id=row["owner_id"],
                 lease_generation=row["lease_generation"],
-                lease_expires_at=lease_expires_at,
-                heartbeat_at=heartbeat_at,
-                retry_classification=(
-                    error.retry_disposition
-                    if error is not None and row["phase"] == "finalizing"
-                    else None
-                ),
-                reconciliation_classification=(
-                    error.code if error is not None and row["phase"] == "reconciling" else None
-                ),
+                lease_expires_at=_optional_ms(row["lease_expires_at_ms"]),
+                heartbeat_at=_optional_ms(row["heartbeat_at_ms"]),
+                retry_classification=row["retry_classification"],
+                reconciliation_classification=row["reconciliation_classification"],
                 started_at=_ms_to_datetime(row["started_at_ms"]),
                 ended_at=_optional_ms(row["ended_at_ms"]),
                 error_code=None if error is None else error.code,

@@ -7,14 +7,24 @@ from pathlib import Path
 import pytest
 
 from nexus_mcp.core import BackendEvent, ProviderReference, StaleLeaseError
-from nexus_mcp.jobs.sqlite_store import SQLiteJobStore
-from nexus_mcp.jobs.store import CancelledTerminalOutcome, PrunePolicy
-from tests.fixtures import make_pending_permission
+from nexus_mcp.jobs.sqlite_store import SQLiteJobStore, StoreSchemaError
+from nexus_mcp.jobs.store import (
+    CancelledTerminalOutcome,
+    FailedTerminalOutcome,
+    PrunePolicy,
+    SucceededTerminalOutcome,
+    TerminalOutcome,
+)
+from tests.fixtures import make_job_error, make_pending_permission, make_turn_result
 from tests.unit.jobs.test_store_contract import make_create_job_command, make_event
 
 OLD = datetime(2025, 1, 1, tzinfo=UTC)
 NOW = datetime(2026, 8, 30, 20, 0, tzinfo=UTC)
 LEASE_UNTIL = datetime(2099, 1, 1, tzinfo=UTC)
+
+
+def _execute_sql(connection: sqlite3.Connection, sql: str, parameters: tuple[object, ...]) -> None:
+    connection.execute(sql, parameters)
 
 
 @pytest.fixture
@@ -119,3 +129,178 @@ async def test_prune_retains_one_session_reference_recorded_by_multiple_attempts
     assert result.terminal_jobs_deleted == 1
     assert await sqlite_store.get_job(created.handle.job_id) is None
     assert await sqlite_store.get_provider_references(session_id="session-test") == (reference,)
+
+
+async def _terminalize_for_result(
+    sqlite_store: SQLiteJobStore,
+    outcome: TerminalOutcome,
+) -> str:
+    created = await sqlite_store.create_job(make_create_job_command())
+    claimed = await sqlite_store.claim_next("worker-a", LEASE_UNTIL, event=make_event("progress"))
+    assert claimed is not None
+    await sqlite_store.mark_running(claimed.token, (), event=make_event("job_started"))
+    event_type = {
+        "succeeded": "job_completed",
+        "failed": "job_failed",
+        "cancelled": "job_cancelled",
+    }[outcome.kind]
+    await sqlite_store.terminalize(
+        claimed.token,
+        outcome,
+        event=make_event(event_type),
+    )
+    return created.handle.job_id
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        SucceededTerminalOutcome(result=make_turn_result(), completed_at=NOW),
+        FailedTerminalOutcome(error=make_job_error(), completed_at=NOW),
+        CancelledTerminalOutcome(completed_at=NOW),
+    ],
+    ids=["succeeded", "failed", "cancelled"],
+)
+async def test_job_result_rejects_missing_terminal_row(
+    sqlite_store: SQLiteJobStore,
+    outcome: TerminalOutcome,
+):
+    """Every terminal snapshot requires its matching normalized result row."""
+    job_id = await _terminalize_for_result(sqlite_store, outcome)
+    await sqlite_store._worker._call(
+        lambda connection: _execute_sql(
+            connection,
+            "DELETE FROM job_results WHERE job_id = ?",
+            (job_id,),
+        )
+    )
+
+    with pytest.raises(StoreSchemaError, match="result"):
+        await sqlite_store.get_job_result(job_id)
+
+
+async def test_job_result_rejects_a_row_for_nonterminal_job(sqlite_store: SQLiteJobStore):
+    """A queued job cannot expose a fabricated terminal result row."""
+    created = await sqlite_store.create_job(make_create_job_command())
+
+    def insert_result(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            INSERT INTO job_results (
+              job_id, outcome_kind, payload_json, payload_schema_version,
+              error_json, error_schema_version, created_at_ms
+            ) VALUES (?, 'cancelled', NULL, NULL, NULL, NULL, ?)
+            """,
+            (created.handle.job_id, int(NOW.timestamp() * 1000)),
+        )
+
+    await sqlite_store._worker._call(insert_result)
+    with pytest.raises(StoreSchemaError, match="nonterminal"):
+        await sqlite_store.get_job_result(created.handle.job_id)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "mutation"),
+    [
+        (
+            SucceededTerminalOutcome(result=make_turn_result(), completed_at=NOW),
+            "UPDATE job_results SET payload_json = NULL WHERE job_id = ?",
+        ),
+        (
+            SucceededTerminalOutcome(result=make_turn_result(), completed_at=NOW),
+            "UPDATE job_results SET payload_schema_version = NULL WHERE job_id = ?",
+        ),
+        (
+            SucceededTerminalOutcome(result=make_turn_result(), completed_at=NOW),
+            "UPDATE job_results SET error_json = '{}', error_schema_version = 1 WHERE job_id = ?",
+        ),
+        (
+            SucceededTerminalOutcome(result=make_turn_result(), completed_at=NOW),
+            "UPDATE job_results SET payload_schema_version = 2 WHERE job_id = ?",
+        ),
+        (
+            SucceededTerminalOutcome(result=make_turn_result(), completed_at=NOW),
+            "UPDATE jobs SET state = 'failed' WHERE job_id = ?",
+        ),
+        (
+            FailedTerminalOutcome(error=make_job_error(), completed_at=NOW),
+            "UPDATE job_results SET error_json = NULL WHERE job_id = ?",
+        ),
+        (
+            FailedTerminalOutcome(error=make_job_error(), completed_at=NOW),
+            "UPDATE job_results SET error_schema_version = NULL WHERE job_id = ?",
+        ),
+        (
+            FailedTerminalOutcome(error=make_job_error(), completed_at=NOW),
+            (
+                "UPDATE job_results SET payload_json = '{}', "
+                "payload_schema_version = 1 WHERE job_id = ?"
+            ),
+        ),
+        (
+            FailedTerminalOutcome(error=make_job_error(), completed_at=NOW),
+            "UPDATE job_results SET error_schema_version = 2 WHERE job_id = ?",
+        ),
+        (
+            FailedTerminalOutcome(error=make_job_error(), completed_at=NOW),
+            "UPDATE jobs SET state = 'completed' WHERE job_id = ?",
+        ),
+        (
+            CancelledTerminalOutcome(completed_at=NOW),
+            "UPDATE job_results SET payload_schema_version = 1 WHERE job_id = ?",
+        ),
+        (
+            CancelledTerminalOutcome(completed_at=NOW),
+            "UPDATE jobs SET state = 'completed' WHERE job_id = ?",
+        ),
+    ],
+    ids=[
+        "succeeded-missing-payload",
+        "succeeded-missing-version",
+        "succeeded-extra-error",
+        "succeeded-future-version",
+        "succeeded-state-mismatch",
+        "failed-missing-error",
+        "failed-missing-version",
+        "failed-extra-payload",
+        "failed-future-version",
+        "failed-state-mismatch",
+        "cancelled-extra-version",
+        "cancelled-state-mismatch",
+    ],
+)
+async def test_job_result_rejects_corrupt_shape_or_state(
+    sqlite_store: SQLiteJobStore,
+    outcome: TerminalOutcome,
+    mutation: str,
+):
+    """Result variants reject missing, extra, future-version, and state-mismatched fields."""
+    job_id = await _terminalize_for_result(sqlite_store, outcome)
+    await sqlite_store._worker._call(
+        lambda connection: _execute_sql(connection, mutation, (job_id,))
+    )
+
+    with pytest.raises(StoreSchemaError):
+        await sqlite_store.get_job_result(job_id)
+
+
+async def test_job_result_rejects_unknown_outcome_kind(sqlite_store: SQLiteJobStore):
+    """Reader validation remains closed even if a damaged database bypasses its CHECK constraint."""
+    job_id = await _terminalize_for_result(
+        sqlite_store,
+        CancelledTerminalOutcome(completed_at=NOW),
+    )
+
+    def corrupt_outcome(connection: sqlite3.Connection) -> None:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        try:
+            connection.execute(
+                "UPDATE job_results SET outcome_kind = 'unknown' WHERE job_id = ?",
+                (job_id,),
+            )
+        finally:
+            connection.execute("PRAGMA ignore_check_constraints = OFF")
+
+    await sqlite_store._worker._call(corrupt_outcome)
+    with pytest.raises(StoreSchemaError, match="outcome"):
+        await sqlite_store.get_job_result(job_id)
