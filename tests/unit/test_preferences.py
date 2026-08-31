@@ -1,11 +1,20 @@
 # tests/unit/test_preferences.py
 """Unit tests for persistent preference tools and preference fallback in prompt/batch_prompt."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastmcp.exceptions import ToolError
 
+from nexus_mcp.core import (
+    ExecutionConfigValues,
+    JobEvent,
+    JobResultEnvelope,
+    SucceededJobResultResponse,
+    TurnOperation,
+    TurnResult,
+)
+from nexus_mcp.jobs import AgentJobService
 from nexus_mcp.preferences import (
     _apply_preferences,
     _get_session_preferences,
@@ -17,7 +26,7 @@ from nexus_mcp.server import batch_prompt, prompt
 from nexus_mcp.types import AgentTask, SessionPreferences
 from tests.fixtures import (
     REPRESENTATIVE_CLI,
-    make_agent_response,
+    make_job_handle,
     make_session_preferences,
     strip_runner_header,
 )
@@ -42,14 +51,71 @@ _ALL_NONE_PREFS = {
 }
 
 
-def _setup_mock_runner(mock_factory, *, output: str = "test output", side_effect=None) -> AsyncMock:
-    mock_runner = AsyncMock()
-    if side_effect is not None:
-        mock_runner.run.side_effect = side_effect
-    else:
-        mock_runner.run.return_value = make_agent_response(output=output)
-    mock_factory.create.return_value = mock_runner
-    return mock_runner
+class _PreferenceJobServiceBoundary:
+    """Durable service boundary for compatibility preference assertions."""
+
+    def __init__(self) -> None:
+        self.operations: dict[str, TurnOperation] = {}
+        self.start = AsyncMock(side_effect=self._start)
+        self.result = AsyncMock(side_effect=self._result)
+        self.subscribe_events = Mock(side_effect=self._subscribe_events)
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(AgentJobService, "start", self.start)
+        monkeypatch.setattr(AgentJobService, "result", self.result)
+        monkeypatch.setattr(AgentJobService, "subscribe_events", self.subscribe_events)
+
+    async def _start(self, **kwargs):
+        operation = kwargs["operation"]
+        job_id = f"job-{len(self.operations) + 1}"
+        self.operations[job_id] = operation
+        return make_job_handle(
+            job_id=job_id,
+            session_id=f"session-{len(self.operations)}",
+            operation=operation,
+        )
+
+    def _subscribe_events(self, **kwargs):
+        job_id = kwargs["job_id"]
+
+        async def events():
+            yield JobEvent(job_id=job_id, sequence=1, type="job_completed")
+
+        return events()
+
+    async def _result(self, **kwargs):
+        job_id = kwargs["job_id"]
+        return SucceededJobResultResponse(
+            job_id=job_id,
+            result=JobResultEnvelope(
+                job_id=job_id,
+                payload=TurnResult(message="ok"),
+            ),
+        )
+
+    def config_for_prompt(self, prompt_text: str) -> ExecutionConfigValues:
+        matches = [
+            call
+            for call in self.start.await_args_list
+            if call.kwargs["operation"].prompt == prompt_text
+        ]
+        assert len(matches) == 1
+        assert matches[0].kwargs["operation"] == TurnOperation(prompt=prompt_text)
+        return matches[0].kwargs["explicit_config"]
+
+    def only_config_for_prompt(self, prompt_text: str) -> ExecutionConfigValues:
+        assert self.prompt_order() == [prompt_text]
+        return self.config_for_prompt(prompt_text)
+
+    def prompt_order(self) -> list[str]:
+        return [call.kwargs["operation"].prompt for call in self.start.await_args_list]
+
+
+@pytest.fixture
+def preference_job_service_boundary(monkeypatch) -> _PreferenceJobServiceBoundary:
+    boundary = _PreferenceJobServiceBoundary()
+    boundary.install(monkeypatch)
+    return boundary
 
 
 # ---------------------------------------------------------------------------
@@ -460,77 +526,77 @@ class TestClearPreferences:
 
 
 class TestPromptPreferenceFallback:
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
-    async def test_session_mode_used_when_no_explicit_mode(self, mock_load, mock_factory, ctx):
+    async def test_session_mode_used_when_no_explicit_mode(
+        self, mock_load, preference_job_service_boundary, ctx
+    ):
         """Persistent execution_mode='yolo' is used when prompt() called without explicit mode."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {"execution_mode": "yolo", "model": None}
 
         await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.execution_mode == "yolo"
+        config = preference_job_service_boundary.only_config_for_prompt("test")
+        assert config.sandbox == "danger_full_access"
+        assert config.approval_policy == "never"
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
-    async def test_explicit_mode_overrides_session(self, mock_load, mock_factory, ctx):
+    async def test_explicit_mode_overrides_session(
+        self, mock_load, preference_job_service_boundary, ctx
+    ):
         """Explicit execution_mode='default' overrides persistent 'yolo'."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {"execution_mode": "yolo", "model": None}
 
         await prompt(cli=REPRESENTATIVE_CLI, prompt="test", execution_mode="default", ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.execution_mode == "default"
+        config = preference_job_service_boundary.only_config_for_prompt("test")
+        assert config == ExecutionConfigValues()
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
-    async def test_session_model_used_when_no_explicit_model(self, mock_load, mock_factory, ctx):
+    async def test_session_model_used_when_no_explicit_model(
+        self, mock_load, preference_job_service_boundary, ctx
+    ):
         """Persistent model is used when prompt() called without explicit model."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {"execution_mode": None, "model": "test-model"}
 
         await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.model == "test-model"
+        config = preference_job_service_boundary.only_config_for_prompt("test")
+        assert config.model == "test-model"
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
-    async def test_explicit_model_overrides_session(self, mock_load, mock_factory, ctx):
+    async def test_explicit_model_overrides_session(
+        self, mock_load, preference_job_service_boundary, ctx
+    ):
         """Explicit model overrides persistent model."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {"execution_mode": None, "model": "test-model"}
 
         await prompt(cli=REPRESENTATIVE_CLI, prompt="test", model="alternate-model", ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.model == "alternate-model"
+        config = preference_job_service_boundary.only_config_for_prompt("test")
+        assert config.model == "alternate-model"
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
-    async def test_no_session_no_explicit_uses_defaults(self, mock_factory):
+    async def test_no_session_no_explicit_uses_defaults(self, preference_job_service_boundary):
         """Without persistent prefs or explicit params, execution_mode='default' and model=None."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
-
         await prompt(cli=REPRESENTATIVE_CLI, prompt="test")  # ctx=None → no prefs
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.execution_mode == "default"
-        assert call_args.model is None
+        config = preference_job_service_boundary.only_config_for_prompt("test")
+        assert config == ExecutionConfigValues()
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
-    async def test_ctx_none_does_not_crash(self, mock_factory):
+    async def test_ctx_none_does_not_crash(self, preference_job_service_boundary):
         """prompt() with ctx=None falls back to defaults without raising."""
-        _setup_mock_runner(mock_factory, output="ok")
         result = await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=None)
-        assert strip_runner_header(result) == "ok"
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
+        assert strip_runner_header(result) == "ok"
+        assert (
+            preference_job_service_boundary.only_config_for_prompt("test")
+            == ExecutionConfigValues()
+        )
+
     @patch(_LOAD)
-    async def test_session_max_retries_used_when_no_explicit(self, mock_load, mock_factory, ctx):
+    async def test_session_max_retries_used_when_no_explicit(
+        self, mock_load, preference_job_service_boundary, ctx
+    ):
         """Persistent max_retries is used when prompt() called without explicit max_retries."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {
             "execution_mode": None,
             "model": None,
@@ -541,14 +607,15 @@ class TestPromptPreferenceFallback:
 
         await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.max_retries == 5
+        retry_policy = preference_job_service_boundary.only_config_for_prompt("test").retry_policy
+        assert retry_policy is not None
+        assert retry_policy.max_attempts == 5
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
-    async def test_explicit_max_retries_overrides_session(self, mock_load, mock_factory, ctx):
+    async def test_explicit_max_retries_overrides_session(
+        self, mock_load, preference_job_service_boundary, ctx
+    ):
         """Explicit max_retries overrides persistent max_retries."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {
             "execution_mode": None,
             "model": None,
@@ -559,14 +626,15 @@ class TestPromptPreferenceFallback:
 
         await prompt(cli=REPRESENTATIVE_CLI, prompt="test", max_retries=2, ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.max_retries == 2
+        retry_policy = preference_job_service_boundary.only_config_for_prompt("test").retry_policy
+        assert retry_policy is not None
+        assert retry_policy.max_attempts == 2
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
-    async def test_session_output_limit_used_when_no_explicit(self, mock_load, mock_factory, ctx):
+    async def test_session_output_limit_used_when_no_explicit(
+        self, mock_load, preference_job_service_boundary, ctx
+    ):
         """Persistent output_limit is used when prompt() called without explicit output_limit."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {
             "execution_mode": None,
             "model": None,
@@ -577,14 +645,14 @@ class TestPromptPreferenceFallback:
 
         await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.output_limit == 4096
+        config = preference_job_service_boundary.only_config_for_prompt("test")
+        assert config.output_limit_bytes == 4096
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
-    async def test_session_timeout_used_when_no_explicit(self, mock_load, mock_factory, ctx):
+    async def test_session_timeout_used_when_no_explicit(
+        self, mock_load, preference_job_service_boundary, ctx
+    ):
         """Persistent timeout is used when prompt() called without explicit timeout."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {
             "execution_mode": None,
             "model": None,
@@ -595,30 +663,27 @@ class TestPromptPreferenceFallback:
 
         await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.timeout == 30
+        config = preference_job_service_boundary.only_config_for_prompt("test")
+        assert config.timeout_seconds == 30
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_session_retry_base_delay_used_when_no_explicit(
-        self, mock_load, mock_factory, ctx
+        self, mock_load, preference_job_service_boundary, ctx
     ):
-        """Persistent retry_base_delay is forwarded to the runner request."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
+        """Persistent retry_base_delay is captured in typed job configuration."""
         mock_load.return_value = {**_ALL_NONE_PREFS, "retry_base_delay": 1.5}
 
         await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.retry_base_delay == 1.5
+        retry_policy = preference_job_service_boundary.only_config_for_prompt("test").retry_policy
+        assert retry_policy is not None
+        assert retry_policy.base_delay_seconds == 1.5
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
     async def test_session_retry_max_delay_used_when_no_explicit(
-        self, mock_load, mock_factory, ctx
+        self, mock_load, preference_job_service_boundary, ctx
     ):
-        """Persistent retry_max_delay is forwarded to the runner request."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
+        """Persistent retry_max_delay is captured in typed job configuration."""
         mock_load.return_value = {
             "execution_mode": None,
             "model": None,
@@ -631,8 +696,9 @@ class TestPromptPreferenceFallback:
 
         await prompt(cli=REPRESENTATIVE_CLI, prompt="test", ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.retry_max_delay == 120.0
+        retry_policy = preference_job_service_boundary.only_config_for_prompt("test").retry_policy
+        assert retry_policy is not None
+        assert retry_policy.max_delay_seconds == 120.0
 
 
 # ---------------------------------------------------------------------------
@@ -641,61 +707,59 @@ class TestPromptPreferenceFallback:
 
 
 class TestBatchPromptPreferenceFallback:
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
-    async def test_session_mode_applied_to_tasks_with_none_mode(self, mock_load, mock_factory, ctx):
+    async def test_session_mode_applied_to_tasks_with_none_mode(
+        self, mock_load, preference_job_service_boundary, ctx
+    ):
         """Persistent execution_mode='yolo' is applied to tasks with execution_mode=None."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {"execution_mode": "yolo", "model": None}
 
         tasks = [AgentTask(cli=REPRESENTATIVE_CLI, prompt="test", execution_mode=None)]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.execution_mode == "yolo"
+        config = preference_job_service_boundary.only_config_for_prompt("test")
+        assert config.sandbox == "danger_full_access"
+        assert config.approval_policy == "never"
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
-    async def test_explicit_task_mode_not_overridden(self, mock_load, mock_factory, ctx):
+    async def test_explicit_task_mode_not_overridden(
+        self, mock_load, preference_job_service_boundary, ctx
+    ):
         """Task with explicit execution_mode='default' keeps it despite persistent 'yolo'."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {"execution_mode": "yolo", "model": None}
 
         tasks = [AgentTask(cli=REPRESENTATIVE_CLI, prompt="test", execution_mode="default")]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.execution_mode == "default"
+        config = preference_job_service_boundary.only_config_for_prompt("test")
+        assert config == ExecutionConfigValues()
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
-    async def test_session_model_applied_to_tasks(self, mock_load, mock_factory, ctx):
+    async def test_session_model_applied_to_tasks(
+        self, mock_load, preference_job_service_boundary, ctx
+    ):
         """Persistent model is applied to tasks with model=None."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {"execution_mode": None, "model": "test-model"}
 
         tasks = [AgentTask(cli=REPRESENTATIVE_CLI, prompt="test")]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.model == "test-model"
+        config = preference_job_service_boundary.only_config_for_prompt("test")
+        assert config.model == "test-model"
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
-    async def test_no_session_resolves_none_to_default(self, mock_factory):
+    async def test_no_session_resolves_none_to_default(self, preference_job_service_boundary):
         """Without persistent prefs, task with execution_mode=None resolves to 'default'."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
-
         tasks = [AgentTask(cli=REPRESENTATIVE_CLI, prompt="test", execution_mode=None)]
         await batch_prompt(tasks=tasks)  # ctx=None
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.execution_mode == "default"
+        config = preference_job_service_boundary.only_config_for_prompt("test")
+        assert config == ExecutionConfigValues()
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
-    async def test_session_max_retries_applied_to_tasks(self, mock_load, mock_factory, ctx):
+    async def test_session_max_retries_applied_to_tasks(
+        self, mock_load, preference_job_service_boundary, ctx
+    ):
         """Persistent max_retries is applied to tasks with max_retries=None."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {
             "execution_mode": None,
             "model": None,
@@ -707,14 +771,15 @@ class TestBatchPromptPreferenceFallback:
         tasks = [AgentTask(cli=REPRESENTATIVE_CLI, prompt="test")]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.max_retries == 5
+        retry_policy = preference_job_service_boundary.only_config_for_prompt("test").retry_policy
+        assert retry_policy is not None
+        assert retry_policy.max_attempts == 5
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
-    async def test_session_output_limit_applied_to_tasks(self, mock_load, mock_factory, ctx):
+    async def test_session_output_limit_applied_to_tasks(
+        self, mock_load, preference_job_service_boundary, ctx
+    ):
         """Persistent output_limit is applied to tasks with output_limit=None."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {
             "execution_mode": None,
             "model": None,
@@ -726,14 +791,14 @@ class TestBatchPromptPreferenceFallback:
         tasks = [AgentTask(cli=REPRESENTATIVE_CLI, prompt="test")]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.output_limit == 4096
+        config = preference_job_service_boundary.only_config_for_prompt("test")
+        assert config.output_limit_bytes == 4096
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
-    async def test_session_timeout_applied_to_tasks(self, mock_load, mock_factory, ctx):
+    async def test_session_timeout_applied_to_tasks(
+        self, mock_load, preference_job_service_boundary, ctx
+    ):
         """Persistent timeout is applied to tasks with timeout=None."""
-        mock_runner = _setup_mock_runner(mock_factory, output="ok")
         mock_load.return_value = {
             "execution_mode": None,
             "model": None,
@@ -745,21 +810,14 @@ class TestBatchPromptPreferenceFallback:
         tasks = [AgentTask(cli=REPRESENTATIVE_CLI, prompt="test")]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.timeout == 30
+        config = preference_job_service_boundary.only_config_for_prompt("test")
+        assert config.timeout_seconds == 30
 
-    @patch("nexus_mcp.mcp.server.RunnerFactory")
     @patch(_LOAD)
-    async def test_mixed_tasks_selective_apply(self, mock_load, mock_factory, ctx):
+    async def test_mixed_tasks_selective_apply(
+        self, mock_load, preference_job_service_boundary, ctx
+    ):
         """Persistent mode applies to None-mode tasks; explicit-mode tasks keep theirs."""
-        call_modes: list[str] = []
-
-        async def capture_mode(request, **kwargs):
-            call_modes.append(request.execution_mode)
-            return make_agent_response()
-
-        mock_factory.create.return_value = AsyncMock()
-        mock_factory.create.return_value.run.side_effect = capture_mode
         mock_load.return_value = {"execution_mode": "yolo", "model": None}
 
         tasks = [
@@ -768,8 +826,11 @@ class TestBatchPromptPreferenceFallback:
         ]
         await batch_prompt(tasks=tasks, ctx=ctx)
 
-        assert "yolo" in call_modes
-        assert "default" in call_modes
+        assert preference_job_service_boundary.prompt_order() == ["t1", "t2"]
+        yolo_config = preference_job_service_boundary.config_for_prompt("t1")
+        assert yolo_config.sandbox == "danger_full_access"
+        assert yolo_config.approval_policy == "never"
+        assert preference_job_service_boundary.config_for_prompt("t2") == ExecutionConfigValues()
 
 
 # ---------------------------------------------------------------------------

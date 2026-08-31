@@ -10,9 +10,9 @@
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io/)
 
 An MCP server that enables AI models to invoke AI CLI agents (Codex, Claude Code, OpenCode) as
-tools. Provides parallel execution, automatic retries with exponential backoff, JSON-first response
-parsing, 10 discoverable prompt templates, model tier classification, and persistent preferences
-through seven MCP tools, four MCP resources, and ten MCP prompts.
+tools. Provides durable workspace-scoped jobs, parallel execution, automatic retries with
+exponential backoff, JSON-first response parsing, discoverable prompt templates, model tier
+classification, and persistent preferences through MCP tools, resources, and prompts.
 
 ## Use Cases
 
@@ -34,6 +34,8 @@ parallel rather than sequentially:
 
 - **Parallel execution** — `batch_prompt` fans out tasks with `asyncio.gather` and a configurable
   semaphore (default concurrency: 3)
+- **Durable jobs** — start, observe, cancel, and resume normalized agent work through stable job and
+  session identities backed by a private per-user SQLite database
 - **Automatic retries** — exponential backoff with full jitter for transient errors (HTTP 429/503)
 - **Output handling** — JSON-first parsing, brace-depth fallback for noisy stdout, temp-file
   spillover for outputs exceeding 50 KB
@@ -304,8 +306,30 @@ Fallback chain: **explicit parameter → saved preference → per-runner env →
 
 ## MCP Tools
 
-All prompt tools run as background tasks — they return a task ID immediately so the client can
-poll for results, preventing MCP timeouts for long operations (e.g. YOLO mode: 2–5 minutes).
+Nexus exposes a durable `agent_*` surface and the original compatibility prompt surface. Every
+durable tool requires an explicit `workspace` selector containing exactly one of an existing
+`workspace_id` or a filesystem `path`; Nexus never infers a durable workspace from the server's
+current directory. A path is resolved to one canonical workspace identity before admission.
+
+Execution-starting durable tools return a `JobHandle` immediately. Clients use the observation and
+control tools to follow the normalized job independently of an MCP request lifetime.
+
+| Tool | Description |
+|------|-------------|
+| `agent_start` | Create a durable session and queue its first turn |
+| `agent_continue` | Queue another turn on an existing session |
+| `agent_fork` | Create a child session when the backend supports forking |
+| `agent_review` | Queue a typed review operation on an existing session |
+| `agent_diagnose` | Queue a sessionless backend diagnostic job |
+| `agent_status` | Read the current normalized status of one job |
+| `agent_result` | Read the pending or terminal typed result of one job |
+| `agent_list` | Page through authorized jobs in one workspace |
+| `agent_backends` | List backend capabilities and current availability for one workspace |
+| `agent_cancel` | Request idempotent cancellation of a queued or active job |
+| `agent_respond` | Resolve a pending approval, permission, question, or form input |
+
+The compatibility `prompt` and `batch_prompt` tools retain their background-task behavior. They
+return FastMCP task IDs so clients can poll without holding a long-running MCP request open.
 
 | Tool | Task? | Description |
 |------|-------|-------------|
@@ -398,6 +422,43 @@ No parameters. Returns saved tiers as `dict[str, str]`, or `{}` if none saved.
 | Suppress elicitation | `set_preferences` with `confirm_*: false` | YOLO/batch/retry auto-suppress after accept |
 | Re-enable prompt | `set_preferences` with `clear_confirm_*: true` | Resets to default |
 | Save/read tiers | `set_model_tiers` / `get_model_tiers` | Persists across sessions |
+
+## Durable Job Architecture
+
+The framework-independent core separates normalized domain contracts from concrete backends,
+storage, and the MCP transport. A **job** is one admitted operation and owns its retry attempts,
+events, controls, and terminal result. A **session** is a durable conversation identity bound to one
+workspace and backend; `agent_start` creates it, `agent_continue` reuses it, and `agent_fork`
+creates a child when supported. Diagnostic jobs may be sessionless. A session and a job are not MCP
+client sessions or FastMCP background-task IDs.
+
+Jobs and sessions use `private | workspace` access policies:
+
+- `private` (the default) is visible only to the owning principal.
+- `workspace` is visible to the owner and to callers explicitly authorized for that same workspace.
+  It never grants cross-workspace access. For the local MCP adapter, the operating-system user is
+  the principal and the private database permissions form the trust boundary.
+
+The SQLite database contains sensitive prompts, normalized events, provider references, and
+results. Set `NEXUS_DB_PATH` to override its location. Otherwise Nexus uses these per-user paths:
+
+- macOS: `~/Library/Application Support/nexus-mcp/nexus.sqlite3`
+- Windows: `%LOCALAPPDATA%\nexus-mcp\nexus.sqlite3` (falling back to
+  `~/AppData/Local/nexus-mcp/nexus.sqlite3`)
+- Linux and other Unix platforms:
+  `${XDG_DATA_HOME:-~/.local/share}/nexus-mcp/nexus.sqlite3`
+
+On POSIX systems Nexus removes group and other access from the database directory and SQLite files.
+Normalized job, session, event, and result records are retained indefinitely by default; Nexus does
+not schedule automatic pruning. Applying retention cutoffs is an explicit store operation, and no
+public MCP pruning tool is currently exposed.
+
+Codex, Claude Code, and OpenCode execution currently passes through the temporary
+`LegacyRunnerBackend` bridge while native backends are developed. The bridge supports normalized
+turns only: it does not provide backend cancellation, graceful interruption, session forking, or
+safe reconciliation after an interrupted attempt. These are legacy-backend limitations, not core
+job-model promises; clients should inspect `agent_backends` capabilities before selecting an
+operation.
 
 ## MCP Prompts
 
@@ -494,6 +555,7 @@ Models in `nexus://runners` include tier data: `{"name": "gpt-5.4-mini", "tier":
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `NEXUS_DB_PATH` | Platform per-user data directory | Durable SQLite job database; contains sensitive prompts and results |
 | `NEXUS_OUTPUT_LIMIT_BYTES` | `50000` | Max output size in bytes before temp-file spillover |
 | `NEXUS_TIMEOUT_SECONDS` | `600` | Subprocess timeout in seconds (10 minutes) |
 | `NEXUS_TOOL_TIMEOUT_SECONDS` | `900` | Tool-level timeout in seconds (15 minutes); set to `0` to disable |
@@ -595,30 +657,29 @@ uv sync                       # Sync environment after changes
 ```
 nexus-mcp/
 ├── src/nexus_mcp/
-│   ├── __main__.py         # Entry point
-│   ├── server.py           # FastMCP server + tools + prompt registration
-│   ├── types.py            # Pydantic models
-│   ├── exceptions.py       # Exception hierarchy
-│   ├── config.py           # Environment variable config
-│   ├── store.py            # Persistent backing store access (preferences + tiers)
-│   ├── tiers.py            # Heuristic model tier classification
-│   ├── elicitation.py      # ElicitationGuard — interactive parameter resolution
-│   ├── resources.py        # MCP resources (runners, config, preferences)
-│   ├── process.py          # Subprocess wrapper
-│   ├── parser.py           # JSON→text fallback parsing
-│   ├── cli_detector.py     # CLI binary detection + version checks
-│   ├── prompts/
-│   │   ├── __init__.py     # register_prompts(mcp) entry point
-│   │   ├── analysis.py     # code_review, debug, quick_triage, research, second_opinion
-│   │   ├── generation.py   # implement_feature, refactor, bulk_generate
-│   │   ├── testing.py      # write_tests
-│   │   └── comparison.py   # compare_models
+│   ├── __main__.py          # Entry point
+│   ├── core/                # Framework- and provider-independent domain contracts
+│   ├── backends/            # Typed backend protocols and runtime registry
+│   ├── jobs/                # Job service, worker, SQLite store, and migrations
+│   ├── legacy/              # Temporary adapter over existing CLI runners
+│   ├── mcp/                 # FastMCP transport adapter
+│   │   ├── server.py        # Server, compatibility tools, and registration
+│   │   ├── job_tools.py     # Typed durable agent_* tools
+│   │   ├── runtime.py       # MCP lifespan ownership for job runtime services
+│   │   └── prompts/         # Discoverable prompt templates
+│   ├── server.py            # Compatibility re-export for the MCP server
+│   ├── types.py             # Compatibility request and response models
+│   ├── exceptions.py        # Exception hierarchy
+│   ├── config.py            # Legacy environment configuration
+│   ├── process.py           # Legacy subprocess wrapper
+│   ├── parser.py            # Legacy JSON-to-text output parsing
+│   ├── cli_detector.py      # CLI binary detection and version checks
 │   └── runners/
-│       ├── base.py         # Protocol + ABC
-│       ├── factory.py      # RunnerFactory
-│       ├── claude.py       # ClaudeRunner
-│       ├── codex.py        # CodexRunner
-│       ├── opencode.py     # OpenCodeRunner
+│       ├── base.py          # Legacy runner protocol and template method
+│       ├── factory.py       # RunnerFactory
+│       ├── claude.py        # ClaudeRunner
+│       ├── codex.py         # CodexRunner
+│       ├── opencode.py      # OpenCodeRunner
 │       └── opencode_server.py # OpenCode server runner
 ├── tests/
 │   ├── unit/               # Fast, mocked tests
