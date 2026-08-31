@@ -2,10 +2,19 @@
 import asyncio
 import json
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 from nexus_mcp.cli_detector import CLIInfo
+from nexus_mcp.core.models import (
+    AccessContext,
+    AgentSession,
+    ConfigLayerSnapshot,
+    ExecutionConfigValues,
+    RequestedExecutionConfig,
+    Workspace,
+)
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import AgentResponse, AgentTask, PromptRequest, SessionPreferences
 
@@ -14,6 +23,54 @@ from nexus_mcp.types import AgentResponse, AgentTask, PromptRequest, SessionPref
 # ---------------------------------------------------------------------------
 
 REPRESENTATIVE_CLI = "fake"
+
+
+def make_access_context(**overrides: Any) -> AccessContext:
+    """Create a stable trusted local caller identity for core tests."""
+    defaults = {"principal_id": "local:501", "authentication_kind": "local"}
+    return AccessContext(**(defaults | overrides))
+
+
+def make_workspace(**overrides: Any) -> Workspace:
+    """Create a stable canonical workspace for core tests."""
+    defaults = {"workspace_id": "ws-test", "canonical_path": Path("/tmp/nexus-workspace")}
+    return Workspace(**(defaults | overrides))
+
+
+def make_agent_session(**overrides: Any) -> AgentSession:
+    """Create a stable durable session for core tests."""
+    defaults = {
+        "session_id": "session-test",
+        "workspace_id": "ws-test",
+        "backend_id": "codex",
+        "owner_id": "local:501",
+    }
+    return AgentSession(**(defaults | overrides))
+
+
+def make_execution_config_values(**overrides: Any) -> ExecutionConfigValues:
+    """Create a partial execution configuration with stable representative values."""
+    return ExecutionConfigValues(**overrides)
+
+
+def make_requested_config(**overrides: Any) -> RequestedExecutionConfig:
+    """Create a requested configuration and normalize mapping layers into snapshots."""
+    defaults: dict[str, Any] = {"explicit": ExecutionConfigValues()}
+    values = defaults | overrides
+    explicit = values["explicit"]
+    if not isinstance(explicit, ExecutionConfigValues):
+        values["explicit"] = ExecutionConfigValues(**explicit)
+
+    for layer_name in ("workspace", "user", "environment"):
+        layer = values.get(layer_name)
+        if layer is None or isinstance(layer, ConfigLayerSnapshot):
+            continue
+        values[layer_name] = ConfigLayerSnapshot(
+            values=ExecutionConfigValues(**layer),
+            source=layer_name,
+            source_hash="0" * 64,
+        )
+    return RequestedExecutionConfig(**values)
 
 
 CODEX_NDJSON_RESPONSE = "\n".join(
