@@ -44,7 +44,7 @@ from nexus_mcp.core import (
     new_id,
 )
 from nexus_mcp.jobs.configuration import NexusConfigResolver
-from nexus_mcp.jobs.events import EventNotifier, JobEventSubscription
+from nexus_mcp.jobs.events import EventNotifier, EventPollingPolicy, JobEventSubscription
 from nexus_mcp.jobs.store import (
     CancelJobCommand,
     CreateJobCommand,
@@ -72,8 +72,9 @@ class _AuthorizedJobEventSubscription(JobEventSubscription):
         job_id: str,
         after: int,
         authorize: Callable[[], Awaitable[None]],
+        polling_policy: EventPollingPolicy,
     ) -> None:
-        super().__init__(store, notifier, job_id, after)
+        super().__init__(store, notifier, job_id, after, polling_policy=polling_policy)
         self._authorize = authorize
         self._authorization_complete = False
 
@@ -95,11 +96,13 @@ class AgentJobService:
         backend_manager: BackendManager,
         config_resolver: NexusConfigResolver,
         notifier: EventNotifier,
+        event_polling_policy: EventPollingPolicy | None = None,
     ) -> None:
         self._store = store
         self._backend_manager = backend_manager
         self._config_resolver = config_resolver
         self._notifier = notifier
+        self._event_polling_policy = event_polling_policy or EventPollingPolicy()
 
     async def start(
         self,
@@ -403,6 +406,7 @@ class AgentJobService:
             job_id,
             after_sequence,
             authorize,
+            self._event_polling_policy,
         )
 
     async def list_backends(

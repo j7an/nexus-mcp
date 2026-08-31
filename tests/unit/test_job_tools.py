@@ -1,5 +1,6 @@
 """Contracts for deterministic durable-job MCP tool registration."""
 
+import asyncio
 import getpass
 import json
 import platform
@@ -149,6 +150,112 @@ async def test_runtime_provider_temporary_runtime_closes_after_tool_error(monkey
     assert lifecycle == ["open", "close"]
 
 
+async def test_runtime_provider_waits_for_temporary_close_before_next_borrow(monkeypatch):
+    """A concurrent borrow cannot open a second runtime during blocked teardown."""
+    from nexus_mcp.mcp import runtime
+
+    provider = runtime.RuntimeProvider()
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+    release_first = asyncio.Event()
+    first_entered = asyncio.Event()
+    second_started = asyncio.Event()
+    second_entered = asyncio.Event()
+    opened: list[int] = []
+
+    @asynccontextmanager
+    async def fake_open(_tuning):
+        runtime_number = len(opened) + 1
+        opened.append(runtime_number)
+        try:
+            yield object()
+        finally:
+            if runtime_number == 1:
+                close_started.set()
+                await allow_close.wait()
+
+    async def first_borrow() -> None:
+        async with provider.borrow():
+            first_entered.set()
+            await release_first.wait()
+
+    async def second_borrow() -> None:
+        second_started.set()
+        async with provider.borrow():
+            second_entered.set()
+
+    monkeypatch.setattr(runtime.MCPRuntime, "open", staticmethod(fake_open))
+    first_task = asyncio.create_task(first_borrow())
+    await first_entered.wait()
+    release_first.set()
+    await close_started.wait()
+
+    second_task = asyncio.create_task(second_borrow())
+    await second_started.wait()
+    await asyncio.sleep(0)
+
+    assert opened == [1]
+    assert second_entered.is_set() is False
+
+    allow_close.set()
+    await asyncio.gather(first_task, second_task)
+    assert opened == [1, 2]
+
+
+async def test_runtime_provider_blocks_install_and_override_during_temporary_close(monkeypatch):
+    """Blocked teardown remains exclusive from installation and tuning mutation."""
+    from nexus_mcp.mcp import runtime
+
+    provider = runtime.RuntimeProvider()
+    original_tuning = provider.tuning
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+    release_borrow = asyncio.Event()
+    borrow_entered = asyncio.Event()
+    install_started = asyncio.Event()
+    install_entered = asyncio.Event()
+
+    @asynccontextmanager
+    async def fake_open(_tuning):
+        try:
+            yield object()
+        finally:
+            close_started.set()
+            await allow_close.wait()
+
+    async def temporary_borrow() -> None:
+        async with provider.borrow():
+            borrow_entered.set()
+            await release_borrow.wait()
+
+    async def install_after_close() -> None:
+        install_started.set()
+        async with provider.install(object()):
+            install_entered.set()
+
+    monkeypatch.setattr(runtime.MCPRuntime, "open", staticmethod(fake_open))
+    borrow_task = asyncio.create_task(temporary_borrow())
+    await borrow_entered.wait()
+    release_borrow.set()
+    await close_started.wait()
+
+    install_task = asyncio.create_task(install_after_close())
+    await install_started.wait()
+    await asyncio.sleep(0)
+
+    assert install_entered.is_set() is False
+    with (
+        pytest.raises(RuntimeError, match="runtime is closing"),
+        provider.override_tuning(_fast_tuning()),
+    ):
+        pass
+    assert provider.tuning is original_tuning
+
+    allow_close.set()
+    await asyncio.gather(borrow_task, install_task)
+    assert install_entered.is_set() is True
+
+
 async def test_override_tuning_drives_fallback_and_restores(monkeypatch):
     """One scoped tuning override reaches fallback opens and restores afterward."""
     from nexus_mcp.mcp import runtime
@@ -221,11 +328,20 @@ async def test_mcp_runtime_injects_tuning_and_closes_in_reverse(monkeypatch):
             lifecycle.append("resolver.construct")
 
     class FakeService:
-        def __init__(self, *, store, backend_manager, config_resolver, notifier):
+        def __init__(
+            self,
+            *,
+            store,
+            backend_manager,
+            config_resolver,
+            notifier,
+            event_polling_policy,
+        ):
             assert isinstance(store, FakeStore)
             assert isinstance(backend_manager, FakeBackendManager)
             assert isinstance(config_resolver, FakeResolver)
             assert isinstance(notifier, FakeNotifier)
+            assert event_polling_policy is tuning.event_polling_policy
             lifecycle.append("service.construct")
 
     class FakeWorkers:
@@ -255,8 +371,7 @@ async def test_mcp_runtime_injects_tuning_and_closes_in_reverse(monkeypatch):
     monkeypatch.setattr(runtime, "WorkerPool", FakeWorkers)
     monkeypatch.setattr(runtime, "legacy_backends", fake_legacy_factory)
 
-    async with runtime.MCPRuntime.open(tuning) as opened:
-        assert opened.event_polling_policy is tuning.event_polling_policy
+    async with runtime.MCPRuntime.open(tuning):
         assert lifecycle == [
             "store.construct",
             "store.open",
@@ -270,6 +385,23 @@ async def test_mcp_runtime_injects_tuning_and_closes_in_reverse(monkeypatch):
         ]
 
     assert lifecycle[-3:] == ["workers.stop", "backends.close", "store.close"]
+
+
+async def test_fast_runtime_tuning_reaches_actual_job_subscription(fast_job_runtime):
+    """The fast fixture configures the concrete subscription created by the service."""
+    from nexus_mcp.mcp.access import local_access_context
+    from nexus_mcp.mcp.runtime import runtime_provider
+
+    del fast_job_runtime
+    async with runtime_provider.borrow() as runtime:
+        subscription = runtime.service.subscribe_events(
+            workspace=WorkspaceSelector(workspace_id="workspace-test"),
+            access=local_access_context(),
+            job_id="job-test",
+        )
+
+        assert subscription._policy.minimum_seconds == 0.001
+        assert subscription._policy.maximum_seconds == 0.005
 
 
 async def test_mcp_runtime_runs_real_workers_and_closes_store(fake_runner_registry):

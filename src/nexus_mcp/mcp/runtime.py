@@ -75,7 +75,6 @@ class MCPRuntime:
     backends: BackendManager
     service: AgentJobService
     workers: WorkerPool
-    event_polling_policy: EventPollingPolicy
 
     @classmethod
     @asynccontextmanager
@@ -95,6 +94,7 @@ class MCPRuntime:
                 backend_manager=backends,
                 config_resolver=NexusConfigResolver(),
                 notifier=notifier,
+                event_polling_policy=effective_tuning.event_polling_policy,
             )
             workers = WorkerPool(
                 store=store,
@@ -110,7 +110,6 @@ class MCPRuntime:
                 backends=backends,
                 service=service,
                 workers=workers,
-                event_polling_policy=effective_tuning.event_polling_policy,
             )
 
 
@@ -123,6 +122,7 @@ class RuntimeProvider:
         self._temporary: MCPRuntime | None = None
         self._temporary_context: AbstractAsyncContextManager[MCPRuntime] | None = None
         self._temporary_borrows = 0
+        self._temporary_closing: asyncio.Future[None] | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -133,10 +133,15 @@ class RuntimeProvider:
     @asynccontextmanager
     async def install(self, runtime: MCPRuntime) -> AsyncIterator[None]:
         """Install one externally owned lifespan runtime for tool borrowing."""
-        async with self._lock:
-            if self._installed is not None or self._temporary is not None:
-                raise RuntimeError("a runtime is already installed")
-            self._installed = runtime
+        while True:
+            async with self._lock:
+                closing = self._temporary_closing
+                if closing is None:
+                    if self._installed is not None or self._temporary is not None:
+                        raise RuntimeError("a runtime is already installed")
+                    self._installed = runtime
+                    break
+            await asyncio.shield(closing)
         try:
             yield
         finally:
@@ -148,22 +153,28 @@ class RuntimeProvider:
     async def borrow(self) -> AsyncIterator[MCPRuntime]:
         """Borrow the installed runtime or share one provider-owned fallback."""
         owns_temporary_borrow = False
-        async with self._lock:
-            if self._installed is not None:
-                borrowed = self._installed
-            else:
-                if self._temporary is None:
-                    temporary_context = MCPRuntime.open(self._tuning)
-                    temporary = await temporary_context.__aenter__()
-                    self._temporary_context = temporary_context
-                    self._temporary = temporary
-                borrowed = self._temporary
-                self._temporary_borrows += 1
-                owns_temporary_borrow = True
+        while True:
+            async with self._lock:
+                closing = self._temporary_closing
+                if closing is None:
+                    if self._installed is not None:
+                        borrowed = self._installed
+                    else:
+                        if self._temporary is None:
+                            temporary_context = MCPRuntime.open(self._tuning)
+                            temporary = await temporary_context.__aenter__()
+                            self._temporary_context = temporary_context
+                            self._temporary = temporary
+                        borrowed = self._temporary
+                        self._temporary_borrows += 1
+                        owns_temporary_borrow = True
+                    break
+            await asyncio.shield(closing)
         try:
             yield borrowed
         finally:
             context_to_close: AbstractAsyncContextManager[MCPRuntime] | None = None
+            close_complete: asyncio.Future[None] | None = None
             if owns_temporary_borrow:
                 async with self._lock:
                     self._temporary_borrows -= 1
@@ -171,12 +182,28 @@ class RuntimeProvider:
                         context_to_close = self._temporary_context
                         self._temporary_context = None
                         self._temporary = None
+                        close_complete = asyncio.get_running_loop().create_future()
+                        self._temporary_closing = close_complete
                 if context_to_close is not None:
-                    await context_to_close.__aexit__(None, None, None)
+                    assert close_complete is not None
+                    close_task = asyncio.create_task(context_to_close.__aexit__(None, None, None))
+                    try:
+                        await asyncio.shield(close_task)
+                    except asyncio.CancelledError:
+                        await close_task
+                        raise
+                    finally:
+                        async with self._lock:
+                            if self._temporary_closing is close_complete:
+                                self._temporary_closing = None
+                            if not close_complete.done():
+                                close_complete.set_result(None)
 
     @contextmanager
     def override_tuning(self, tuning: RuntimeTuning) -> Iterator[None]:
         """Temporarily replace timing dependencies before any runtime is active."""
+        if self._temporary_closing is not None:
+            raise RuntimeError("runtime is closing; tuning cannot be overridden")
         if self._installed is not None or self._temporary is not None:
             raise RuntimeError("runtime is installed; tuning cannot be overridden")
         previous = self._tuning
