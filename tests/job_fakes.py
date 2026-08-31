@@ -76,6 +76,7 @@ from nexus_mcp.jobs.store import (
 
 __all__ = [
     "EmitEventAction",
+    "EmitOutputAction",
     "InMemoryJobStore",
     "RaiseFailureAction",
     "RecordReferenceAction",
@@ -268,6 +269,9 @@ class InMemoryJobStore:
                 return None
             job = min(eligible, key=lambda item: (item.created_at, item.job_id))
             previous_attempts = self._attempts[job.job_id]
+            safe_retry = bool(
+                previous_attempts and previous_attempts[-1].retry_classification == "safe_to_retry"
+            )
             if previous_attempts and previous_attempts[-1].ended_at is None:
                 previous_attempts[-1] = previous_attempts[-1].model_copy(update={"ended_at": now})
             generation = (job.lease_generation or 0) + 1
@@ -276,7 +280,7 @@ class InMemoryJobStore:
             attempt = JobAttempt(
                 job_id=job.job_id,
                 attempt_number=attempt_number,
-                phase="reconciling" if reclaimed else "claiming",
+                phase="executing" if safe_retry else ("reconciling" if reclaimed else "claiming"),
                 worker_id=owner_id,
                 lease_generation=generation,
                 lease_expires_at=lease_until,
@@ -333,6 +337,8 @@ class InMemoryJobStore:
             self._jobs[job.job_id] = job.model_copy(
                 update={"resolved_config": config, "updated_at": _utc_now()}
             )
+            if (trace := getattr(self, "trace", None)) is not None:
+                trace.append("store_resolved_config")
 
     async def record_provider_reference(
         self, token: LeaseToken, reference: ProviderReference
@@ -486,13 +492,12 @@ class InMemoryJobStore:
         """Return current control facts only to the matching lease generation."""
         async with self._lock:
             job = self._require_token(token)
-            unresolved = tuple(
-                item for item in self._inputs[job.job_id].values() if item.response is None
-            )
+            inputs = tuple(self._inputs[job.job_id].values())
             return ControlSnapshot(
                 state=job.state,
                 cancel_requested=job.cancel_requested_at is not None,
-                unresolved_inputs=unresolved,
+                unresolved_inputs=tuple(item for item in inputs if item.response is None),
+                resolved_inputs=tuple(item for item in inputs if item.response is not None),
                 lease_generation=token.generation,
             )
 
@@ -977,6 +982,13 @@ class EmitEventAction:
 
 
 @dataclass(frozen=True)
+class EmitOutputAction:
+    """Tell a scripted backend to emit one incremental message delta."""
+
+    text: str
+
+
+@dataclass(frozen=True)
 class RecordReferenceAction:
     """Tell a scripted backend to record one provider reference."""
 
@@ -1011,7 +1023,7 @@ class ReturnReconciliationAction:
     outcome: ReconciliationOutcome
 
 
-type ContextAction = EmitEventAction | RecordReferenceAction | RequestInputAction
+type ContextAction = EmitEventAction | EmitOutputAction | RecordReferenceAction | RequestInputAction
 type ExecutionAction = ContextAction | RaiseFailureAction | ReturnResultAction
 type ReconciliationAction = ContextAction | RaiseFailureAction | ReturnReconciliationAction
 
@@ -1038,6 +1050,9 @@ class ScriptedBackend:
         ] = []
         self.config_calls: list[tuple[RequestedExecutionConfig, Workspace]] = []
         self.close_calls = 0
+        self.trace: list[str] | None = None
+        self.input_requests: list[InputRequest] = []
+        self.input_responses: list[object] = []
         self._execution_actions: deque[ExecutionAction] = deque()
         self._reconciliation_actions: deque[ReconciliationAction] = deque()
 
@@ -1067,12 +1082,14 @@ class ScriptedBackend:
 
     async def check_availability(self, workspace: Workspace) -> BackendAvailability:
         """Return the configured health observation without mutating registration state."""
+        self._trace("backend.check_availability")
         return self.availability
 
     async def resolve_execution_config(
         self, requested: RequestedExecutionConfig, workspace: Workspace
     ) -> ResolvedExecutionConfig:
         """Record and resolve the requested configuration with no provider defaults."""
+        self._trace("backend.resolve_execution_config")
         self.config_calls.append((requested, workspace))
         return ResolvedExecutionConfig.from_requested(requested, backend_defaults={})
 
@@ -1080,11 +1097,17 @@ class ScriptedBackend:
         self, operation: AgentOperation, context: BackendExecutionContext
     ) -> OperationResult:
         """Apply scripted effects until one exact result or classified failure is reached."""
+        self._trace("backend.execute")
         self.execute_calls.append((operation, context))
         while self._execution_actions:
             action = self._execution_actions.popleft()
             match action:
-                case EmitEventAction() | RecordReferenceAction() | RequestInputAction():
+                case (
+                    EmitEventAction()
+                    | EmitOutputAction()
+                    | RecordReferenceAction()
+                    | RequestInputAction()
+                ):
                     await self._apply_context_action(action, context)
                 case RaiseFailureAction(failure=failure):
                     raise failure
@@ -1098,11 +1121,17 @@ class ScriptedBackend:
         context: BackendExecutionContext,
     ) -> ReconciliationOutcome:
         """Apply scripted effects until one exact reconciliation outcome or failure is reached."""
+        self._trace("backend.reconcile")
         self.reconcile_calls.append((provider_state, context))
         while self._reconciliation_actions:
             action = self._reconciliation_actions.popleft()
             match action:
-                case EmitEventAction() | RecordReferenceAction() | RequestInputAction():
+                case (
+                    EmitEventAction()
+                    | EmitOutputAction()
+                    | RecordReferenceAction()
+                    | RequestInputAction()
+                ):
                     await self._apply_context_action(action, context)
                 case RaiseFailureAction(failure=failure):
                     raise failure
@@ -1121,7 +1150,14 @@ class ScriptedBackend:
         match action:
             case EmitEventAction(event=event):
                 await context.emit(event)
+            case EmitOutputAction(text=text):
+                await context.emit_output_delta(text)
             case RecordReferenceAction(reference=reference):
                 await context.record_provider_reference(reference)
             case RequestInputAction(request=request):
-                await context.request_input(request)
+                self.input_requests.append(request)
+                self.input_responses.append(await context.request_input(request))
+
+    def _trace(self, event: str) -> None:
+        if self.trace is not None:
+            self.trace.append(event)

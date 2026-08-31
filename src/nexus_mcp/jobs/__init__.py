@@ -6,6 +6,7 @@ from nexus_mcp.jobs.configuration import (
     user_config_path,
     workspace_config_path,
 )
+from nexus_mcp.jobs.control import OutputChunker, StoreBackedExecutionContext
 from nexus_mcp.jobs.events import (
     EventNotifier,
     EventPollingPolicy,
@@ -35,6 +36,13 @@ from nexus_mcp.jobs.store import (
     SucceededTerminalOutcome,
     TerminalOutcome,
 )
+from nexus_mcp.jobs.worker import (
+    ExponentialRetryDelay,
+    JobWorker,
+    RetryDelay,
+    WorkerPolicy,
+    WorkerPool,
+)
 
 __all__ = [
     "AgentJobService",
@@ -47,21 +55,28 @@ __all__ = [
     "EventPage",
     "EventNotifier",
     "EventPollingPolicy",
+    "ExponentialRetryDelay",
     "FailedTerminalOutcome",
     "JobAccessFilter",
     "JobEventSubscription",
     "JobQuery",
     "JobStore",
+    "JobWorker",
     "LeaseToken",
     "NexusConfigResolver",
+    "OutputChunker",
     "PrunePolicy",
     "PruneResult",
     "ResolveInputCommand",
+    "RetryDelay",
     "RuntimeLease",
     "RuntimeLeaseBusyError",
     "StoredJobPage",
+    "StoreBackedExecutionContext",
     "SucceededTerminalOutcome",
     "TerminalOutcome",
+    "WorkerPolicy",
+    "WorkerPool",
     "subscribe_events",
     "read_config_file",
     "user_config_path",

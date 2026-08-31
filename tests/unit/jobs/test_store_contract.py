@@ -570,6 +570,12 @@ async def test_input_lifecycle_is_atomic_validated_and_idempotent(job_store):
     assert replay.replayed is True
     assert await job_store.get_pending_inputs(created.handle.job_id) == ()
 
+    visible = await job_store.get_control_snapshot(claimed.token)
+    assert visible.unresolved_inputs == ()
+    assert len(visible.resolved_inputs) == 1
+    assert visible.resolved_inputs[0].input_id == pending.input_id
+    assert visible.resolved_inputs[0].response == command.response
+
     with pytest.raises(InputAlreadyResolvedError):
         await job_store.resolve_input(
             command.model_copy(update={"response": PermissionResponse(granted=[])})
@@ -590,6 +596,69 @@ async def test_input_lifecycle_is_atomic_validated_and_idempotent(job_store):
     assert after.state == "running"
     events = await job_store.read_events(created.handle.job_id, 0, 20)
     assert [event.type for event in events.events].count("input_resolved") == 1
+
+
+async def test_control_snapshot_atomically_partitions_multiple_input_responses(job_store):
+    """A worker sees cross-task responses without trusting process-local delivery state."""
+    created = await job_store.create_job(make_create_job_command())
+    claimed = await job_store.claim_next("worker-control", LEASE_UNTIL, event=make_event())
+    assert claimed is not None
+    await job_store.mark_running(claimed.token, (), event=make_event("job_started"))
+    first = make_pending_permission(
+        input_id="input-first", job_id=created.handle.job_id, created_at=NOW
+    )
+    second = make_pending_permission(
+        input_id="input-second", job_id=created.handle.job_id, created_at=NOW
+    )
+    await job_store.mark_input_required(
+        claimed.token,
+        (first, second),
+        event=make_event("input_required"),
+    )
+    await job_store.resolve_input(
+        ResolveInputCommand(
+            job_id=created.handle.job_id,
+            input_id=second.input_id,
+            response=PermissionResponse(granted=[]),
+            resolved_at=NOW,
+            event=make_event("input_resolved", input_id=second.input_id),
+        )
+    )
+
+    snapshot = await job_store.get_control_snapshot(claimed.token)
+
+    assert snapshot.unresolved_inputs == (first,)
+    assert [item.input_id for item in snapshot.resolved_inputs] == [second.input_id]
+    assert snapshot.resolved_inputs[0].response == PermissionResponse(granted=[])
+
+
+async def test_control_snapshot_rejects_stale_fence_after_response_commit(job_store):
+    """A resolved response cannot be observed through an obsolete lease generation."""
+    created = await job_store.create_job(make_create_job_command())
+    first_claim = await job_store.claim_next("worker-old", LEASE_UNTIL, event=make_event())
+    assert first_claim is not None
+    await job_store.mark_running(first_claim.token, (), event=make_event("job_started"))
+    pending = make_pending_permission(job_id=created.handle.job_id, created_at=NOW)
+    await job_store.mark_input_required(
+        first_claim.token,
+        (pending,),
+        event=make_event("input_required"),
+    )
+    await job_store.resolve_input(
+        ResolveInputCommand(
+            job_id=created.handle.job_id,
+            input_id=pending.input_id,
+            response=PermissionResponse(granted=[]),
+            resolved_at=NOW,
+            event=make_event("input_resolved"),
+        )
+    )
+    assert await job_store.renew_lease(first_claim.token, OLD) is True
+    replacement = await job_store.claim_next("worker-new", LEASE_UNTIL, event=make_event())
+    assert replacement is not None
+
+    with pytest.raises(StaleLeaseError):
+        await job_store.get_control_snapshot(first_claim.token)
 
 
 async def test_resolved_input_replay_and_conflict_survive_terminal_state(job_store):
@@ -695,6 +764,7 @@ async def test_reconciliation_and_retry_create_a_new_attempt_without_reopening_s
     job = await job_store.get_job(created.handle.job_id)
     attempts = await job_store.get_job_attempts(created.handle.job_id)
     assert second is not None
+    assert second.attempt.phase == "executing"
     assert job is not None
     assert job.state == "running"
     assert second.token.generation == 2

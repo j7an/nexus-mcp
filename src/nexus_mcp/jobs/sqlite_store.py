@@ -811,6 +811,20 @@ def _claim_next_transaction(
             )
             + 1
         )
+        previous_attempt = _fetch_one_mapping(
+            connection,
+            """
+            SELECT retry_classification FROM job_attempts
+            WHERE job_id = ?
+            ORDER BY attempt_number DESC
+            LIMIT 1
+            """,
+            (job_id,),
+        )
+        safe_retry = (
+            previous_attempt is not None
+            and previous_attempt["retry_classification"] == "safe_to_retry"
+        )
         connection.execute(
             """
             UPDATE job_attempts
@@ -841,7 +855,11 @@ def _claim_next_transaction(
         )
         if cursor.rowcount != 1:
             raise StaleLeaseError(job_id, generation)
-        phase: JobPhase = "reconciling" if row["lease_generation"] else "claiming"
+        phase: JobPhase = (
+            "executing"
+            if safe_retry
+            else ("reconciling" if row["lease_generation"] else "claiming")
+        )
         connection.execute(
             """
             INSERT INTO job_attempts (
@@ -1284,11 +1302,12 @@ def _read_control_snapshot_transaction(
     connection.execute("BEGIN")
     try:
         row = _require_worker_job(connection, token, _now_ms())
-        unresolved = _read_pending_inputs(connection, token.job_id, unresolved_only=True)
+        inputs = _read_pending_inputs(connection, token.job_id, unresolved_only=False)
         snapshot = ControlSnapshot(
             state=row["state"],
             cancel_requested=row["cancel_requested_at_ms"] is not None,
-            unresolved_inputs=unresolved,
+            unresolved_inputs=tuple(item for item in inputs if item.response is None),
+            resolved_inputs=tuple(item for item in inputs if item.response is not None),
             lease_generation=token.generation,
         )
         connection.execute("COMMIT")

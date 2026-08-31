@@ -198,7 +198,21 @@ class ControlSnapshot(_StoreModel):
     state: JobState
     cancel_requested: bool
     unresolved_inputs: tuple[PendingInput, ...] = Field(default=(), max_length=256)
+    resolved_inputs: tuple[PendingInput, ...] = Field(default=(), max_length=256)
     lease_generation: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def require_truthful_input_partitions(self) -> "ControlSnapshot":
+        """Keep pending requests and committed responses in disjoint typed partitions."""
+        if any(item.response is not None for item in self.unresolved_inputs):
+            raise ValueError("unresolved_inputs must not contain responses")
+        if any(item.response is None for item in self.resolved_inputs):
+            raise ValueError("resolved_inputs must contain responses")
+        unresolved_ids = {item.input_id for item in self.unresolved_inputs}
+        resolved_ids = {item.input_id for item in self.resolved_inputs}
+        if unresolved_ids & resolved_ids:
+            raise ValueError("input partitions must be disjoint")
+        return self
 
 
 class ResolveInputCommand(_StoreModel):
