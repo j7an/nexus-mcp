@@ -242,6 +242,29 @@ async def test_create_job_replays_matching_idempotency_key(admission_store):
     assert [event.sequence for event in page.events] == [1]
 
 
+async def test_resolve_or_create_workspace_is_canonical_and_idempotent(
+    admission_store,
+    tmp_path: Path,
+):
+    """Core stores assign one durable identity to canonical path aliases."""
+    workspace_path = tmp_path / "canonical-workspace"
+    workspace_path.mkdir()
+    alias_path = tmp_path / "workspace-alias"
+    alias_path.symlink_to(workspace_path, target_is_directory=True)
+
+    direct, alias = await asyncio.gather(
+        admission_store.resolve_or_create_workspace(WorkspaceSelector(path=workspace_path)),
+        admission_store.resolve_or_create_workspace(WorkspaceSelector(path=alias_path)),
+    )
+
+    assert direct == alias
+    assert direct.canonical_path == workspace_path.resolve()
+    assert (
+        await admission_store.resolve_workspace(WorkspaceSelector(workspace_id=direct.workspace_id))
+        == direct
+    )
+
+
 async def test_idempotency_key_rejects_a_different_request(admission_store):
     """A key cannot alias two different immutable operation requests."""
     await admission_store.create_job(make_create_job_command(idempotency_key="request-1"))
@@ -272,9 +295,10 @@ async def test_idempotency_replay_after_terminal_returns_original_handle(job_sto
 async def test_same_idempotency_key_is_independent_across_source_sessions(admission_store):
     """Continuation idempotency is scoped to the session from which work derives."""
     for session_id in ("source-a", "source-b"):
-        await admission_store.create_job(
+        source = await admission_store.create_job(
             make_create_job_command(session_id=session_id, idempotency_key=None)
         )
+        await admission_store.request_cancel(make_cancel_job_command(source.handle.job_id))
 
     first = await admission_store.create_job(
         make_create_job_command(
@@ -302,6 +326,46 @@ async def test_second_nonterminal_job_for_session_is_rejected(admission_store):
 
     with pytest.raises(SessionBusyError):
         await admission_store.create_job(make_create_job_command(session_id="session-1"))
+
+
+@pytest.mark.parametrize("source_state", ["queued", "running", "input_required"])
+async def test_child_admission_rejects_busy_source_session_atomically(
+    job_store,
+    source_state: str,
+):
+    """Fork-like child admission cannot snapshot a source with active provider work."""
+    source = await job_store.create_job(
+        make_create_job_command(session_id="source-session", idempotency_key=None)
+    )
+    if source_state != "queued":
+        claimed = await job_store.claim_next(
+            "source-worker",
+            LEASE_UNTIL,
+            event=make_event("job_started"),
+        )
+        assert claimed is not None
+        await job_store.mark_running(
+            claimed.token,
+            (),
+            event=make_event("job_started"),
+        )
+        if source_state == "input_required":
+            await job_store.mark_input_required(
+                claimed.token,
+                (make_pending_permission(job_id=source.handle.job_id),),
+                event=make_event("input_required"),
+            )
+
+    child = make_create_job_command(
+        session_id="child-session",
+        parent_session_id="source-session",
+        idempotency_key="child-request",
+    )
+    with pytest.raises(SessionBusyError) as raised:
+        await job_store.create_job(child)
+
+    assert raised.value.session_id == "source-session"
+    assert await job_store.get_session("child-session") is None
 
 
 async def test_terminal_session_accepts_a_new_job(job_store):
@@ -436,6 +500,17 @@ async def test_source_checkpoint_must_belong_to_source_session_atomically(job_st
     with pytest.raises(ValueError, match="source checkpoint"):
         await job_store.create_job(invalid)
     assert await job_store.get_session("child-session") is None
+
+    await job_store.mark_running(
+        claimed.token,
+        (),
+        event=make_event("job_started"),
+    )
+    await job_store.terminalize(
+        claimed.token,
+        SucceededTerminalOutcome(result=make_turn_result(), completed_at=OLD),
+        event=make_event("job_completed"),
+    )
 
     valid = await job_store.create_job(invalid.model_copy(update={"source_checkpoint": (owned,)}))
     assert valid.created is True
@@ -1112,13 +1187,18 @@ async def test_prune_retains_terminal_jobs_with_unresolved_inputs(job_store):
             operation=DiagnosticsOperation(),
             session_id=None,
             create_session=False,
+            queued_event=BackendEvent(type="job_queued", occurred_at=OLD),
         )
     )
     unresolved_claim = await job_store.claim_next(
-        "worker-1", LEASE_UNTIL, event=make_event("progress")
+        "worker-1", LEASE_UNTIL, event=BackendEvent(type="progress", occurred_at=OLD)
     )
     assert unresolved_claim is not None
-    await job_store.mark_running(unresolved_claim.token, (), event=make_event("job_started"))
+    await job_store.mark_running(
+        unresolved_claim.token,
+        (),
+        event=BackendEvent(type="job_started", occurred_at=OLD),
+    )
     unresolved_input = make_pending_permission(
         job_id=unresolved_job.handle.job_id,
         created_at=NOW,
@@ -1126,12 +1206,12 @@ async def test_prune_retains_terminal_jobs_with_unresolved_inputs(job_store):
     await job_store.mark_input_required(
         unresolved_claim.token,
         (unresolved_input,),
-        event=make_event("input_required"),
+        event=BackendEvent(type="input_required", occurred_at=OLD),
     )
     await job_store.terminalize(
         unresolved_claim.token,
         CancelledTerminalOutcome(completed_at=OLD),
-        event=make_event("job_cancelled"),
+        event=BackendEvent(type="job_cancelled", occurred_at=OLD),
     )
 
     resolved_job = await job_store.create_job(
@@ -1139,13 +1219,18 @@ async def test_prune_retains_terminal_jobs_with_unresolved_inputs(job_store):
             operation=DiagnosticsOperation(),
             session_id=None,
             create_session=False,
+            queued_event=BackendEvent(type="job_queued", occurred_at=OLD),
         )
     )
     resolved_claim = await job_store.claim_next(
-        "worker-2", LEASE_UNTIL, event=make_event("progress")
+        "worker-2", LEASE_UNTIL, event=BackendEvent(type="progress", occurred_at=OLD)
     )
     assert resolved_claim is not None
-    await job_store.mark_running(resolved_claim.token, (), event=make_event("job_started"))
+    await job_store.mark_running(
+        resolved_claim.token,
+        (),
+        event=BackendEvent(type="job_started", occurred_at=OLD),
+    )
     resolved_input = make_pending_permission(
         input_id="input-resolved",
         job_id=resolved_job.handle.job_id,
@@ -1154,7 +1239,7 @@ async def test_prune_retains_terminal_jobs_with_unresolved_inputs(job_store):
     await job_store.mark_input_required(
         resolved_claim.token,
         (resolved_input,),
-        event=make_event("input_required"),
+        event=BackendEvent(type="input_required", occurred_at=OLD),
     )
     await job_store.resolve_input(
         ResolveInputCommand(
@@ -1162,20 +1247,148 @@ async def test_prune_retains_terminal_jobs_with_unresolved_inputs(job_store):
             input_id=resolved_input.input_id,
             response=PermissionResponse(granted=["network:api.example.com"]),
             resolved_at=NOW,
-            event=make_event("input_resolved"),
+            event=BackendEvent(type="input_resolved", occurred_at=OLD),
         )
     )
     await job_store.terminalize(
         resolved_claim.token,
         CancelledTerminalOutcome(completed_at=OLD),
-        event=make_event("job_cancelled"),
+        event=BackendEvent(type="job_cancelled", occurred_at=OLD),
     )
 
-    result = await job_store.prune(PrunePolicy(terminal_job_before=NOW), now=NOW)
+    result = await job_store.prune(
+        PrunePolicy(terminal_job_before=NOW, event_before=NOW),
+        now=NOW,
+    )
 
     assert result.terminal_jobs_deleted == 1
     assert await job_store.get_job(unresolved_job.handle.job_id) is not None
     assert await job_store.get_job(resolved_job.handle.job_id) is None
+    unresolved_events = await job_store.read_events(unresolved_job.handle.job_id, 0, 10)
+    assert [event.sequence for event in unresolved_events.events] == [1, 2, 3, 4, 5]
+
+
+@pytest.mark.parametrize("state", ["queued", "running", "input_required"])
+async def test_event_prune_retains_all_nonterminal_history(job_store, state: str):
+    """Event retention never removes the evidence needed to recover active work."""
+    created = await job_store.create_job(
+        make_create_job_command(
+            operation=DiagnosticsOperation(),
+            session_id=None,
+            create_session=False,
+            queued_event=BackendEvent(type="job_queued", occurred_at=OLD),
+        )
+    )
+    expected_sequences = [1]
+    if state != "queued":
+        claimed = await job_store.claim_next(
+            "worker-active",
+            LEASE_UNTIL,
+            event=BackendEvent(type="progress", occurred_at=OLD),
+        )
+        assert claimed is not None
+        await job_store.mark_running(
+            claimed.token,
+            (),
+            event=BackendEvent(type="job_started", occurred_at=OLD),
+        )
+        expected_sequences.extend((2, 3))
+        if state == "input_required":
+            await job_store.mark_input_required(
+                claimed.token,
+                (make_pending_permission(job_id=created.handle.job_id, created_at=OLD),),
+                event=BackendEvent(type="input_required", occurred_at=OLD),
+            )
+            expected_sequences.append(4)
+
+    result = await job_store.prune(
+        PrunePolicy(event_before=datetime(2025, 6, 1, tzinfo=UTC)),
+        now=NOW,
+    )
+    retained = await job_store.read_events(created.handle.job_id, 0, 10)
+
+    assert result.events_deleted == 0
+    assert [event.sequence for event in retained.events] == expected_sequences
+    assert retained.latest_sequence == expected_sequences[-1]
+
+
+async def test_event_prune_keeps_latest_sequence_watermark_for_eligible_terminal_job(job_store):
+    """Pruned terminal detail retains the durable high-water sequence for status cursors."""
+    created = await job_store.create_job(
+        make_create_job_command(
+            operation=DiagnosticsOperation(),
+            session_id=None,
+            create_session=False,
+            queued_event=BackendEvent(type="job_queued", occurred_at=OLD),
+        )
+    )
+    claimed = await job_store.claim_next(
+        "worker-terminal",
+        LEASE_UNTIL,
+        event=BackendEvent(type="progress", occurred_at=OLD),
+    )
+    assert claimed is not None
+    await job_store.mark_running(
+        claimed.token,
+        (),
+        event=BackendEvent(type="job_started", occurred_at=OLD),
+    )
+    await job_store.terminalize(
+        claimed.token,
+        SucceededTerminalOutcome(result=DiagnosticsResult(available=True), completed_at=OLD),
+        event=BackendEvent(type="job_completed", occurred_at=OLD),
+    )
+
+    result = await job_store.prune(
+        PrunePolicy(event_before=datetime(2025, 6, 1, tzinfo=UTC)),
+        now=NOW,
+    )
+    retained = await job_store.read_events(created.handle.job_id, 0, 10)
+
+    assert result.terminal_jobs_deleted == 0
+    assert result.events_deleted == 4
+    assert retained.events == ()
+    assert retained.latest_sequence == 4
+
+
+async def test_event_prune_retains_terminal_history_with_session_provider_reference(job_store):
+    """A retained session's provider identity keeps its terminal reconciliation history."""
+    created = await job_store.create_job(
+        make_create_job_command(
+            session_id="referenced-session",
+            queued_event=BackendEvent(type="job_queued", occurred_at=OLD),
+        )
+    )
+    claimed = await job_store.claim_next(
+        "worker-reference",
+        LEASE_UNTIL,
+        event=BackendEvent(type="progress", occurred_at=OLD),
+    )
+    assert claimed is not None
+    await job_store.mark_running(
+        claimed.token,
+        (),
+        event=BackendEvent(type="job_started", occurred_at=OLD),
+    )
+    await job_store.record_provider_reference(
+        claimed.token,
+        ProviderReference(kind="thread", value="retained-thread"),
+    )
+    await job_store.terminalize(
+        claimed.token,
+        SucceededTerminalOutcome(result=make_turn_result(), completed_at=OLD),
+        event=BackendEvent(type="job_completed", occurred_at=OLD),
+    )
+
+    result = await job_store.prune(
+        PrunePolicy(event_before=datetime(2025, 6, 1, tzinfo=UTC)),
+        now=NOW,
+    )
+    retained = await job_store.read_events(created.handle.job_id, 0, 10)
+
+    assert result.events_deleted == 0
+    assert [event.sequence for event in retained.events] == [1, 2, 3, 4]
+    assert retained.latest_sequence == 4
 
 
 async def test_prune_removes_only_eligible_terminal_jobs_and_old_events(job_store):
@@ -1223,7 +1436,7 @@ async def test_prune_removes_only_eligible_terminal_jobs_and_old_events(job_stor
     )
 
     assert result.terminal_jobs_deleted == 1
-    assert result.events_deleted == 5
+    assert result.events_deleted == 4
     assert result.raw_diagnostics_deleted == 0
     assert await job_store.get_job(terminal_created.handle.job_id) is None
     assert await job_store.get_job(active.handle.job_id) is not None
@@ -1233,4 +1446,5 @@ async def test_prune_removes_only_eligible_terminal_jobs_and_old_events(job_stor
     )
     assert active_claim is not None
     retained = await job_store.read_events(active.handle.job_id, after_sequence=0, limit=10)
-    assert [event.sequence for event in retained.events] == [2]
+    assert [event.sequence for event in retained.events] == [1, 2]
+    assert retained.latest_sequence == 2

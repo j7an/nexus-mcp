@@ -86,6 +86,39 @@ def test_event_payloads_preserve_json_dump_shape(
     assert json.loads(event_with_nested_payload.model_dump_json())["payload"] == expected
 
 
+@pytest.mark.parametrize("committed", [False, True], ids=["backend", "job"])
+def test_event_payload_rejects_more_than_one_mibibyte(committed: bool):
+    """Normalized event envelopes cannot bypass the shared canonical byte ceiling."""
+    kwargs = {"job_id": "job-test", "sequence": 1} if committed else {}
+    event_type = JobEvent if committed else BackendEvent
+
+    with pytest.raises(ValidationError, match="canonical UTF-8 bytes"):
+        event_type(type="log", payload={"message": "x" * 1_048_576}, **kwargs)
+
+
+@pytest.mark.parametrize("committed", [False, True], ids=["backend", "job"])
+def test_event_payload_rejects_nesting_deeper_than_32(committed: bool):
+    """Small event payloads cannot hide pathologically deep provider structures."""
+    nested: object = "leaf"
+    for _ in range(32):
+        nested = [nested]
+    kwargs = {"job_id": "job-test", "sequence": 1} if committed else {}
+    event_type = JobEvent if committed else BackendEvent
+
+    with pytest.raises(ValidationError, match="maximum nesting depth"):
+        event_type(type="log", payload={"nested": nested}, **kwargs)
+
+
+@pytest.mark.parametrize("committed", [False, True], ids=["backend", "job"])
+def test_event_payload_rejects_container_above_4096_items(committed: bool):
+    """One nested event container cannot grow without the shared item ceiling."""
+    kwargs = {"job_id": "job-test", "sequence": 1} if committed else {}
+    event_type = JobEvent if committed else BackendEvent
+
+    with pytest.raises(ValidationError, match="maximum item count"):
+        event_type(type="log", payload={"items": [0] * 4097}, **kwargs)
+
+
 def test_resolved_configuration_sources_are_immutable():
     """Resolved provenance cannot change after execution begins."""
     requested = RequestedExecutionConfig(explicit=ExecutionConfigValues(model="model-a"))

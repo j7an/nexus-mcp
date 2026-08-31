@@ -527,60 +527,87 @@ class JobWorker:
         context: StoreBackedExecutionContext,
         references: tuple[ProviderReference, ...],
     ) -> None:
-        try:
-            async with asyncio.timeout(self._policy.reconciliation_timeout_seconds):
-                outcome = await backend.reconcile(references, context)
-        except BackendFailure as failure:
-            if failure.retry_disposition == "terminal":
-                await self._terminalize_error(claimed.token, failure.error, context=context)
+        while True:
+            try:
+                async with asyncio.timeout(self._policy.reconciliation_timeout_seconds):
+                    outcome = await backend.reconcile(references, context)
+            except BackendFailure as failure:
+                if failure.retry_disposition == "terminal":
+                    await self._terminalize_error(claimed.token, failure.error, context=context)
+                    return
+                await self._store.mark_reconciling(
+                    claimed.token,
+                    failure.error.model_copy(update={"retry_disposition": "reconcile_required"}),
+                    event=BackendEvent(type="reconciliation", payload={"status": "deferred"}),
+                )
+                self._notifier.notify()
+            except TimeoutError:
+                await self._store.mark_reconciling(
+                    claimed.token,
+                    JobError(
+                        code="outcome_unknown",
+                        message="Provider reconciliation timed out",
+                        retry_disposition="reconcile_required",
+                    ),
+                    event=BackendEvent(type="reconciliation", payload={"status": "timeout"}),
+                )
+                self._notifier.notify()
+            except asyncio.CancelledError:
+                raise
+            except StaleLeaseError:
                 return
-            await self._store.mark_reconciling(
-                claimed.token,
-                failure.error.model_copy(update={"retry_disposition": "reconcile_required"}),
-                event=BackendEvent(type="reconciliation", payload={"status": "deferred"}),
-            )
-            self._notifier.notify()
-            return
-        except TimeoutError:
-            await self._store.mark_reconciling(
-                claimed.token,
-                JobError(
-                    code="outcome_unknown",
-                    message="Provider reconciliation timed out",
-                    retry_disposition="reconcile_required",
-                ),
-                event=BackendEvent(type="reconciliation", payload={"status": "timeout"}),
-            )
-            self._notifier.notify()
-            return
-        except asyncio.CancelledError:
-            raise
-        except StaleLeaseError:
-            return
-        except Exception:
-            await self._store.mark_reconciling(
-                claimed.token,
-                JobError(
-                    code="outcome_unknown",
-                    message="Provider reconciliation could not determine an outcome",
-                    retry_disposition="reconcile_required",
-                ),
-                event=BackendEvent(type="reconciliation", payload={"status": "deferred"}),
-            )
-            self._notifier.notify()
-            return
-
-        match outcome:
-            case CompletedReconciliationOutcome(result=result):
-                await self._terminalize_success(claimed.token, context, result)
-            case FailedReconciliationOutcome(error=error):
-                await self._terminalize_error(claimed.token, error, context=context)
-            case CancelledReconciliationOutcome():
-                await self._terminalize_cancelled(claimed.token, context=context)
-            case UnknownReconciliationOutcome(error=error):
-                await self._terminalize_error(claimed.token, error, context=context)
-            case ActiveReconciliationOutcome() | InputRequiredReconciliationOutcome():
-                await context.flush_output()
+            except Exception:
+                await self._store.mark_reconciling(
+                    claimed.token,
+                    JobError(
+                        code="outcome_unknown",
+                        message="Provider reconciliation could not determine an outcome",
+                        retry_disposition="reconcile_required",
+                    ),
+                    event=BackendEvent(
+                        type="reconciliation",
+                        payload={"status": "deferred"},
+                    ),
+                )
+                self._notifier.notify()
+            else:
+                match outcome:
+                    case CompletedReconciliationOutcome(result=result):
+                        await self._terminalize_success(claimed.token, context, result)
+                        return
+                    case FailedReconciliationOutcome(error=error):
+                        await self._terminalize_error(claimed.token, error, context=context)
+                        return
+                    case CancelledReconciliationOutcome():
+                        await self._terminalize_cancelled(claimed.token, context=context)
+                        return
+                    case UnknownReconciliationOutcome(error=error):
+                        await self._terminalize_error(claimed.token, error, context=context)
+                        return
+                    case ActiveReconciliationOutcome():
+                        await context.flush_output()
+                    case InputRequiredReconciliationOutcome():
+                        await context.flush_output()
+                        snapshot = await self._store.get_control_snapshot(claimed.token)
+                        if snapshot.state != "input_required" or not snapshot.unresolved_inputs:
+                            await self._store.mark_reconciling(
+                                claimed.token,
+                                JobError(
+                                    code="outcome_unknown",
+                                    message=(
+                                        "Provider reported input-required without a durable "
+                                        "pending input"
+                                    ),
+                                    retry_disposition="reconcile_required",
+                                ),
+                                event=BackendEvent(
+                                    type="reconciliation",
+                                    payload={"status": "input_state_missing"},
+                                ),
+                            )
+                            self._notifier.notify()
+            await context.checkpoint()
+            await asyncio.sleep(self._policy.idle_poll_seconds)
 
     async def _terminalize_success(
         self,
@@ -733,19 +760,16 @@ class WorkerPool:
         if worker_count < 1:
             raise ValueError("worker_count must be positive")
         self._stop = asyncio.Event()
-        self._workers = tuple(
-            JobWorker(
-                worker_id=f"{worker_id_prefix}-{index + 1}",
-                store=store,
-                backends=backends,
-                notifier=notifier,
-                policy=policy,
-                retry_delay=retry_delay,
-                clock=clock,
-                output_chunk_bytes=output_chunk_bytes,
-            )
-            for index in range(worker_count)
-        )
+        self._worker_id_prefix = worker_id_prefix
+        self._store = store
+        self._backends = backends
+        self._notifier = notifier
+        self._policy = policy
+        self._retry_delay = retry_delay
+        self._clock = clock
+        self._output_chunk_bytes = output_chunk_bytes
+        self._resize_lock = asyncio.Lock()
+        self._workers = tuple(self._new_worker(index) for index in range(worker_count))
         self._tasks: tuple[asyncio.Task[None], ...] = ()
 
     @property
@@ -759,6 +783,21 @@ class WorkerPool:
             return
         self._stop = asyncio.Event()
         self._tasks = tuple(asyncio.create_task(worker.run(self._stop)) for worker in self._workers)
+
+    async def ensure_capacity(self, worker_count: int) -> None:
+        """Grow a running pool to at least ``worker_count`` provider workers."""
+        if worker_count < 1:
+            raise ValueError("worker_count must be positive")
+        async with self._resize_lock:
+            current = len(self._workers)
+            if worker_count <= current:
+                return
+            additions = tuple(self._new_worker(index) for index in range(current, worker_count))
+            self._workers += additions
+            if self.running:
+                self._tasks += tuple(
+                    asyncio.create_task(worker.run(self._stop)) for worker in additions
+                )
 
     async def stop(self) -> None:
         """Signal and await every loop without waiting for an idle poll deadline."""
@@ -781,6 +820,18 @@ class WorkerPool:
                     progress = True
             if not progress:
                 return completed
+
+    def _new_worker(self, index: int) -> JobWorker:
+        return JobWorker(
+            worker_id=f"{self._worker_id_prefix}-{index + 1}",
+            store=self._store,
+            backends=self._backends,
+            notifier=self._notifier,
+            policy=self._policy,
+            retry_delay=self._retry_delay,
+            clock=self._clock,
+            output_chunk_bytes=self._output_chunk_bytes,
+        )
 
 
 def _retry_after_seconds(error: JobError) -> float | None:

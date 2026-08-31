@@ -2,7 +2,10 @@
 
 import hashlib
 import json
+import os
+import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -63,6 +66,11 @@ def _normalize_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("must be a timezone-aware UTC datetime")
     return value.astimezone(UTC)
+
+
+def _workspace_id_for_canonical_path(path: Path) -> str:
+    identity = os.path.normcase(str(path))
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"nexus-mcp:local-workspace:{identity}"))
 
 
 class _StoreModel(BaseModel):
@@ -190,6 +198,7 @@ class EventPage(_StoreModel):
     events: tuple[JobEvent, ...] = Field(default=(), max_length=1000)
     next_after_sequence: int | None = Field(default=None, ge=1)
     has_more: bool = False
+    latest_sequence: int = Field(default=0, ge=0)
 
 
 class ControlSnapshot(_StoreModel):
@@ -379,6 +388,8 @@ class JobStore(Protocol):
     async def close(self) -> None: ...
 
     async def resolve_workspace(self, selector: WorkspaceSelector) -> Workspace: ...
+
+    async def resolve_or_create_workspace(self, selector: WorkspaceSelector) -> Workspace: ...
 
     async def create_job(self, command: CreateJobCommand) -> CreateJobResult: ...
 

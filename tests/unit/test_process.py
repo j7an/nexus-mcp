@@ -1,11 +1,18 @@
 # tests/unit/test_process.py
 import asyncio
+import os
+import signal
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from nexus_mcp.exceptions import SubprocessError, SubprocessTimeoutError
+from nexus_mcp.exceptions import (
+    SubprocessError,
+    SubprocessTimeoutError,
+    SubprocessTreeTerminationError,
+)
 from nexus_mcp.process import run_subprocess
 from tests.fixtures import REPRESENTATIVE_CLI, create_mock_process
 
@@ -26,23 +33,21 @@ async def test_run_subprocess_forwards_non_none_cwd_only(mock_exec):
     mock_exec.return_value = create_mock_process(stdout="output", returncode=0)
 
     await run_subprocess(["echo", "hello"])
-    mock_exec.assert_awaited_once_with(
-        "echo",
-        "hello",
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    call = mock_exec.await_args
+    assert call.args == ("echo", "hello")
+    assert call.kwargs["stdin"] is asyncio.subprocess.DEVNULL
+    assert call.kwargs["stdout"] is asyncio.subprocess.PIPE
+    assert call.kwargs["stderr"] is asyncio.subprocess.PIPE
+    if os.name == "posix":
+        assert call.kwargs["start_new_session"] is True
+    else:
+        assert int(call.kwargs["creationflags"]) != 0
+    assert "cwd" not in call.kwargs
 
     mock_exec.reset_mock()
     await run_subprocess(["pwd"], cwd=Path("/tmp/workspace"))
-    mock_exec.assert_awaited_once_with(
-        "pwd",
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=Path("/tmp/workspace"),
-    )
+    assert mock_exec.await_args.args == ("pwd",)
+    assert mock_exec.await_args.kwargs["cwd"] == Path("/tmp/workspace")
 
 
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
@@ -141,25 +146,28 @@ async def test_run_subprocess_error_includes_command(mock_exec):
     assert exc_info.value.command == [REPRESENTATIVE_CLI, "-p", "test"]
 
 
+@patch("nexus_mcp.process.os.killpg")
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-async def test_timeout_kills_and_waits_for_process(mock_exec):
-    """After SubprocessTimeoutError → process.kill() and process.wait() both called."""
+async def test_timeout_kills_and_waits_for_owned_process_group(mock_exec, mock_killpg):
+    """A timeout signals the isolated POSIX group and reaps its direct child."""
     mock_process = create_mock_process(stdout="", delay=10)
     mock_exec.return_value = mock_process
 
     with pytest.raises(SubprocessTimeoutError):
         await run_subprocess(["slow-command"], timeout=0.01)
 
-    mock_process.kill.assert_called_once()
+    mock_killpg.assert_called_once_with(mock_process.pid, signal.SIGKILL)
+    mock_process.kill.assert_not_called()
     mock_process.wait.assert_awaited_once()
 
 
-@pytest.mark.parametrize(("returncode", "should_kill"), [(None, True), (0, False)])
+@pytest.mark.parametrize("returncode", [None, 0])
+@patch("nexus_mcp.process.os.killpg")
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
 async def test_external_cancellation_reaps_subprocess(
     mock_exec,
+    mock_killpg,
     returncode: int | None,
-    should_kill: bool,
 ):
     """Caller cancellation cannot orphan a running child and still propagates cancellation."""
     mock_process = create_mock_process(stdout="", delay=10)
@@ -173,11 +181,56 @@ async def test_external_cancellation_reaps_subprocess(
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    if should_kill:
-        mock_process.kill.assert_called_once()
-    else:
-        mock_process.kill.assert_not_called()
+    mock_killpg.assert_called_once_with(mock_process.pid, signal.SIGKILL)
+    mock_process.kill.assert_not_called()
     mock_process.wait.assert_awaited_once()
+
+
+@patch("nexus_mcp.process.os.killpg", side_effect=PermissionError("not owned"))
+@patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+async def test_unproven_tree_stoppage_raises_recoverable_process_error(mock_exec, _mock_killpg):
+    """Direct-child cleanup cannot masquerade as proof that every descendant stopped."""
+    mock_process = create_mock_process(stdout="", delay=10)
+    mock_process.returncode = None
+    mock_exec.return_value = mock_process
+    task = asyncio.create_task(run_subprocess(["slow-command"], timeout=None))
+    await asyncio.sleep(0)
+
+    task.cancel()
+    with pytest.raises(SubprocessTreeTerminationError):
+        await task
+
+    mock_process.kill.assert_called_once()
+    mock_process.wait.assert_awaited_once()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group falsifier")
+async def test_timeout_stops_real_grandchild_process_tree(tmp_path: Path):
+    """A child-spawned grandchild cannot mutate the workspace after timeout returns."""
+    marker = tmp_path / "grandchild-finished"
+    script = tmp_path / "spawn_tree.py"
+    grandchild = (
+        "import pathlib,sys,time; time.sleep(0.3); pathlib.Path(sys.argv[1]).write_text('late')"
+    )
+    script.write_text(
+        "\n".join(
+            [
+                "import subprocess",
+                "import sys",
+                "import time",
+                "marker = sys.argv[1]",
+                f"subprocess.Popen([sys.executable, '-c', {grandchild!r}, marker])",
+                "time.sleep(30)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SubprocessTimeoutError):
+        await run_subprocess([sys.executable, str(script), str(marker)], timeout=0.05)
+    await asyncio.sleep(0.4)
+
+    assert marker.exists() is False
 
 
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")

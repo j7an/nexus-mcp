@@ -73,6 +73,7 @@ from nexus_mcp.jobs.store import (
     SucceededTerminalOutcome,
     TerminalOutcome,
     _create_job_request_hash,
+    _workspace_id_for_canonical_path,
 )
 
 __all__ = ["InvalidCursorError", "SQLiteJobStore", "StoreSchemaError"]
@@ -232,6 +233,16 @@ class SQLiteJobStore:
         if workspace is None:
             raise WorkspaceInvalidError(identity, "workspace is not registered")
         return workspace
+
+    async def resolve_or_create_workspace(self, selector: WorkspaceSelector) -> Workspace:
+        """Atomically find or create one canonical local workspace identity."""
+        if selector.workspace_id is not None:
+            return await self.resolve_workspace(selector)
+        assert selector.path is not None
+        identity = _resolve_workspace_path(selector.path)
+        return await self._worker._call(
+            lambda connection: _resolve_or_create_workspace_transaction(connection, identity)
+        )
 
     async def create_job(self, command: CreateJobCommand) -> CreateJobResult:
         """Persist one admitted job atomically."""
@@ -523,6 +534,8 @@ class SQLiteJobStore:
             _validate_workspace_identity(connection, command.workspace)
             insert_session = _validate_session_admission(connection, command)
             _raise_if_session_busy(connection, command.session_id)
+            if command.source_session_id != command.session_id:
+                _raise_if_session_busy(connection, command.source_session_id)
 
             _upsert_workspace(connection, command.workspace)
             now_ms = time.time_ns() // 1_000_000
@@ -1768,7 +1781,7 @@ def _prune_transaction(
 
         if policy.event_before is not None:
             cutoff_ms = min(_datetime_to_ms(policy.event_before), now_ms)
-            events_deleted += _prune_old_events(connection, cutoff_ms)
+            events_deleted += _prune_old_events(connection, cutoff_ms, now_ms)
 
         return PruneResult(
             terminal_jobs_deleted=len(terminal_ids),
@@ -1846,16 +1859,32 @@ def _delete_terminal_job(connection: sqlite3.Connection, job_id: str) -> int:
     return events_deleted
 
 
-def _prune_old_events(connection: sqlite3.Connection, cutoff_ms: int) -> int:
+def _prune_old_events(
+    connection: sqlite3.Connection,
+    cutoff_ms: int,
+    now_ms: int,
+) -> int:
     candidates = _fetch_all_mappings(
         connection,
         """
-        SELECT job_id, count(*) AS event_count
-        FROM job_events
-        WHERE event_type != ? AND created_at_ms < ?
-        GROUP BY job_id
+        SELECT e.job_id, count(*) AS event_count
+        FROM job_events AS e
+        JOIN jobs AS j ON j.job_id = e.job_id
+        WHERE e.event_type != ?
+          AND e.created_at_ms < ?
+          AND j.state IN ('completed', 'failed', 'cancelled')
+          AND (j.lease_expires_at_ms IS NULL OR j.lease_expires_at_ms <= ?)
+          AND NOT EXISTS (
+            SELECT 1 FROM pending_inputs AS p
+            WHERE p.job_id = j.job_id AND p.status = 'pending'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM provider_references AS r
+            WHERE r.job_id = j.job_id AND r.session_id IS NOT NULL
+          )
+        GROUP BY e.job_id
         """,
-        (_EVENT_WATERMARK_TYPE, cutoff_ms),
+        (_EVENT_WATERMARK_TYPE, cutoff_ms, now_ms),
     )
     deleted = 0
     for candidate in candidates:
@@ -2211,6 +2240,30 @@ def _read_workspace(
         created_at=_ms_to_datetime(row["created_at_ms"]),
         updated_at=_ms_to_datetime(row["updated_at_ms"]),
     )
+
+
+def _resolve_or_create_workspace_transaction(
+    connection: sqlite3.Connection,
+    identity: str,
+) -> Workspace:
+    def resolve_or_create() -> Workspace:
+        existing = _read_workspace(connection, "canonical_path", identity)
+        if existing is not None:
+            return existing
+        now = datetime.now(UTC)
+        workspace = Workspace(
+            workspace_id=_workspace_id_for_canonical_path(Path(identity)),
+            canonical_path=Path(identity),
+            created_at=now,
+            updated_at=now,
+        )
+        _upsert_workspace(connection, workspace)
+        stored = _read_workspace(connection, "canonical_path", identity)
+        if stored is None:
+            raise StoreSchemaError("workspace insert did not persist its canonical identity")
+        return stored
+
+    return _run_immediate(connection, resolve_or_create)
 
 
 def _validate_workspace_identity(
@@ -2818,10 +2871,17 @@ def _read_events(
     )
     page_rows = rows[:limit]
     events = tuple(_event_from_row(connection, row) for row in page_rows)
+    latest_sequence = int(
+        connection.execute(
+            "SELECT coalesce(max(sequence), 0) FROM job_events WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()[0]
+    )
     return EventPage(
         events=events,
         next_after_sequence=None if not events else events[-1].sequence,
         has_more=len(rows) > limit,
+        latest_sequence=latest_sequence,
     )
 
 

@@ -1,5 +1,6 @@
 """E2E compatibility contracts for legacy prompt aliases backed by Nexus jobs."""
 
+import asyncio
 import json
 import os
 import sqlite3
@@ -8,7 +9,8 @@ from contextlib import asynccontextmanager
 import pytest
 
 from nexus_mcp.mcp.runtime import MCPRuntime
-from nexus_mcp.server import prompt
+from nexus_mcp.server import batch_prompt, prompt
+from tests.fakes import FakeRunner
 from tests.fixtures import CODEX_NDJSON_RESPONSE, create_mock_process, strip_runner_header
 
 
@@ -94,6 +96,95 @@ async def test_batch_jobs_preserve_order_and_unique_labels(job_mcp_client, fake_
     assert len(rows) == 2
     assert len({str(row[0]) for row in rows}) == 2
     assert len({str(row[1]) for row in rows}) == 2
+
+
+@pytest.mark.e2e
+async def test_batch_max_concurrency_two_overlaps_provider_execution(
+    monkeypatch, fake_runner_registry, fast_job_runtime
+):
+    """Two admitted compatibility jobs reach their providers concurrently."""
+    del fast_job_runtime
+    original_run = FakeRunner.run
+    active = 0
+    maximum_active = 0
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def barrier_run(self, request, emitter=None, progress=None):
+        nonlocal active, maximum_active
+        active += 1
+        maximum_active = max(maximum_active, active)
+        if active == 2:
+            both_started.set()
+        try:
+            await release.wait()
+            return await original_run(self, request, emitter=emitter, progress=progress)
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(FakeRunner, "run", barrier_run)
+    batch = asyncio.create_task(
+        batch_prompt(
+            tasks=[
+                {"cli": fake_runner_registry, "prompt": "first"},
+                {"cli": fake_runner_registry, "prompt": "second"},
+            ],
+            max_concurrency=2,
+        )
+    )
+    try:
+        await asyncio.wait_for(both_started.wait(), timeout=1.0)
+    finally:
+        release.set()
+        await batch
+
+    assert maximum_active == 2
+
+
+@pytest.mark.e2e
+async def test_batch_max_concurrency_one_serializes_provider_execution(
+    monkeypatch, fake_runner_registry, fast_job_runtime
+):
+    """The compatibility semaphore still keeps provider execution serial at one."""
+    del fast_job_runtime
+    original_run = FakeRunner.run
+    active = 0
+    maximum_active = 0
+    calls = 0
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def observed_run(self, request, emitter=None, progress=None):
+        nonlocal active, maximum_active, calls
+        calls += 1
+        active += 1
+        maximum_active = max(maximum_active, active)
+        try:
+            if calls == 1:
+                first_started.set()
+                await release_first.wait()
+            return await original_run(self, request, emitter=emitter, progress=progress)
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(FakeRunner, "run", observed_run)
+    batch = asyncio.create_task(
+        batch_prompt(
+            tasks=[
+                {"cli": fake_runner_registry, "prompt": "first"},
+                {"cli": fake_runner_registry, "prompt": "second"},
+            ],
+            max_concurrency=1,
+        )
+    )
+    await asyncio.wait_for(first_started.wait(), timeout=1.0)
+    await asyncio.sleep(0)
+    assert calls == 1
+    release_first.set()
+    await batch
+
+    assert calls == 2
+    assert maximum_active == 1
 
 
 @pytest.mark.e2e

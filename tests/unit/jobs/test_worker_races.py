@@ -1,7 +1,7 @@
 """Race, control, timeout, output, and lifecycle tests for durable workers."""
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -9,6 +9,7 @@ from nexus_mcp.backends import (
     BackendExecutionContext,
     CancelRequested,
     CompletedReconciliationOutcome,
+    InputRequiredReconciliationOutcome,
     InputResolved,
     LeaseLost,
     RuntimeShutdown,
@@ -392,6 +393,89 @@ async def test_heartbeat_error_detaches_as_lease_loss_instead_of_hanging():
         await make_worker(store, backend, policy=policy).run_once()
 
     assert backend.signal == LeaseLost()
+
+
+class InputRequiredThenControlBackend(ScriptedBackend):
+    """Preserve recovered input state, then complete after the durable response arrives."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.awaiting_control = asyncio.Event()
+        self.signal: object | None = None
+
+    async def reconcile(self, provider_state, context: BackendExecutionContext):  # type: ignore[no-untyped-def]
+        self.reconcile_calls.append((provider_state, context))
+        if len(self.reconcile_calls) == 1:
+            return InputRequiredReconciliationOutcome()
+        self.awaiting_control.set()
+        self.signal = await context.wait_for_control()
+        return CompletedReconciliationOutcome(result=make_turn_result(message="resumed"))
+
+
+async def test_input_required_reconciliation_preserves_state_and_progresses_on_control():
+    """Recovered input waits stay fenced, never replay execute, and consume durable control."""
+    store = InMemoryJobStore()
+    notifier = EventNotifier()
+    backend = InputRequiredThenControlBackend()
+    job = await admit(store)
+    old_claim = await store.claim_next(
+        "old-worker",
+        datetime(2099, 1, 1, tzinfo=UTC),
+        event=BackendEvent(type="job_started"),
+    )
+    assert old_claim is not None
+    await store.mark_running(old_claim.token, (), event=BackendEvent(type="job_started"))
+    pending = make_pending_permission(job_id=job.job_id)
+    await store.mark_input_required(
+        old_claim.token,
+        (pending,),
+        event=BackendEvent(type="input_required"),
+    )
+    await store.mark_reconciling(
+        old_claim.token,
+        JobError(
+            code="process_lost",
+            message="Input observation was interrupted",
+            retry_disposition="reconcile_required",
+        ),
+        event=BackendEvent(type="reconciliation"),
+    )
+    assert await store.renew_lease(
+        old_claim.token,
+        datetime(2000, 1, 1, tzinfo=UTC),
+    )
+
+    policy = WorkerPolicy(
+        lease_seconds=1.0,
+        heartbeat_seconds=0.2,
+        idle_poll_seconds=0.001,
+        reconciliation_timeout_seconds=0.2,
+    )
+    worker_task = asyncio.create_task(
+        make_worker(store, backend, notifier, policy=policy).run_once()
+    )
+    await asyncio.wait_for(backend.awaiting_control.wait(), timeout=0.2)
+    current = await store.get_job(job.job_id)
+    assert current is not None and current.state == "input_required"
+    assert current.lease_owner_id == "worker-1"
+    assert current.lease_generation == 2
+
+    await store.resolve_input(
+        ResolveInputCommand(
+            job_id=job.job_id,
+            input_id=pending.input_id,
+            response=PermissionResponse(granted=["network:api.example.com"]),
+            event=BackendEvent(type="input_resolved", payload={"input_id": pending.input_id}),
+        )
+    )
+    notifier.notify()
+    await worker_task
+
+    assert backend.signal == InputResolved(input_id=pending.input_id)
+    assert backend.execute_calls == []
+    assert len(backend.reconcile_calls) == 2
+    terminal = await store.get_job(job.job_id)
+    assert terminal is not None and terminal.state == "completed"
 
 
 async def test_output_deltas_are_bounded_coalesced_and_followed_by_complete_message():

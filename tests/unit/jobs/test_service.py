@@ -35,6 +35,7 @@ from nexus_mcp.core import (
     ResolvedExecutionConfig,
     ReviewOperation,
     ReviewTarget,
+    SessionBusyError,
     SucceededJobResultResponse,
     TurnOperation,
     UnsupportedCapabilityError,
@@ -90,6 +91,7 @@ def store(tmp_path: Path) -> Mock:
     job_store = Mock(spec=JobStore)
     workspace = make_workspace(canonical_path=tmp_path)
     job_store.resolve_workspace.return_value = workspace
+    job_store.resolve_or_create_workspace.return_value = workspace
     job_store.get_session.return_value = make_agent_session()
     job_store.get_provider_references.return_value = (
         ProviderReference(kind="thread", value="thread-test"),
@@ -283,7 +285,9 @@ async def test_creation_rejects_a_removed_workspace_path(
     tmp_path: Path,
 ):
     """A durable identity cannot admit new work after its canonical directory disappears."""
-    store.resolve_workspace.return_value = make_workspace(canonical_path=tmp_path / "removed")
+    store.resolve_or_create_workspace.return_value = make_workspace(
+        canonical_path=tmp_path / "removed"
+    )
 
     with pytest.raises(WorkspaceInvalidError):
         await service.start(
@@ -511,6 +515,32 @@ async def test_continue_uses_existing_session_policy_owner_and_checkpoint(
     assert command.access_policy == "workspace"
     assert command.command_family == "continue_session"
     assert command.idempotency_key == "continue-1"
+
+
+async def test_continue_rejects_backend_without_session_continuation_before_job_creation(
+    service: AgentJobService,
+    store: Mock,
+    backend: Mock,
+):
+    """A fresh legacy invocation cannot masquerade as continuation of provider state."""
+    backend.descriptor = backend.descriptor.model_copy(
+        update={
+            "capabilities": backend.descriptor.capabilities.model_copy(
+                update={"session_continuation": False}
+            )
+        }
+    )
+
+    with pytest.raises(UnsupportedCapabilityError, match="session_continuation"):
+        await service.continue_session(
+            workspace=WORKSPACE_SELECTOR,
+            access=authorized_access(),
+            session_id="session-test",
+            operation=TurnOperation(prompt="Continue"),
+            explicit_config=ExecutionConfigValues(),
+        )
+
+    store.create_job.assert_not_awaited()
 
 
 async def test_private_session_creation_access_violation_is_access_denied(
@@ -1144,6 +1174,37 @@ class _StableCaptureResolver:
         return RequestedExecutionConfig(explicit=explicit)
 
 
+async def test_service_starts_with_fresh_sqlite_workspace_without_mcp_policy(
+    tmp_path: Path,
+):
+    """The framework-independent service owns first-use workspace admission."""
+    workspace_path = tmp_path / "fresh-workspace"
+    workspace_path.mkdir()
+    durable_store = SQLiteJobStore(tmp_path / "fresh-service.sqlite3")
+    await durable_store.open()
+    backend = ScriptedBackend(backend_id="codex")
+    service = AgentJobService(
+        store=durable_store,
+        backend_manager=BackendManager([backend]),
+        config_resolver=cast("NexusConfigResolver", _StableCaptureResolver()),
+        notifier=EventNotifier(),
+    )
+    try:
+        handle = await service.start(
+            workspace=WorkspaceSelector(path=workspace_path),
+            access=make_access_context(authorize_local_workspaces=True),
+            backend_id="codex",
+            operation=TurnOperation(prompt="Start without MCP"),
+            explicit_config=ExecutionConfigValues(),
+        )
+        workspace = await durable_store.resolve_workspace(WorkspaceSelector(path=workspace_path))
+    finally:
+        await durable_store.close()
+
+    assert handle.session_id is not None
+    assert workspace.canonical_path == workspace_path.resolve()
+
+
 @pytest.fixture(params=["memory", "sqlite"], ids=["memory", "sqlite"])
 async def real_service_environment(
     request: pytest.FixtureRequest,
@@ -1226,6 +1287,61 @@ async def _source_session(service: AgentJobService) -> str:
         job_id=source.job_id,
     )
     return source.session_id
+
+
+@pytest.mark.parametrize("family", ["fork", "review_detached"])
+async def test_child_service_admission_loses_source_idle_race_atomically(
+    real_service_environment,
+    monkeypatch: pytest.MonkeyPatch,
+    family: str,
+):
+    """The store, not a stale service read, decides whether a child source is idle."""
+    service, durable_store, _, _ = real_service_environment
+    source_session_id = await _source_session(service)
+    original_create = durable_store.create_job
+    raced = False
+
+    async def create_after_source_becomes_busy(command: CreateJobCommand):
+        nonlocal raced
+        if command.parent_session_id == source_session_id and not raced:
+            raced = True
+            await original_create(
+                CreateJobCommand(
+                    workspace=make_workspace(canonical_path=command.workspace.canonical_path),
+                    backend_id=command.backend_id,
+                    owner_id=command.owner_id,
+                    access_policy=command.access_policy,
+                    operation=TurnOperation(prompt="Racing source turn"),
+                    requested_config=RequestedExecutionConfig(),
+                    session_id=source_session_id,
+                    create_session=False,
+                    command_family="race",
+                    queued_event=BackendEvent(type="job_queued", occurred_at=NOW),
+                )
+            )
+        return await original_create(command)
+
+    monkeypatch.setattr(durable_store, "create_job", create_after_source_becomes_busy)
+    with pytest.raises(SessionBusyError) as raised:
+        if family == "fork":
+            await service.fork_session(
+                workspace=WORKSPACE_SELECTOR,
+                access=authorized_access(),
+                session_id=source_session_id,
+                operation=ForkOperation(prompt="Fork after stale read"),
+                explicit_config=ExecutionConfigValues(),
+            )
+        else:
+            await service.review(
+                workspace=WORKSPACE_SELECTOR,
+                access=authorized_access(),
+                session_id=source_session_id,
+                operation=make_review_operation(delivery="detached"),
+                explicit_config=ExecutionConfigValues(),
+            )
+
+    assert raced is True
+    assert raised.value.session_id == source_session_id
 
 
 @pytest.mark.parametrize(

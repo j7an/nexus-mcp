@@ -363,7 +363,7 @@ async def test_mcp_runtime_injects_tuning_and_closes_in_reverse(monkeypatch):
         lifecycle.append("legacy_backends.construct")
         return fake_legacy_backends
 
-    monkeypatch.setattr(runtime, "_MCPJobStore", FakeStore)
+    monkeypatch.setattr(runtime, "SQLiteJobStore", FakeStore)
     monkeypatch.setattr(runtime, "BackendManager", FakeBackendManager)
     monkeypatch.setattr(runtime, "EventNotifier", FakeNotifier)
     monkeypatch.setattr(runtime, "NexusConfigResolver", FakeResolver)

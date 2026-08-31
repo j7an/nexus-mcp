@@ -9,7 +9,6 @@ Tests verify:
 - run() retries on RetryableError with exponential backoff
 """
 
-import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -19,7 +18,12 @@ from nexus_mcp.exceptions import ParseError, RetryableError, SubprocessError
 from nexus_mcp.process import run_subprocess
 from nexus_mcp.runners.base import AbstractRunner, CLIRunner
 from nexus_mcp.types import AgentResponse, PromptRequest, SubprocessResult
-from tests.fixtures import create_mock_process, make_agent_response, make_prompt_request
+from tests.fixtures import (
+    assert_owned_subprocess_call,
+    create_mock_process,
+    make_agent_response,
+    make_prompt_request,
+)
 
 
 class ConcreteRunner(AbstractRunner):
@@ -75,13 +79,11 @@ class TestAbstractRunner:
         response = await runner.run(request)
 
         # Assert: Template Method orchestration
-        mock_exec.assert_awaited_once_with(
+        assert_owned_subprocess_call(
+            mock_exec,
             "test-cli",
             "-p",
             "test prompt",
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
         )
         assert response.cli == "test"
         assert response.output == "success output"

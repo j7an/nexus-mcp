@@ -35,6 +35,7 @@ from nexus_mcp.exceptions import (
     RetryableError,
     SubprocessError,
     SubprocessTimeoutError,
+    SubprocessTreeTerminationError,
 )
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import ExecutionMode, LogLevel, PromptRequest
@@ -61,6 +62,7 @@ class LegacyRunnerBackend:
                 operations=frozenset({"turn"}),
                 cancellation=False,
                 graceful_interrupt=False,
+                session_continuation=False,
                 session_fork=False,
                 sandbox_modes=sandbox_modes,
             ),
@@ -221,6 +223,15 @@ class LegacyRunnerBackend:
         if len(exception_type) > 128 or not exception_type.isidentifier():
             exception_type = "Exception"
         details = {"legacy_exception_type": exception_type}
+        if isinstance(exc, SubprocessTreeTerminationError):
+            error = JobError(
+                code="outcome_unknown",
+                message=f"Legacy backend {self._backend_id} process-tree outcome is unknown",
+                retry_disposition="reconcile_required",
+                recoverable=True,
+                details=details,
+            )
+            return BackendFailure(error, "reconcile_required")
         if isinstance(exc, RetryableError):
             error = JobError(
                 code="provider_failed",

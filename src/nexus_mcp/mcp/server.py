@@ -604,6 +604,7 @@ async def batch_prompt(
             )
 
     async with runtime_provider.borrow() as runtime:
+        await runtime.workers.ensure_capacity(min(max_concurrency, len(labelled)))
         results = await asyncio.gather(
             *[_run_single(runtime.service, i, task) for i, task in enumerate(labelled)]
         )

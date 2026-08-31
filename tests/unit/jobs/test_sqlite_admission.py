@@ -1,5 +1,6 @@
 """SQLite-specific admission, rollback, schema, and pagination contracts."""
 
+import asyncio
 import base64
 import json
 import sqlite3
@@ -19,7 +20,11 @@ from nexus_mcp.core import (
 )
 from nexus_mcp.jobs.sqlite_store import InvalidCursorError, SQLiteJobStore, StoreSchemaError
 from nexus_mcp.jobs.store import JobAccessFilter, JobQuery
-from tests.unit.jobs.test_store_contract import NOW, make_create_job_command
+from tests.unit.jobs.test_store_contract import (
+    NOW,
+    make_cancel_job_command,
+    make_create_job_command,
+)
 
 
 @pytest.fixture
@@ -74,6 +79,31 @@ async def test_same_key_different_hash_conflicts(sqlite_store: SQLiteJobStore):
                 operation=TurnOperation(prompt="two"),
             )
         )
+
+
+async def test_concurrent_store_instances_resolve_one_canonical_workspace(
+    sqlite_store: SQLiteJobStore,
+    tmp_path: Path,
+):
+    """Independent process-style stores converge on one atomically inserted path identity."""
+    workspace_path = tmp_path / "shared-workspace"
+    workspace_path.mkdir()
+    second = SQLiteJobStore(sqlite_store.path)
+    await second.open()
+    try:
+        first_workspace, second_workspace = await asyncio.gather(
+            sqlite_store.resolve_or_create_workspace(WorkspaceSelector(path=workspace_path / ".")),
+            second.resolve_or_create_workspace(WorkspaceSelector(path=workspace_path)),
+        )
+    finally:
+        await second.close()
+
+    assert first_workspace == second_workspace
+
+    def count_workspaces(connection: sqlite3.Connection) -> int:
+        return int(connection.execute("SELECT count(*) FROM workspaces").fetchone()[0])
+
+    assert await sqlite_store._worker._call(count_workspaces) == 1
 
 
 async def test_canonical_request_hash_ignores_mapping_order(sqlite_store: SQLiteJobStore):
@@ -141,6 +171,7 @@ async def test_source_checkpoint_membership_is_checked_before_admission_mutation
         )
 
     await sqlite_store._worker._call(seed_source_reference)
+    await sqlite_store.request_cancel(make_cancel_job_command(source.handle.job_id))
     invalid = make_create_job_command(
         session_id="child-session",
         parent_session_id="source-session",
@@ -164,7 +195,7 @@ async def test_queued_event_provider_reference_is_relational_and_reuses_checkpoi
     sqlite_store: SQLiteJobStore,
 ):
     """Queued-event references use one job-scoped row while raw provider event ids stay metadata."""
-    await sqlite_store.create_job(
+    source = await sqlite_store.create_job(
         make_create_job_command(session_id="event-source", idempotency_key=None)
     )
     reference = ProviderReference(kind="thread", value="thread-event")
@@ -181,6 +212,7 @@ async def test_queued_event_provider_reference_is_relational_and_reuses_checkpoi
         )
 
     await sqlite_store._worker._call(seed_source_reference)
+    await sqlite_store.request_cancel(make_cancel_job_command(source.handle.job_id))
     queued_event = BackendEvent(
         type="job_queued",
         payload={"status": "queued"},

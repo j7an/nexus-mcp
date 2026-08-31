@@ -3,10 +3,12 @@
 import asyncio
 import base64
 import json
+import os
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 from nexus_mcp.backends import (
@@ -72,6 +74,7 @@ from nexus_mcp.jobs.store import (
     SucceededTerminalOutcome,
     TerminalOutcome,
     _create_job_request_hash,
+    _workspace_id_for_canonical_path,
 )
 
 __all__ = [
@@ -128,17 +131,41 @@ class InMemoryJobStore:
 
     async def resolve_workspace(self, selector: WorkspaceSelector) -> Workspace:
         """Resolve a workspace by durable id or exact canonical path."""
+        if selector.path is not None:
+            canonical_path = self._resolve_workspace_path(selector.path)
+            path_identity = os.path.normcase(str(canonical_path))
+        else:
+            path_identity = None
         async with self._lock:
             if selector.workspace_id is not None:
                 workspace = self._workspaces.get(selector.workspace_id)
                 identity = selector.workspace_id
             else:
                 assert selector.path is not None
-                identity = str(selector.path)
+                assert path_identity is not None
+                identity = path_identity
                 workspace_id = self._workspace_ids_by_path.get(identity)
                 workspace = None if workspace_id is None else self._workspaces.get(workspace_id)
             if workspace is None:
                 raise WorkspaceInvalidError(identity, "workspace is not registered")
+            return workspace
+
+    async def resolve_or_create_workspace(self, selector: WorkspaceSelector) -> Workspace:
+        """Atomically find or create one canonical local workspace identity."""
+        if selector.workspace_id is not None:
+            return await self.resolve_workspace(selector)
+        assert selector.path is not None
+        canonical_path = self._resolve_workspace_path(selector.path)
+        identity = os.path.normcase(str(canonical_path))
+        async with self._lock:
+            workspace_id = self._workspace_ids_by_path.get(identity)
+            if workspace_id is not None:
+                return self._workspaces[workspace_id]
+            workspace = Workspace(
+                workspace_id=_workspace_id_for_canonical_path(canonical_path),
+                canonical_path=canonical_path,
+            )
+            self._persist_workspace(workspace)
             return workspace
 
     async def create_job(self, command: CreateJobCommand) -> CreateJobResult:
@@ -161,6 +188,12 @@ class InMemoryJobStore:
             if active is not None:
                 assert command.session_id is not None
                 raise SessionBusyError(command.session_id, active.job_id)
+            source_session_id = command.source_session_id
+            if source_session_id != command.session_id:
+                active_source = self._active_session_job(source_session_id)
+                if active_source is not None:
+                    assert source_session_id is not None
+                    raise SessionBusyError(source_session_id, active_source.job_id)
 
             new_session = self._prepare_session(command)
             self._persist_workspace(command.workspace)
@@ -669,6 +702,7 @@ class InMemoryJobStore:
                 events=page,
                 next_after_sequence=None if not page else page[-1].sequence,
                 has_more=len(candidates) > limit,
+                latest_sequence=self._event_sequences[job_id],
             )
 
     async def acquire_runtime_lease(
@@ -758,6 +792,19 @@ class InMemoryJobStore:
             if policy.event_before is not None:
                 cutoff = min(policy.event_before, now)
                 for job_id, events in self._events.items():
+                    job = self._jobs[job_id]
+                    inputs = self._inputs[job_id].values()
+                    active_lease = job.lease_expires_at is not None and job.lease_expires_at > now
+                    needed_session_reference = bool(
+                        job.session_id is not None and self._provider_references[job_id]
+                    )
+                    if (
+                        job.state not in TERMINAL_STATES
+                        or any(item.response is None for item in inputs)
+                        or active_lease
+                        or needed_session_reference
+                    ):
+                        continue
                     retained = [event for event in events if event.occurred_at >= cutoff]
                     events_deleted += len(events) - len(retained)
                     self._events[job_id] = retained
@@ -771,12 +818,22 @@ class InMemoryJobStore:
         existing = self._workspaces.get(workspace.workspace_id)
         if existing is not None and existing.canonical_path != workspace.canonical_path:
             raise WorkspaceInvalidError(workspace.workspace_id, "workspace path changed")
-        path = str(workspace.canonical_path)
+        path = os.path.normcase(str(workspace.canonical_path))
         existing_id = self._workspace_ids_by_path.get(path)
         if existing_id is not None and existing_id != workspace.workspace_id:
             raise WorkspaceInvalidError(path, "canonical path belongs to another workspace")
         self._workspaces[workspace.workspace_id] = workspace
         self._workspace_ids_by_path[path] = workspace.workspace_id
+
+    @staticmethod
+    def _resolve_workspace_path(path: Path) -> Path:
+        try:
+            canonical = path.expanduser().resolve(strict=True)
+        except (OSError, RuntimeError) as error:
+            raise WorkspaceInvalidError(str(path), "workspace path does not exist") from error
+        if not canonical.is_dir():
+            raise WorkspaceInvalidError(str(path), "workspace path is not a directory")
+        return canonical
 
     def _validate_source_checkpoint(self, command: CreateJobCommand) -> None:
         if not command.source_checkpoint:
@@ -1039,6 +1096,7 @@ class ScriptedBackend:
                 operations=frozenset({"turn", "fork", "review", "diagnostics"}),
                 cancellation=True,
                 graceful_interrupt=True,
+                session_continuation=True,
                 session_fork=True,
                 input_required=True,
             ),

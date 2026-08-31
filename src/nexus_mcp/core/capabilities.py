@@ -29,6 +29,7 @@ class BackendCapabilities(_CapabilityModel):
     operations: frozenset[OperationKind]
     cancellation: bool = False
     graceful_interrupt: bool = False
+    session_continuation: bool = False
     session_fork: bool = False
     dynamic_models: bool = False
     input_required: bool = False

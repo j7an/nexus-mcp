@@ -1,12 +1,13 @@
 """Durable execution, retry, and reconciliation contracts for job workers."""
 
-from datetime import UTC, datetime
+import asyncio
 from pathlib import Path
 
 import pytest
 
 from nexus_mcp.backends import (
     ActiveReconciliationOutcome,
+    BackendExecutionContext,
     BackendFailure,
     CompletedReconciliationOutcome,
     UnknownReconciliationOutcome,
@@ -28,7 +29,7 @@ from nexus_mcp.core import (
 )
 from nexus_mcp.exceptions import ConfigurationError
 from nexus_mcp.jobs.events import EventNotifier
-from nexus_mcp.jobs.store import CreateJobCommand, LeaseToken
+from nexus_mcp.jobs.store import CreateJobCommand
 from nexus_mcp.jobs.worker import JobWorker, WorkerPolicy, WorkerPool
 from tests.fixtures import make_turn_result
 from tests.job_fakes import (
@@ -477,8 +478,8 @@ async def test_mismatched_reconciliation_result_terminalizes_internal_error_with
     assert all(event.type not in {"message", "job_completed"} for event in events)
 
 
-async def test_active_reconciliation_reattaches_on_next_generation_without_execute():
-    """An active provider operation remains reconciliation-only across lease generations."""
+async def test_active_reconciliation_continues_on_current_generation_without_execute_replay():
+    """An active provider operation stays observed under one fence until it completes."""
     store = InMemoryJobStore()
     backend = ScriptedBackend()
     job = await admit(store)
@@ -492,30 +493,87 @@ async def test_active_reconciliation_reattaches_on_next_generation_without_execu
         RecordReferenceAction(reference),
         RaiseFailureAction(BackendFailure(failure, "reconcile_required")),
     )
-    backend.queue_reconcile(ReturnReconciliationAction(ActiveReconciliationOutcome()))
-    worker = make_worker(store, backend)
-
-    await worker.run_once()
-    active_job = await store.get_job(job.job_id)
-    attempts = await store.get_job_attempts(job.job_id)
-    assert active_job is not None
-    old_token = LeaseToken(
-        job_id=job.job_id,
-        owner_id=str(active_job.lease_owner_id),
-        generation=int(active_job.lease_generation),
-        attempt_number=attempts[-1].attempt_number,
-    )
-    assert await store.renew_lease(old_token, datetime(2000, 1, 1, tzinfo=UTC)) is True
     backend.queue_reconcile(
+        ReturnReconciliationAction(ActiveReconciliationOutcome()),
         ReturnReconciliationAction(
             CompletedReconciliationOutcome(result=make_turn_result(message="Reattached"))
-        )
+        ),
     )
 
-    await worker.run_once()
+    await make_worker(store, backend).run_once()
 
     assert len(backend.execute_calls) == 1
     assert len(backend.reconcile_calls) == 2
+    attempts = await store.get_job_attempts(job.job_id)
+    assert len(attempts) == 1
+    terminal = await store.get_job(job.job_id)
+    assert terminal is not None and terminal.state == "completed"
+
+
+class RenewalTrackingStore(InMemoryJobStore):
+    """Record that an active reconciliation observation keeps heartbeating its fence."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.renewed = asyncio.Event()
+
+    async def renew_lease(self, token, lease_until):  # type: ignore[no-untyped-def]
+        renewed = await super().renew_lease(token, lease_until)
+        if renewed:
+            self.renewed.set()
+        return renewed
+
+
+class ActiveThenGatedCompletionBackend(ScriptedBackend):
+    """Report active once, then hold the next fenced observation before completion."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.second_observation = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def reconcile(self, provider_state, context: BackendExecutionContext):  # type: ignore[no-untyped-def]
+        self.reconcile_calls.append((provider_state, context))
+        if len(self.reconcile_calls) == 1:
+            return ActiveReconciliationOutcome()
+        self.second_observation.set()
+        await self.release.wait()
+        return CompletedReconciliationOutcome(result=make_turn_result(message="Observed"))
+
+
+async def test_active_reconciliation_renews_current_lease_until_terminal_progression():
+    """Active observation cannot return while leaving a phantom unrenewed lease behind."""
+    store = RenewalTrackingStore()
+    backend = ActiveThenGatedCompletionBackend()
+    job = await admit(store)
+    reference = ProviderReference(kind="thread", value="thread-current-owner")
+    failure = JobError(
+        code="process_lost",
+        message="Lost observation",
+        retry_disposition="reconcile_required",
+    )
+    backend.queue_execute(
+        RecordReferenceAction(reference),
+        RaiseFailureAction(BackendFailure(failure, "reconcile_required")),
+    )
+    policy = WorkerPolicy(
+        lease_seconds=0.1,
+        heartbeat_seconds=0.02,
+        idle_poll_seconds=0.001,
+        reconciliation_timeout_seconds=0.2,
+    )
+    worker_task = asyncio.create_task(make_worker(store, backend, policy=policy).run_once())
+    await asyncio.wait_for(backend.second_observation.wait(), timeout=0.2)
+    await asyncio.wait_for(store.renewed.wait(), timeout=0.2)
+
+    current = await store.get_job(job.job_id)
+    assert current is not None and current.state == "running"
+    assert current.lease_owner_id == "worker-1"
+    assert current.lease_generation == 1
+    assert worker_task.done() is False
+
+    backend.release.set()
+    await worker_task
     terminal = await store.get_job(job.job_id)
     assert terminal is not None and terminal.state == "completed"
 

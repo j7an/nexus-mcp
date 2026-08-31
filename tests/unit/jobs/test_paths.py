@@ -40,6 +40,18 @@ def test_windows_default_path_uses_local_app_data(monkeypatch, tmp_path):
     assert default_database_path() == local_app_data / "nexus-mcp" / "nexus.sqlite3"
 
 
+def test_windows_empty_local_app_data_uses_home_fallback(monkeypatch, tmp_path):
+    """An empty LOCALAPPDATA value never turns the durable database into a cwd path."""
+    monkeypatch.delenv("NEXUS_DB_PATH", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", "")
+    monkeypatch.setattr(paths.sys, "platform", "win32")
+    monkeypatch.setattr(paths.Path, "home", lambda: tmp_path)
+
+    assert default_database_path() == (
+        tmp_path / "AppData" / "Local" / "nexus-mcp" / "nexus.sqlite3"
+    )
+
+
 def test_linux_default_path_uses_xdg_data_home(monkeypatch, tmp_path):
     """Unix data honors XDG_DATA_HOME when configured."""
     xdg_data_home = tmp_path / "xdg"
@@ -55,6 +67,16 @@ def test_linux_default_path_falls_back_below_home(monkeypatch, tmp_path):
     """Unix data has a stable per-user fallback without XDG_DATA_HOME."""
     monkeypatch.delenv("NEXUS_DB_PATH", raising=False)
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.setattr(paths.sys, "platform", "linux")
+    monkeypatch.setattr(paths.Path, "home", lambda: tmp_path)
+
+    assert default_database_path() == tmp_path / ".local/share/nexus-mcp/nexus.sqlite3"
+
+
+def test_linux_empty_xdg_data_home_falls_back_below_home(monkeypatch, tmp_path):
+    """An empty XDG_DATA_HOME value never turns the durable database into a cwd path."""
+    monkeypatch.delenv("NEXUS_DB_PATH", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", "")
     monkeypatch.setattr(paths.sys, "platform", "linux")
     monkeypatch.setattr(paths.Path, "home", lambda: tmp_path)
 

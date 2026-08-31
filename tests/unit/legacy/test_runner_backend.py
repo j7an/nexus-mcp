@@ -18,7 +18,13 @@ from nexus_mcp.core import (
     RetryPolicy,
     TurnOperation,
 )
-from nexus_mcp.exceptions import ParseError, RetryableError, SubprocessError, SubprocessTimeoutError
+from nexus_mcp.exceptions import (
+    ParseError,
+    RetryableError,
+    SubprocessError,
+    SubprocessTimeoutError,
+    SubprocessTreeTerminationError,
+)
 from nexus_mcp.legacy.runner_backend import LegacyRunnerBackend, legacy_backends
 from nexus_mcp.runners.factory import RunnerFactory
 from tests.fixtures import (
@@ -62,6 +68,7 @@ def test_legacy_backend_advertises_only_turn():
     backend = LegacyRunnerBackend("codex")
 
     assert backend.descriptor.capabilities.operations == frozenset({"turn"})
+    assert backend.descriptor.capabilities.session_continuation is False
     assert backend.descriptor.capabilities.session_fork is False
     assert backend.descriptor.capabilities.cancellation is False
     assert backend.descriptor.capabilities.graceful_interrupt is False
@@ -332,6 +339,12 @@ async def test_legacy_defaults_are_final_fallbacks(monkeypatch: pytest.MonkeyPat
             "timeout",
             "terminal",
             False,
+        ),
+        (
+            SubprocessTreeTerminationError("tree outcome unknown", stderr="secret"),
+            "outcome_unknown",
+            "reconcile_required",
+            True,
         ),
         (RuntimeError("unexpected secret"), "internal_error", "terminal", False),
     ],

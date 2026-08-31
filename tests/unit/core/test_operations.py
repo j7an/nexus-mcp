@@ -118,6 +118,18 @@ def test_backend_capabilities_advertise_review_delivery_and_dormant_structured_o
     assert capabilities.structured_output is False
 
 
+def test_backend_capabilities_advertise_session_continuation_explicitly():
+    """Admission can distinguish a persistent provider session from a fresh invocation."""
+    incapable = BackendCapabilities(operations=frozenset({"turn"}))
+    capable = BackendCapabilities(
+        operations=frozenset({"turn"}),
+        session_continuation=True,
+    )
+
+    assert incapable.session_continuation is False
+    assert capable.session_continuation is True
+
+
 def test_agent_job_keeps_a_typed_operation():
     """Durable jobs cannot regress to an untyped provider dictionary."""
     job = make_agent_job(operation=TurnOperation(prompt="Inspect"))

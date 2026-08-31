@@ -1,6 +1,8 @@
 # tests/fixtures.py
 import asyncio
 import json
+import os
+import subprocess as stdlib_subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -31,6 +33,20 @@ from nexus_mcp.types import AgentResponse, AgentTask, PromptRequest, SessionPref
 REPRESENTATIVE_CLI = "fake"
 
 
+def assert_owned_subprocess_call(mock_exec: AsyncMock, *command: str) -> None:
+    """Assert one subprocess call preserves arguments and owns its OS process tree."""
+    call = mock_exec.await_args
+    assert call.args == command
+    assert call.kwargs["stdin"] is asyncio.subprocess.DEVNULL
+    assert call.kwargs["stdout"] is asyncio.subprocess.PIPE
+    assert call.kwargs["stderr"] is asyncio.subprocess.PIPE
+    if os.name == "posix":
+        assert call.kwargs["start_new_session"] is True
+    elif os.name == "nt":
+        create_group = getattr(stdlib_subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        assert int(call.kwargs["creationflags"]) & create_group
+
+
 def make_access_context(**overrides: Any) -> AccessContext:
     """Create a stable trusted local caller identity for core tests."""
     defaults = {"principal_id": "local:501", "authentication_kind": "local"}
@@ -45,6 +61,7 @@ def make_backend_descriptor(**overrides: Any) -> BackendDescriptor:
         "capabilities": BackendCapabilities(
             operations=frozenset({"turn", "fork", "review", "diagnostics"}),
             cancellation=True,
+            session_continuation=True,
             session_fork=True,
             input_required=True,
             sandbox_modes=frozenset({"read_only", "workspace_write", "danger_full_access"}),

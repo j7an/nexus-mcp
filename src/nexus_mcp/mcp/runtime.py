@@ -1,8 +1,6 @@
 """Durable job runtime ownership for FastMCP lifespan and direct tool calls."""
 
 import asyncio
-import os
-import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import (
     AbstractAsyncContextManager,
@@ -11,10 +9,8 @@ from contextlib import (
     contextmanager,
 )
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from nexus_mcp.backends import BackendManager
-from nexus_mcp.core import Workspace, WorkspaceInvalidError, WorkspaceSelector
 from nexus_mcp.jobs import (
     AgentJobService,
     EventNotifier,
@@ -40,33 +36,6 @@ class RuntimeTuning:
     retry_delay: RetryDelay = field(default_factory=ExponentialRetryDelay)
 
 
-class _MCPJobStore(SQLiteJobStore):
-    """Admit a first explicit local path before its workspace row exists."""
-
-    async def resolve_workspace(self, selector: WorkspaceSelector) -> Workspace:
-        try:
-            return await super().resolve_workspace(selector)
-        except WorkspaceInvalidError:
-            if selector.path is None:
-                raise
-        canonical_path = _canonical_workspace_path(selector.path)
-        identity_path = os.path.normcase(str(canonical_path))
-        workspace_id = str(
-            uuid.uuid5(uuid.NAMESPACE_URL, f"nexus-mcp:local-workspace:{identity_path}")
-        )
-        return Workspace(workspace_id=workspace_id, canonical_path=canonical_path)
-
-
-def _canonical_workspace_path(path: Path) -> Path:
-    try:
-        canonical = path.expanduser().resolve(strict=True)
-    except (OSError, RuntimeError) as error:
-        raise WorkspaceInvalidError(str(path), "workspace path does not exist") from error
-    if not canonical.is_dir():
-        raise WorkspaceInvalidError(str(path), "workspace path is not a directory")
-    return canonical
-
-
 @dataclass(frozen=True, slots=True)
 class MCPRuntime:
     """One opened durable-job object graph and its worker lifecycle."""
@@ -82,7 +51,7 @@ class MCPRuntime:
         """Open all runtime resources and close them in strict reverse order."""
         effective_tuning = tuning or RuntimeTuning()
         async with AsyncExitStack() as stack:
-            store = _MCPJobStore()
+            store = SQLiteJobStore()
             await store.open()
             stack.push_async_callback(store.close)
 

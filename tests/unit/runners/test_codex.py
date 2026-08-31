@@ -12,7 +12,6 @@ Tests verify:
 - error handling: _recover_from_error, _try_extract_error
 """
 
-import asyncio
 import json
 from unittest.mock import patch
 
@@ -23,6 +22,7 @@ from nexus_mcp.exceptions import CLINotFoundError, ParseError, RetryableError, S
 from nexus_mcp.runners.codex import CodexRunner
 from tests.fixtures import (
     CODEX_NDJSON_RESPONSE,
+    assert_owned_subprocess_call,
     codex_error_json,
     create_mock_process,
     make_prompt_request,
@@ -595,14 +595,12 @@ class TestCodexRunnerIntegration:
 
         response = await runner.run(request)
 
-        mock_exec.assert_awaited_once_with(
+        assert_owned_subprocess_call(
+            mock_exec,
             "codex",
             "exec",
             "test prompt",
             "--json",
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
         )
         assert response.cli == "codex"
         assert response.output == "pong"

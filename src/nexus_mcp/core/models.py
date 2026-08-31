@@ -17,6 +17,7 @@ from pydantic import (
     model_validator,
 )
 
+from nexus_mcp.core._json import freeze_bounded_json_mapping, thaw_json_mapping
 from nexus_mcp.core.errors import InvalidJobTransitionError
 from nexus_mcp.core.operations import AgentOperation, OperationKind
 
@@ -122,33 +123,6 @@ def _normalize_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("must be a timezone-aware UTC datetime")
     return value.astimezone(UTC)
-
-
-def _freeze_json_value(value: JsonValue) -> JsonValue:
-    """Recursively replace mutable JSON containers with read-only equivalents."""
-    if isinstance(value, dict):
-        frozen = MappingProxyType({key: _freeze_json_value(item) for key, item in value.items()})
-        return cast("JsonValue", frozen)
-    if isinstance(value, list):
-        return cast("JsonValue", tuple(_freeze_json_value(item) for item in value))
-    return value
-
-
-def _freeze_json_mapping(value: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
-    return MappingProxyType({key: _freeze_json_value(item) for key, item in value.items()})
-
-
-def _thaw_json_value(value: JsonValue) -> JsonValue:
-    """Restore ordinary JSON containers at the serialization boundary."""
-    if isinstance(value, Mapping):
-        return {key: _thaw_json_value(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw_json_value(cast("JsonValue", item)) for item in value]
-    return value
-
-
-def _thaw_json_mapping(value: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
-    return {key: _thaw_json_value(item) for key, item in value.items()}
 
 
 class FrozenModel(BaseModel):
@@ -281,13 +255,13 @@ class BackendEvent(FrozenModel):
     @field_validator("payload", mode="after")
     @classmethod
     def freeze_payload(cls, value: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
-        """Protect normalized content from mutation after event construction."""
-        return _freeze_json_mapping(value)
+        """Bound and protect normalized content from mutation after construction."""
+        return freeze_bounded_json_mapping(value)
 
     @field_serializer("payload")
     def serialize_payload(self, value: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
         """Emit ordinary JSON objects and arrays at the persistence boundary."""
-        return _thaw_json_mapping(value)
+        return thaw_json_mapping(value)
 
     @field_validator("occurred_at", mode="after")
     @classmethod
@@ -317,13 +291,13 @@ class JobEvent(FrozenModel):
     @field_validator("payload", mode="after")
     @classmethod
     def freeze_payload(cls, value: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
-        """Protect committed content from mutation after event construction."""
-        return _freeze_json_mapping(value)
+        """Bound and protect committed content from mutation after construction."""
+        return freeze_bounded_json_mapping(value)
 
     @field_serializer("payload")
     def serialize_payload(self, value: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
         """Emit ordinary JSON objects and arrays at the persistence boundary."""
-        return _thaw_json_mapping(value)
+        return thaw_json_mapping(value)
 
     @field_validator("occurred_at", mode="after")
     @classmethod

@@ -151,6 +151,7 @@ class AgentJobService:
             workspace, access, session_id
         )
         backend = self._require_backend(session.backend_id, operation, explicit_config)
+        self._require_session_continuation(backend)
         checkpoint = await self._store.get_provider_references(session_id=session.session_id)
         requested_config = self._snapshot_config(backend, resolved_workspace, explicit_config)
         return await self._create(
@@ -462,7 +463,7 @@ class AgentJobService:
         selector: WorkspaceSelector,
         access: AccessContext,
     ) -> Workspace:
-        workspace = await self._store.resolve_workspace(selector)
+        workspace = await self._store.resolve_or_create_workspace(selector)
         self._require_workspace_access(access, workspace)
         path = workspace.canonical_path
         if not path.exists():
@@ -521,8 +522,9 @@ class AgentJobService:
         latest_sequence = 0
         while True:
             page = await self._store.read_events(job_id, after_sequence, 1000)
+            latest_sequence = max(latest_sequence, page.latest_sequence)
             if page.events:
-                latest_sequence = page.events[-1].sequence
+                latest_sequence = max(latest_sequence, page.events[-1].sequence)
             if not page.has_more:
                 return latest_sequence
             next_sequence = page.next_after_sequence
@@ -616,6 +618,14 @@ class AgentJobService:
             raise UnsupportedCapabilityError(
                 backend.descriptor.backend_id,
                 "session_fork",
+            )
+
+    @staticmethod
+    def _require_session_continuation(backend: AgentBackend) -> None:
+        if not backend.descriptor.capabilities.session_continuation:
+            raise UnsupportedCapabilityError(
+                backend.descriptor.backend_id,
+                "session_continuation",
             )
 
     @staticmethod
