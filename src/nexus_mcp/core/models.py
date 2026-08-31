@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import ClassVar, Literal, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
 from pydantic import (
     BaseModel,
@@ -19,6 +19,9 @@ from pydantic import (
 
 from nexus_mcp.core.errors import InvalidJobTransitionError
 from nexus_mcp.core.operations import AgentOperation, OperationKind
+
+if TYPE_CHECKING:
+    from nexus_mcp.core.interaction import PendingInput
 
 __all__ = [
     "ALLOWED_TRANSITIONS",
@@ -506,6 +509,10 @@ class JobStatus(FrozenModel):
     session_id: str | None = Field(default=None, min_length=1, max_length=256)
     operation: AgentOperation
     state: JobState
+    phase: JobPhase | None = None
+    pending_inputs: tuple["PendingInput", ...] = Field(default=(), max_length=256)
+    resolved_config: ResolvedExecutionConfig | None = None
+    latest_event_sequence: int = Field(default=0, ge=0)
     cancel_requested: bool = False
     created_at: datetime
     updated_at: datetime
@@ -517,8 +524,25 @@ class JobStatus(FrozenModel):
         """Store public status timestamps in UTC."""
         return None if value is None else _normalize_utc(value)
 
+    @model_validator(mode="after")
+    def require_pending_inputs_to_be_unresolved(self) -> "JobStatus":
+        """Keep resolved interaction records out of the authoritative pending collection."""
+        if any(
+            item.response is not None or item.resolved_at is not None
+            for item in self.pending_inputs
+        ):
+            raise ValueError("pending_inputs must contain only unresolved inputs")
+        return self
+
     @classmethod
-    def from_job(cls, job: AgentJob) -> "JobStatus":
+    def from_job(
+        cls,
+        job: AgentJob,
+        *,
+        phase: JobPhase | None = None,
+        pending_inputs: tuple["PendingInput", ...] = (),
+        latest_event_sequence: int = 0,
+    ) -> "JobStatus":
         """Project a durable job without exposing internal lease details."""
         return cls(
             job_id=job.job_id,
@@ -527,6 +551,10 @@ class JobStatus(FrozenModel):
             session_id=job.session_id,
             operation=job.operation,
             state=job.state,
+            phase=phase,
+            pending_inputs=pending_inputs,
+            resolved_config=job.resolved_config,
+            latest_event_sequence=latest_event_sequence,
             cancel_requested=job.cancel_requested_at is not None,
             created_at=job.created_at,
             updated_at=job.updated_at,

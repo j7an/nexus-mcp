@@ -100,6 +100,9 @@ from nexus_mcp.core.results import (
     TurnResult,
 )
 
+JobStatus.model_rebuild(_types_namespace={"PendingInput": PendingInput})
+JobListPage.model_rebuild(_types_namespace={"PendingInput": PendingInput})
+
 __all__ = [
     "ALLOWED_TRANSITIONS",
     "TERMINAL_STATES",

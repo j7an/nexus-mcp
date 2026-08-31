@@ -1,10 +1,8 @@
 """Normalized operation outcomes and public job-result responses."""
 
-import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from types import MappingProxyType
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -15,6 +13,12 @@ from pydantic import (
     field_validator,
 )
 
+from nexus_mcp.core._json import (
+    freeze_bounded_json_mapping,
+    freeze_bounded_json_value,
+    thaw_json_mapping,
+    thaw_json_value,
+)
 from nexus_mcp.core.capabilities import BackendCapabilities
 from nexus_mcp.core.models import AgentSession, JobState, ProviderReference
 from nexus_mcp.core.operations import ReviewDelivery, ReviewTarget
@@ -79,27 +83,6 @@ def _normalize_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def _freeze_json_value(value: JsonValue) -> JsonValue:
-    if isinstance(value, dict):
-        frozen = MappingProxyType({key: _freeze_json_value(item) for key, item in value.items()})
-        return cast("JsonValue", frozen)
-    if isinstance(value, list):
-        return cast("JsonValue", tuple(_freeze_json_value(item) for item in value))
-    return value
-
-
-def _freeze_json_mapping(value: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
-    return MappingProxyType({key: _freeze_json_value(item) for key, item in value.items()})
-
-
-def _thaw_json_value(value: JsonValue) -> JsonValue:
-    if isinstance(value, Mapping):
-        return {key: _thaw_json_value(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw_json_value(cast("JsonValue", item)) for item in value]
-    return value
-
-
 class _ResultModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -142,24 +125,24 @@ class TurnResult(_ResultModel):
     @field_validator("structured_output", mode="after")
     @classmethod
     def freeze_structured_output(cls, value: JsonValue | None) -> JsonValue | None:
-        """Protect structured result data from post-validation mutation."""
-        return None if value is None else _freeze_json_value(value)
+        """Bound and protect structured result data from post-validation mutation."""
+        return None if value is None else freeze_bounded_json_value(value)
 
     @field_serializer("structured_output")
     def serialize_structured_output(self, value: JsonValue | None) -> JsonValue | None:
         """Emit ordinary JSON containers for structured output."""
-        return None if value is None else _thaw_json_value(value)
+        return None if value is None else thaw_json_value(value)
 
     @field_validator("usage", mode="after")
     @classmethod
     def freeze_usage(cls, value: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
-        """Protect normalized usage data from post-validation mutation."""
-        return _freeze_json_mapping(value)
+        """Bound and protect normalized usage data from post-validation mutation."""
+        return freeze_bounded_json_mapping(value)
 
     @field_serializer("usage")
     def serialize_usage(self, value: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
         """Emit an ordinary JSON object for normalized usage."""
-        return {key: _thaw_json_value(item) for key, item in value.items()}
+        return thaw_json_mapping(value)
 
 
 class ReviewResult(_ResultModel):
@@ -222,22 +205,12 @@ class JobError(_ResultModel):
     @classmethod
     def bound_and_freeze_details(cls, value: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
         """Enforce a canonical UTF-8 byte limit and freeze diagnostics recursively."""
-        plain = {key: _thaw_json_value(item) for key, item in value.items()}
-        encoded = json.dumps(
-            plain,
-            ensure_ascii=False,
-            allow_nan=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        if len(encoded) > _MAX_DETAILS_BYTES:
-            raise ValueError(f"details exceeds {_MAX_DETAILS_BYTES} canonical JSON bytes")
-        return _freeze_json_mapping(value)
+        return freeze_bounded_json_mapping(value, max_bytes=_MAX_DETAILS_BYTES)
 
     @field_serializer("details")
     def serialize_details(self, value: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
         """Emit an ordinary JSON object for durable diagnostics."""
-        return {key: _thaw_json_value(item) for key, item in value.items()}
+        return thaw_json_mapping(value)
 
 
 class JobResultEnvelope(_ResultModel):

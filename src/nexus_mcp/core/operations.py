@@ -1,8 +1,7 @@
 """Closed, framework-independent operation contracts."""
 
 from collections.abc import Mapping
-from types import MappingProxyType
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -12,6 +11,8 @@ from pydantic import (
     field_serializer,
     field_validator,
 )
+
+from nexus_mcp.core._json import freeze_bounded_json_mapping, thaw_json_mapping
 
 __all__ = [
     "AgentOperation",
@@ -33,27 +34,6 @@ _MAX_CONTEXT_ITEMS = 256
 _MAX_FILE_REFS = 256
 
 
-def _freeze_json_value(value: JsonValue) -> JsonValue:
-    if isinstance(value, dict):
-        frozen = MappingProxyType({key: _freeze_json_value(item) for key, item in value.items()})
-        return cast("JsonValue", frozen)
-    if isinstance(value, list):
-        return cast("JsonValue", tuple(_freeze_json_value(item) for item in value))
-    return value
-
-
-def _freeze_json_mapping(value: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
-    return MappingProxyType({key: _freeze_json_value(item) for key, item in value.items()})
-
-
-def _thaw_json_value(value: JsonValue) -> JsonValue:
-    if isinstance(value, Mapping):
-        return {key: _thaw_json_value(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw_json_value(cast("JsonValue", item)) for item in value]
-    return value
-
-
 class _OperationModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -72,13 +52,13 @@ class _ContextOperation(_OperationModel):
     @field_validator("context", mode="after")
     @classmethod
     def freeze_context(cls, value: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
-        """Protect admitted context from mutation after validation."""
-        return _freeze_json_mapping(value)
+        """Bound and protect admitted context from mutation after validation."""
+        return freeze_bounded_json_mapping(value)
 
     @field_serializer("context")
     def serialize_context(self, value: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
         """Restore ordinary JSON containers at serialization boundaries."""
-        return {key: _thaw_json_value(item) for key, item in value.items()}
+        return thaw_json_mapping(value)
 
 
 class TurnOperation(_ContextOperation):

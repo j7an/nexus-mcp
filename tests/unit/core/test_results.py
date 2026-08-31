@@ -68,6 +68,28 @@ def test_job_error_details_are_deeply_immutable_and_serialize_as_json():
     }
 
 
+def test_structured_output_rejects_nested_payload_above_one_mibibyte():
+    """Optional structured output cannot evade the normalized JSON byte cap."""
+    with pytest.raises(ValidationError):
+        TurnResult(message="done", structured_output={"payload": "x" * 1_048_563})
+
+
+def test_turn_usage_rejects_nesting_deeper_than_32():
+    """Small usage metadata cannot hide pathologically deep normalized JSON."""
+    nested: object = "leaf"
+    for _ in range(32):
+        nested = [nested]
+
+    with pytest.raises(ValidationError):
+        TurnResult(message="done", usage={"nested": nested})
+
+
+def test_job_error_rejects_nested_container_above_4096_items():
+    """Bounded diagnostic bytes also enforce the per-container item limit."""
+    with pytest.raises(ValidationError):
+        JobError(code="provider_failed", message="failed", details={"items": [0] * 4097})
+
+
 def test_job_result_response_discriminates_succeeded_payload():
     """Public result polling preserves the terminal response variant and typed payload."""
     response = TypeAdapter(JobResultResponse).validate_python(

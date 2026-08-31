@@ -2,7 +2,6 @@
 
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from types import MappingProxyType
 from typing import Annotated, Literal, cast
 
 from pydantic import (
@@ -16,6 +15,7 @@ from pydantic import (
     model_validator,
 )
 
+from nexus_mcp.core._json import freeze_bounded_json_mapping, thaw_json_mapping
 from nexus_mcp.core.models import ProviderReference
 
 __all__ = [
@@ -46,23 +46,6 @@ def _normalize_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("must be a timezone-aware UTC datetime")
     return value.astimezone(UTC)
-
-
-def _freeze_json_value(value: JsonValue) -> JsonValue:
-    if isinstance(value, dict):
-        frozen = MappingProxyType({key: _freeze_json_value(item) for key, item in value.items()})
-        return cast("JsonValue", frozen)
-    if isinstance(value, list):
-        return cast("JsonValue", tuple(_freeze_json_value(item) for item in value))
-    return value
-
-
-def _thaw_json_value(value: JsonValue) -> JsonValue:
-    if isinstance(value, Mapping):
-        return {key: _thaw_json_value(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw_json_value(cast("JsonValue", item)) for item in value]
-    return value
 
 
 class _InteractionModel(BaseModel):
@@ -196,13 +179,13 @@ class FormResponse(_InteractionModel):
     @field_validator("values", mode="after")
     @classmethod
     def freeze_values(cls, value: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
-        """Protect resolved form values from mutation."""
-        return MappingProxyType({key: _freeze_json_value(item) for key, item in value.items()})
+        """Bound and protect resolved form values from mutation."""
+        return freeze_bounded_json_mapping(value)
 
     @field_serializer("values")
     def serialize_values(self, value: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
         """Emit an ordinary JSON object for persistence."""
-        return {key: _thaw_json_value(item) for key, item in value.items()}
+        return thaw_json_mapping(value)
 
     @model_validator(mode="after")
     def validate_form_fields(self, info: ValidationInfo) -> "FormResponse":
@@ -242,6 +225,13 @@ class PendingInput(_InteractionModel):
     def normalize_timestamps(cls, value: datetime | None) -> datetime | None:
         """Store input timestamps in UTC."""
         return None if value is None else _normalize_utc(value)
+
+    @model_validator(mode="after")
+    def validate_stored_response(self) -> "PendingInput":
+        """Reject persisted response state that is invalid for its paired request."""
+        if self.response is not None:
+            self.validate_response(self.response)
+        return self
 
     def validate_response(self, response: InputResponse) -> InputResponse:
         """Return a provider-neutral response valid for this request's exact shape."""

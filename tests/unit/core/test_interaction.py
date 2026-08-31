@@ -1,9 +1,12 @@
+import json
+
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from nexus_mcp.core.interaction import (
     ApprovalRequest,
     ApprovalResponse,
+    FormResponse,
     InputRequest,
     PendingInput,
     PermissionRequest,
@@ -66,3 +69,43 @@ def test_pending_input_rejects_response_for_another_request_kind():
 
     with pytest.raises(ValidationError):
         pending.validate_response(ApprovalResponse(decision="deny"))
+
+
+def test_pending_input_deserialization_rejects_stored_response_with_wrong_kind():
+    """Persisted input state cannot pair a permission request with an approval response."""
+    payload = {
+        "input_id": "input-test",
+        "job_id": "job-test",
+        "request": {
+            "kind": "permission",
+            "prompt": "Allow network access?",
+            "requested": ["network:api.example.com"],
+        },
+        "response": {"kind": "approval", "decision": "deny"},
+    }
+
+    with pytest.raises(ValidationError):
+        PendingInput.model_validate_json(json.dumps(payload))
+
+
+def test_pending_input_deserialization_rejects_excessive_stored_permission_grant():
+    """Persisted permission responses cannot grant a scope absent from their request."""
+    payload = {
+        "input_id": "input-test",
+        "job_id": "job-test",
+        "request": {
+            "kind": "permission",
+            "prompt": "Allow network access?",
+            "requested": ["network:api.example.com"],
+        },
+        "response": {"kind": "permission", "granted": ["filesystem:/"]},
+    }
+
+    with pytest.raises(ValidationError):
+        PendingInput.model_validate_json(json.dumps(payload))
+
+
+def test_form_response_rejects_nested_normalized_json_above_container_limit():
+    """A bounded form map cannot contain an unbounded nested response sequence."""
+    with pytest.raises(ValidationError):
+        FormResponse(values={"items": [0] * 4097})

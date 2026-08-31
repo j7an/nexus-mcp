@@ -60,6 +60,36 @@ def test_turn_context_is_deeply_immutable_and_serializes_as_json():
     }
 
 
+def test_turn_context_enforces_exact_canonical_json_byte_limit():
+    """Nested context cannot exceed the one MiB canonical persistence boundary."""
+    TurnOperation(prompt="Inspect", context={"payload": "x" * 1_048_562})
+
+    with pytest.raises(ValidationError):
+        TurnOperation(prompt="Inspect", context={"payload": "x" * 1_048_563})
+
+
+def test_turn_context_rejects_nesting_deeper_than_32():
+    """Adversarial context cannot exceed the recursive validation depth."""
+    within_limit: object = "leaf"
+    for _ in range(31):
+        within_limit = [within_limit]
+    TurnOperation(prompt="Inspect", context={"nested": within_limit})
+
+    beyond_limit: object = "leaf"
+    for _ in range(32):
+        beyond_limit = [beyond_limit]
+    with pytest.raises(ValidationError):
+        TurnOperation(prompt="Inspect", context={"nested": beyond_limit})
+
+
+def test_turn_context_rejects_nested_container_above_4096_items():
+    """A small outer request cannot hide an unbounded nested sequence."""
+    TurnOperation(prompt="Inspect", context={"items": [0] * 4096})
+
+    with pytest.raises(ValidationError):
+        TurnOperation(prompt="Inspect", context={"items": [0] * 4097})
+
+
 def test_review_operation_defaults_to_inline_and_round_trips_delivery():
     """Review delivery remains explicit in persisted operations, including the default."""
     inline = ReviewOperation(target={"kind": "working_tree"})

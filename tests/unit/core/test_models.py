@@ -8,17 +8,20 @@ import pytest
 from pydantic import ValidationError
 
 from nexus_mcp.core.errors import InvalidJobTransitionError
+from nexus_mcp.core.interaction import PermissionResponse
 from nexus_mcp.core.models import (
     BackendEvent,
     ConfigLayerSnapshot,
     ExecutionConfigValues,
     JobEvent,
     JobState,
+    JobStatus,
     RequestedExecutionConfig,
     ResolvedExecutionConfig,
     WorkspaceSelector,
     validate_job_transition,
 )
+from tests.fixtures import make_agent_job, make_pending_permission
 
 
 @pytest.fixture(params=["backend", "committed"])
@@ -159,3 +162,54 @@ def test_configuration_snapshot_requires_utc_timestamp():
         captured_at=datetime(2026, 8, 30, tzinfo=UTC),
     )
     assert snapshot.captured_at.tzinfo is UTC
+
+
+def test_job_status_projects_authoritative_execution_state_and_serializes():
+    """Public status retains phase, input, effective config, and event progress."""
+    resolved = ResolvedExecutionConfig.from_requested(
+        RequestedExecutionConfig(explicit=ExecutionConfigValues(model="model-a")),
+        backend_defaults={},
+    )
+    job = make_agent_job(
+        state="input_required",
+        resolved_config=resolved,
+        cancel_requested_at=datetime(2026, 8, 30, tzinfo=UTC),
+    )
+    pending = make_pending_permission()
+
+    status = JobStatus.from_job(
+        job,
+        phase="executing",
+        pending_inputs=(pending,),
+        latest_event_sequence=7,
+    )
+    dumped = json.loads(status.model_dump_json())
+
+    assert status.phase == "executing"
+    assert status.pending_inputs == (pending,)
+    assert status.resolved_config == resolved
+    assert status.latest_event_sequence == 7
+    assert status.cancel_requested is True
+    assert dumped["pending_inputs"][0]["request"]["kind"] == "permission"
+    assert dumped["resolved_config"]["model"] == "model-a"
+    assert dumped["latest_event_sequence"] == 7
+    assert dumped["cancel_requested"] is True
+
+    with pytest.raises(TypeError):
+        operator.setitem(status.pending_inputs, 0, pending)
+
+
+def test_job_status_rejects_negative_latest_event_sequence():
+    """Authoritative event progress cannot precede sequence zero."""
+    with pytest.raises(ValidationError):
+        JobStatus.from_job(make_agent_job(), latest_event_sequence=-1)
+
+
+def test_job_status_pending_inputs_must_be_unresolved():
+    """Resolved interaction records cannot appear in the unresolved status collection."""
+    resolved_input = make_pending_permission(
+        response=PermissionResponse(granted=["network:api.example.com"])
+    )
+
+    with pytest.raises(ValidationError):
+        JobStatus.from_job(make_agent_job(), pending_inputs=(resolved_input,))
