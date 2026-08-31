@@ -1,3 +1,6 @@
+import json
+import operator
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -6,14 +9,25 @@ from pydantic import ValidationError
 
 from nexus_mcp.core.errors import InvalidJobTransitionError
 from nexus_mcp.core.models import (
+    BackendEvent,
     ConfigLayerSnapshot,
     ExecutionConfigValues,
+    JobEvent,
     JobState,
     RequestedExecutionConfig,
     ResolvedExecutionConfig,
     WorkspaceSelector,
     validate_job_transition,
 )
+
+
+@pytest.fixture(params=["backend", "committed"])
+def event_with_nested_payload(request: pytest.FixtureRequest) -> BackendEvent | JobEvent:
+    """Build each event boundary with mutable JSON input containers."""
+    payload = {"details": {"status": "running"}, "steps": ["first", "second"]}
+    if request.param == "backend":
+        return BackendEvent(type="progress", payload=payload)
+    return JobEvent(job_id="job-test", sequence=1, type="progress", payload=payload)
 
 
 def test_workspace_selector_requires_exactly_one_identity():
@@ -40,6 +54,50 @@ def test_requested_and_resolved_configuration_are_immutable():
 
     with pytest.raises(ValidationError):
         resolved.model = "model-b"
+
+
+def test_event_payloads_are_deeply_immutable(
+    event_with_nested_payload: BackendEvent | JobEvent,
+):
+    """Committed event content cannot change through nested JSON containers."""
+    details = event_with_nested_payload.payload["details"]
+    steps = event_with_nested_payload.payload["steps"]
+    assert isinstance(details, Mapping)
+
+    with pytest.raises(TypeError):
+        operator.setitem(event_with_nested_payload.payload, "message", "changed")
+    with pytest.raises(TypeError):
+        operator.setitem(details, "status", "changed")
+    with pytest.raises(TypeError):
+        operator.setitem(steps, 0, "changed")
+
+
+def test_event_payloads_preserve_json_dump_shape(
+    event_with_nested_payload: BackendEvent | JobEvent,
+):
+    """Immutable event payloads still dump as ordinary JSON objects and arrays."""
+    expected = {"details": {"status": "running"}, "steps": ["first", "second"]}
+
+    assert event_with_nested_payload.model_dump()["payload"] == expected
+    assert json.loads(event_with_nested_payload.model_dump_json())["payload"] == expected
+
+
+def test_resolved_configuration_sources_are_immutable():
+    """Resolved provenance cannot change after execution begins."""
+    requested = RequestedExecutionConfig(explicit=ExecutionConfigValues(model="model-a"))
+    resolved = ResolvedExecutionConfig.from_requested(requested, backend_defaults={})
+
+    with pytest.raises(TypeError):
+        operator.setitem(resolved.sources, "model", "fallback")
+
+
+def test_resolved_configuration_sources_dump_as_plain_dict():
+    """Immutable provenance retains Pydantic's ordinary dictionary dump contract."""
+    requested = RequestedExecutionConfig(explicit=ExecutionConfigValues(model="model-a"))
+    resolved = ResolvedExecutionConfig.from_requested(requested, backend_defaults={})
+
+    assert resolved.model_dump()["sources"] == {"model": "explicit"}
+    assert json.loads(resolved.model_dump_json())["sources"] == {"model": "explicit"}
 
 
 def test_configuration_resolution_uses_explicit_provider_and_snapshotted_layers_in_order():

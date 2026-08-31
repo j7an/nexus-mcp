@@ -4,9 +4,18 @@ import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from types import MappingProxyType
 from typing import ClassVar, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from nexus_mcp.core.errors import InvalidJobTransitionError
 
@@ -95,6 +104,33 @@ def _normalize_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("must be a timezone-aware UTC datetime")
     return value.astimezone(UTC)
+
+
+def _freeze_json_value(value: JsonValue) -> JsonValue:
+    """Recursively replace mutable JSON containers with read-only equivalents."""
+    if isinstance(value, dict):
+        frozen = MappingProxyType({key: _freeze_json_value(item) for key, item in value.items()})
+        return cast("JsonValue", frozen)
+    if isinstance(value, list):
+        return cast("JsonValue", tuple(_freeze_json_value(item) for item in value))
+    return value
+
+
+def _freeze_json_mapping(value: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
+    return MappingProxyType({key: _freeze_json_value(item) for key, item in value.items()})
+
+
+def _thaw_json_value(value: JsonValue) -> JsonValue:
+    """Restore ordinary JSON containers at the serialization boundary."""
+    if isinstance(value, Mapping):
+        return {key: _thaw_json_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json_value(cast("JsonValue", item)) for item in value]
+    return value
+
+
+def _thaw_json_mapping(value: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+    return {key: _thaw_json_value(item) for key, item in value.items()}
 
 
 class FrozenModel(BaseModel):
@@ -214,7 +250,7 @@ class BackendEvent(FrozenModel):
     """Normalized backend event before the store assigns job sequence information."""
 
     type: JobEventType
-    payload: dict[str, JsonValue] = Field(default_factory=dict)
+    payload: Mapping[str, JsonValue] = Field(default_factory=dict, validate_default=True)
     occurred_at: datetime = Field(default_factory=_utc_now)
     provider_event_type: str | None = Field(default=None, min_length=1, max_length=256)
     provider_reference: ProviderReference | None = None
@@ -223,6 +259,17 @@ class BackendEvent(FrozenModel):
     def event_type(self) -> JobEventType:
         """Return the normalized event type without shadowing Python's ``type`` at call sites."""
         return self.type
+
+    @field_validator("payload", mode="after")
+    @classmethod
+    def freeze_payload(cls, value: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
+        """Protect normalized content from mutation after event construction."""
+        return _freeze_json_mapping(value)
+
+    @field_serializer("payload")
+    def serialize_payload(self, value: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+        """Emit ordinary JSON objects and arrays at the persistence boundary."""
+        return _thaw_json_mapping(value)
 
     @field_validator("occurred_at", mode="after")
     @classmethod
@@ -237,7 +284,7 @@ class JobEvent(FrozenModel):
     job_id: str = Field(min_length=1, max_length=256)
     sequence: int = Field(ge=1)
     type: JobEventType
-    payload: dict[str, JsonValue] = Field(default_factory=dict)
+    payload: Mapping[str, JsonValue] = Field(default_factory=dict, validate_default=True)
     payload_schema_version: int = Field(default=1, ge=1)
     occurred_at: datetime = Field(default_factory=_utc_now)
     attempt_number: int | None = Field(default=None, ge=1)
@@ -248,6 +295,17 @@ class JobEvent(FrozenModel):
     def event_type(self) -> JobEventType:
         """Return the normalized event type without shadowing Python's ``type`` at call sites."""
         return self.type
+
+    @field_validator("payload", mode="after")
+    @classmethod
+    def freeze_payload(cls, value: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
+        """Protect committed content from mutation after event construction."""
+        return _freeze_json_mapping(value)
+
+    @field_serializer("payload")
+    def serialize_payload(self, value: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+        """Emit ordinary JSON objects and arrays at the persistence boundary."""
+        return _thaw_json_mapping(value)
 
     @field_validator("occurred_at", mode="after")
     @classmethod
@@ -312,7 +370,24 @@ class ResolvedExecutionConfig(FrozenModel):
     timeout_seconds: int | None = Field(default=None, ge=1)
     output_limit_bytes: int | None = Field(default=None, ge=1)
     retry_policy: RetryPolicy | None = None
-    sources: dict[ConfigFieldName, ConfigSource] = Field(default_factory=dict)
+    sources: Mapping[ConfigFieldName, ConfigSource] = Field(
+        default_factory=dict, validate_default=True
+    )
+
+    @field_validator("sources", mode="after")
+    @classmethod
+    def freeze_sources(
+        cls, value: Mapping[ConfigFieldName, ConfigSource]
+    ) -> Mapping[ConfigFieldName, ConfigSource]:
+        """Protect effective-value provenance from mutation after resolution."""
+        return MappingProxyType(dict(value))
+
+    @field_serializer("sources")
+    def serialize_sources(
+        self, value: Mapping[ConfigFieldName, ConfigSource]
+    ) -> dict[ConfigFieldName, ConfigSource]:
+        """Emit provenance as an ordinary dictionary at serialization boundaries."""
+        return dict(value)
 
     @classmethod
     def from_requested(
