@@ -1,0 +1,210 @@
+"""E2E compatibility contracts for legacy prompt aliases backed by Nexus jobs."""
+
+import json
+import os
+import sqlite3
+from contextlib import asynccontextmanager
+
+import pytest
+
+from nexus_mcp.mcp.runtime import MCPRuntime
+from nexus_mcp.server import prompt
+from tests.fixtures import CODEX_NDJSON_RESPONSE, create_mock_process, strip_runner_header
+
+
+def _job_rows(*columns: str) -> list[tuple[object, ...]]:
+    database_path = os.environ["NEXUS_DB_PATH"]
+    with sqlite3.connect(database_path) as connection:
+        query = f"SELECT {', '.join(columns)} FROM jobs ORDER BY created_at_ms"
+        return connection.execute(query).fetchall()
+
+
+@pytest.mark.e2e
+async def test_single_prompt_submits_nexus_job_and_preserves_header(
+    job_mcp_client, fake_runner_registry
+):
+    result = await job_mcp_client.call_tool(
+        "prompt",
+        {
+            "cli": fake_runner_registry,
+            "prompt": "compatibility prompt",
+            "context": {"fake_output": "compatibility output"},
+        },
+    )
+
+    assert result.is_error is False
+    assert result.data == "[cli: fake | model: default | mode: default]\n\ncompatibility output"
+    rows = _job_rows("backend_id", "operation_kind", "operation_json", "state")
+    assert len(rows) == 1
+    backend_id, operation_kind, operation_json, state = rows[0]
+    assert backend_id == fake_runner_registry
+    assert operation_kind == "turn"
+    assert json.loads(str(operation_json))["prompt"] == "compatibility prompt"
+    assert state == "completed"
+
+
+@pytest.mark.e2e
+async def test_task_true_keeps_docket_id_out_of_nexus_jobs(job_mcp_client, fake_runner_registry):
+    task = await job_mcp_client.call_tool(
+        "prompt",
+        {
+            "cli": fake_runner_registry,
+            "prompt": "background compatibility prompt",
+            "context": {"fake_output": "background output"},
+        },
+        task=True,
+    )
+    result = await task
+
+    assert result.is_error is False
+    assert strip_runner_header(result.data) == "background output"
+    nexus_job_ids = {str(row[0]) for row in _job_rows("job_id")}
+    assert len(nexus_job_ids) == 1
+    assert task.task_id not in nexus_job_ids
+
+
+@pytest.mark.e2e
+async def test_batch_jobs_preserve_order_and_unique_labels(job_mcp_client, fake_runner_registry):
+    result = await job_mcp_client.call_tool(
+        "batch_prompt",
+        {
+            "tasks": [
+                {
+                    "cli": fake_runner_registry,
+                    "prompt": "first",
+                    "context": {"fake_output": "first output"},
+                },
+                {
+                    "cli": fake_runner_registry,
+                    "prompt": "second",
+                    "context": {"fake_output": "second output"},
+                },
+            ]
+        },
+    )
+
+    assert result.is_error is False
+    assert result.data.succeeded == 2
+    assert [item.label for item in result.data.results] == ["fake", "fake-2"]
+    assert [strip_runner_header(item.output) for item in result.data.results] == [
+        "first output",
+        "second output",
+    ]
+    rows = _job_rows("job_id", "session_id")
+    assert len(rows) == 2
+    assert len({str(row[0]) for row in rows}) == 2
+    assert len({str(row[1]) for row in rows}) == 2
+
+
+@pytest.mark.e2e
+async def test_batch_partial_failure_preserves_legacy_error_type(
+    mock_subprocess, fast_job_mcp_client
+):
+    def subprocess_for_prompt(*args, **_kwargs):
+        command = list(args)
+        prompt_text = str(command[command.index("exec") + 1])
+        if "succeed" in prompt_text:
+            return create_mock_process(stdout=CODEX_NDJSON_RESPONSE)
+        return create_mock_process(stdout="not valid json", returncode=0)
+
+    mock_subprocess.side_effect = subprocess_for_prompt
+    result = await fast_job_mcp_client.call_tool(
+        "batch_prompt",
+        {
+            "tasks": [
+                {"cli": "codex", "prompt": "please succeed"},
+                {"cli": "codex", "prompt": "will fail"},
+            ]
+        },
+    )
+
+    assert result.is_error is False
+    assert result.data.succeeded == 1
+    assert result.data.failed == 1
+    failed = next(item for item in result.data.results if item.error is not None)
+    assert failed.error_type == "ParseError"
+    assert failed.error == "Legacy backend codex returned an invalid response"
+
+
+@pytest.mark.e2e
+async def test_explicit_model_and_yolo_mode_are_admitted_truthfully(
+    mock_subprocess, fast_job_mcp_client
+):
+    mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE)
+
+    result = await fast_job_mcp_client.call_tool(
+        "prompt",
+        {
+            "cli": "codex",
+            "prompt": "configured prompt",
+            "model": "gpt-test",
+            "execution_mode": "yolo",
+        },
+    )
+
+    assert result.data.startswith("[cli: codex | model: gpt-test | mode: yolo]")
+    requested_json, resolved_json = _job_rows("requested_config_json", "resolved_config_json")[0]
+    explicit = json.loads(str(requested_json))["explicit"]
+    resolved = json.loads(str(resolved_json))
+    assert explicit["model"] == "gpt-test"
+    assert explicit["sandbox"] == "danger_full_access"
+    assert explicit["approval_policy"] == "never"
+    assert resolved["sandbox"] == "danger_full_access"
+    assert resolved["approval_policy"] == "never"
+    args = list(mock_subprocess.call_args.args)
+    assert "--model" in args
+    assert "gpt-test" in args
+    assert "--dangerously-bypass-approvals-and-sandbox" in args
+
+
+@pytest.mark.e2e
+async def test_legacy_preferences_feed_job_configuration(mock_subprocess, fast_job_mcp_client):
+    mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE)
+    await fast_job_mcp_client.call_tool(
+        "set_preferences",
+        {
+            "model": "preferred-model",
+            "execution_mode": "yolo",
+            "max_retries": 1,
+            "timeout": 33,
+        },
+    )
+
+    result = await fast_job_mcp_client.call_tool(
+        "prompt", {"cli": "codex", "prompt": "use preferences"}
+    )
+
+    assert result.data.startswith("[cli: codex | model: preferred-model | mode: yolo]")
+    explicit = json.loads(str(_job_rows("requested_config_json")[0][0]))["explicit"]
+    assert explicit["model"] == "preferred-model"
+    assert explicit["sandbox"] == "danger_full_access"
+    assert explicit["approval_policy"] == "never"
+    assert explicit["retry_policy"]["max_attempts"] == 1
+    assert explicit["timeout_seconds"] == 33
+
+
+@pytest.mark.e2e
+async def test_direct_prompt_opens_and_closes_one_temporary_runtime(
+    monkeypatch, fake_runner_registry, fast_job_runtime
+):
+    del fast_job_runtime
+    lifecycle: list[str] = []
+    original_open = MCPRuntime.open
+
+    @asynccontextmanager
+    async def tracked_open(tuning=None):
+        lifecycle.append("open")
+        async with original_open(tuning) as runtime:
+            yield runtime
+        lifecycle.append("close")
+
+    monkeypatch.setattr(MCPRuntime, "open", staticmethod(tracked_open))
+
+    result = await prompt(
+        cli=fake_runner_registry,
+        prompt="direct compatibility prompt",
+        context={"fake_output": "direct output"},
+    )
+
+    assert strip_runner_header(result) == "direct output"
+    assert lifecycle == ["open", "close"]

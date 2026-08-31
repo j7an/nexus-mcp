@@ -20,15 +20,17 @@ class TestSinglePromptProgress:
     """Verify single prompt reports runner-level progress."""
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_prompt_reports_step_progress(self, mock_exec, mcp_client):
+    async def test_prompt_reports_step_progress(self, mock_exec, progress_mcp_client):
         """Single prompt tool call should report step-level progress."""
         mock_exec.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE, returncode=0)
+        client, progress_events = progress_mcp_client
 
-        result = await mcp_client.call_tool("prompt", {"cli": "codex", "prompt": "hello"})
+        result = await client.call_tool("prompt", {"cli": "codex", "prompt": "hello"})
 
-        # Verify the call succeeded (progress reporting is fire-and-forget)
         assert result is not None
         assert mock_exec.await_count == 1
+        assert progress_events[0] == (1.0, 1.0, "Attempt 1/1")
+        assert all("Task '" not in (message or "") for _, _, message in progress_events)
 
 
 @pytest.mark.e2e
@@ -36,11 +38,12 @@ class TestBatchPromptProgress:
     """Verify batch prompt reports hierarchical progress."""
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_batch_reports_progress(self, mock_exec, mcp_client):
+    async def test_batch_reports_progress(self, mock_exec, progress_mcp_client):
         """Multi-task batch should complete with progress reporting active."""
         mock_exec.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE, returncode=0)
+        client, progress_events = progress_mcp_client
 
-        result = await mcp_client.call_tool(
+        result = await client.call_tool(
             "batch_prompt",
             {
                 "tasks": [
@@ -52,13 +55,18 @@ class TestBatchPromptProgress:
 
         assert result is not None
         assert mock_exec.await_count == 2
+        assert all(total == 2.0 for _, total, _ in progress_events)
+        messages = [message or "" for _, _, message in progress_events]
+        assert any(message.startswith("Task 'first' (1/2):") for message in messages)
+        assert any(message.startswith("Task 'second' (2/2):") for message in messages)
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_single_task_batch_uses_unwrapped_progress(self, mock_exec, mcp_client):
+    async def test_single_task_batch_uses_unwrapped_progress(self, mock_exec, progress_mcp_client):
         """Single-task batch should use unwrapped (passthrough) progress."""
         mock_exec.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE, returncode=0)
+        client, progress_events = progress_mcp_client
 
-        result = await mcp_client.call_tool(
+        result = await client.call_tool(
             "batch_prompt",
             {
                 "tasks": [
@@ -69,3 +77,5 @@ class TestBatchPromptProgress:
 
         assert result is not None
         assert mock_exec.await_count == 1
+        assert progress_events[0] == (1.0, 1.0, "Attempt 1/1")
+        assert all("Task '" not in (message or "") for _, _, message in progress_events)

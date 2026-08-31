@@ -25,6 +25,7 @@ import logging
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
@@ -34,12 +35,30 @@ from pydantic import Field
 
 from nexus_mcp.cli_detector import detect_cli
 from nexus_mcp.config import get_runner_defaults, get_runner_models, get_tool_timeout
+from nexus_mcp.core import (
+    AccessContext,
+    BackendUnknownError,
+    CancelledJobResultResponse,
+    ExecutionConfigValues,
+    FailedJobResultResponse,
+    JobError,
+    JobEvent,
+    JobResultResponse,
+    PendingJobResultResponse,
+    RetryPolicy,
+    SucceededJobResultResponse,
+    TurnOperation,
+    TurnResult,
+    WorkspaceSelector,
+)
+from nexus_mcp.exceptions import UnsupportedAgentError
 from nexus_mcp.http_client import get_http_client
 from nexus_mcp.icons import SERVER_ICONS, TOOL_CONFIG_ICONS, TOOL_EXEC_ICONS
+from nexus_mcp.jobs import AgentJobService
 from nexus_mcp.labels import assign_labels
+from nexus_mcp.mcp.access import local_access_context
 from nexus_mcp.mcp.compound_tools import register_compound_tools
 from nexus_mcp.mcp.elicitation import ElicitationGuard
-from nexus_mcp.mcp.emitters import make_mcp_emitter, make_progress_emitter
 from nexus_mcp.mcp.job_tools import register_job_tools
 from nexus_mcp.mcp.middleware import (
     ErrorNormalizationMiddleware,
@@ -279,6 +298,243 @@ def _resolve_elicit(elicit: bool | None, prefs: SessionPreferences) -> bool:
     return True
 
 
+def _compatibility_config(task: AgentTask) -> ExecutionConfigValues:
+    """Translate fully resolved legacy task fields into a typed job configuration."""
+    retry_policy = None
+    if any(
+        value is not None
+        for value in (task.max_retries, task.retry_base_delay, task.retry_max_delay)
+    ):
+        assert task.cli is not None
+        defaults = get_runner_defaults(task.cli)
+        assert defaults.max_retries is not None
+        assert defaults.retry_base_delay is not None
+        assert defaults.retry_max_delay is not None
+        retry_policy = RetryPolicy(
+            max_attempts=(
+                task.max_retries if task.max_retries is not None else defaults.max_retries
+            ),
+            base_delay_seconds=(
+                task.retry_base_delay
+                if task.retry_base_delay is not None
+                else defaults.retry_base_delay
+            ),
+            max_delay_seconds=(
+                task.retry_max_delay
+                if task.retry_max_delay is not None
+                else defaults.retry_max_delay
+            ),
+        )
+    yolo = task.execution_mode == "yolo"
+    return ExecutionConfigValues(
+        model=task.model,
+        sandbox="danger_full_access" if yolo else None,
+        approval_policy="never" if yolo else None,
+        timeout_seconds=task.timeout,
+        output_limit_bytes=task.output_limit,
+        retry_policy=retry_policy,
+    )
+
+
+def _metadata_header(task: AgentTask) -> str:
+    """Build the stable legacy runner metadata line."""
+    return f"[cli: {task.cli} | model: {task.model or 'default'} | mode: {task.execution_mode}]"
+
+
+def _legacy_exception_type(error: JobError) -> str | None:
+    """Return only a bounded identifier carried by the temporary legacy backend."""
+    value = error.details.get("legacy_exception_type")
+    if not isinstance(value, str) or len(value) > 128 or not value.isidentifier():
+        return None
+    return value
+
+
+async def _forward_compatibility_event(
+    event: JobEvent,
+    *,
+    ctx: Context | None,
+    task_index: int,
+    task_count: int,
+    label: str,
+) -> None:
+    """Map one committed compatibility event to FastMCP without replaying final output."""
+    if ctx is None:
+        return
+    payload = event.payload
+    match event.type:
+        case "progress":
+            progress = payload.get("progress")
+            total = payload.get("total")
+            message = payload.get("message")
+            if (
+                isinstance(progress, bool)
+                or not isinstance(progress, int | float)
+                or isinstance(total, bool)
+                or not isinstance(total, int | float)
+                or not isinstance(message, str)
+            ):
+                return
+            if task_count > 1:
+                await ctx.report_progress(
+                    progress=task_index,
+                    total=task_count,
+                    message=f"Task '{label}' ({task_index}/{task_count}): {message}",
+                )
+            else:
+                await ctx.report_progress(
+                    progress=float(progress),
+                    total=float(total),
+                    message=message,
+                )
+        case "log":
+            level = payload.get("level")
+            message = payload.get("message")
+            if (
+                isinstance(level, str)
+                and level in {"debug", "info", "warning", "error"}
+                and isinstance(message, str)
+            ):
+                await getattr(ctx, level)(message)
+        case "message":
+            if payload.get("final") is True:
+                return
+            message = payload.get("message", payload.get("text"))
+            if isinstance(message, str):
+                await ctx.info(message)
+
+
+async def _drain_compatibility_events(
+    *,
+    service: AgentJobService,
+    workspace: WorkspaceSelector,
+    access: AccessContext,
+    job_id: str,
+    ctx: Context | None,
+    task_index: int,
+    task_count: int,
+    label: str,
+) -> None:
+    """Consume one job's committed journal from sequence zero through terminal state."""
+    subscription = service.subscribe_events(
+        workspace=workspace,
+        access=access,
+        job_id=job_id,
+        after_sequence=0,
+    )
+    async for event in subscription:
+        await _forward_compatibility_event(
+            event,
+            ctx=ctx,
+            task_index=task_index,
+            task_count=task_count,
+            label=label,
+        )
+
+
+async def _await_compatibility_result(
+    *,
+    service: AgentJobService,
+    workspace: WorkspaceSelector,
+    access: AccessContext,
+    job_id: str,
+    ctx: Context | None,
+    task_index: int,
+    task_count: int,
+    label: str,
+) -> JobResultResponse:
+    """Wait on the journal, drain terminal history, then read the typed durable result."""
+    forwarding = asyncio.create_task(
+        _drain_compatibility_events(
+            service=service,
+            workspace=workspace,
+            access=access,
+            job_id=job_id,
+            ctx=ctx,
+            task_index=task_index,
+            task_count=task_count,
+            label=label,
+        )
+    )
+    try:
+        await forwarding
+        return await service.result(workspace=workspace, access=access, job_id=job_id)
+    finally:
+        if not forwarding.done():
+            forwarding.cancel()
+        await asyncio.gather(forwarding, return_exceptions=True)
+
+
+def _format_compatibility_result(
+    task: AgentTask,
+    response: JobResultResponse,
+) -> AgentTaskResult:
+    """Convert one terminal job response back to the frozen legacy response model."""
+    assert task.label is not None
+    match response:
+        case SucceededJobResultResponse(result=envelope):
+            if not isinstance(envelope.payload, TurnResult):
+                raise RuntimeError("legacy prompt job returned a non-turn result")
+            output = f"{_metadata_header(task)}\n\n{envelope.payload.message}"
+            return AgentTaskResult(label=task.label, output=output)
+        case FailedJobResultResponse(error=error):
+            return AgentTaskResult(
+                label=task.label,
+                error=error.message,
+                error_type=_legacy_exception_type(error),
+            )
+        case CancelledJobResultResponse():
+            return AgentTaskResult(label=task.label, error="Agent job was cancelled")
+        case PendingJobResultResponse():
+            raise RuntimeError("legacy prompt journal ended before its job became terminal")
+
+
+async def _run_compatibility_task(
+    *,
+    service: AgentJobService,
+    task: AgentTask,
+    ctx: Context | None,
+    task_index: int,
+    task_count: int,
+) -> AgentTaskResult:
+    """Submit one independently durable compatibility job and wait for its result."""
+    assert task.cli is not None
+    assert task.label is not None
+    workspace = WorkspaceSelector(path=Path.cwd())
+    access = local_access_context()
+    try:
+        handle = await service.start(
+            workspace=workspace,
+            access=access,
+            backend_id=task.cli,
+            operation=TurnOperation(prompt=task.prompt, context=task.context),
+            explicit_config=_compatibility_config(task),
+        )
+        response = await _await_compatibility_result(
+            service=service,
+            workspace=workspace,
+            access=access,
+            job_id=handle.job_id,
+            ctx=ctx,
+            task_index=task_index,
+            task_count=task_count,
+            label=task.label,
+        )
+        return _format_compatibility_result(task, response)
+    except BackendUnknownError:
+        error = UnsupportedAgentError(task.cli)
+        return AgentTaskResult(
+            label=task.label,
+            error=str(error),
+            error_type=type(error).__name__,
+        )
+    except Exception as error:
+        return AgentTaskResult(
+            label=task.label,
+            error=str(error),
+            error_type=type(error).__name__,
+        )
+
+
 async def batch_prompt(
     *,
     tasks: list[AgentTask],
@@ -325,50 +581,32 @@ async def batch_prompt(
             if t.cli is None:
                 raise ToolError("cli is required on all tasks when no context available")
 
-    def _metadata_header(task: AgentTask, metadata: dict[str, Any] | None = None) -> str:
-        """Build a short metadata line so the AI knows which runner handled the task."""
-        metadata = metadata or {}
-        model_part = metadata.get("effective_model") or task.model or "default"
-        if metadata.get("fallback_model_used") is True and metadata.get("original_model"):
-            model_part = f"{model_part} (fallback from {metadata['original_model']})"
-        return f"[cli: {task.cli} | model: {model_part} | mode: {task.execution_mode}]"
-
     labelled = assign_labels(tasks)
     semaphore = asyncio.Semaphore(max_concurrency)
     is_single_task = len(labelled) == 1
 
     if ctx:
         await ctx.info(f"Starting batch of {len(labelled)} tasks (concurrency={max_concurrency})")
+    if not labelled:
+        response = MultiPromptResponse(results=[])
+        if ctx:
+            await ctx.info("Batch complete: 0/0 succeeded")
+        return response
 
-    async def _run_single(idx: int, task: AgentTask) -> AgentTaskResult:
+    async def _run_single(service: AgentJobService, idx: int, task: AgentTask) -> AgentTaskResult:
         async with semaphore:
-            emitter = make_mcp_emitter(ctx) if ctx else None
-            progress = None
-            if ctx:
-                if is_single_task:
-                    progress = make_progress_emitter(ctx)
-                else:
-                    progress = make_progress_emitter(
-                        ctx,
-                        task_idx=idx + 1,
-                        task_count=len(labelled),
-                        label=task.label,
-                    )
-            try:
-                request = task.to_request()
-                runner = RunnerFactory.create(request.cli)
-                response = await runner.run(request, emitter=emitter, progress=progress)
-                header = _metadata_header(task, response.metadata)
-                output = f"{header}\n\n{response.output}"
-                return AgentTaskResult(label=task.label, output=output)  # type: ignore[arg-type]
-            except Exception as e:
-                if emitter:
-                    await emitter("error", f"Task '{task.label}' failed: {e}")
-                else:
-                    logger.exception("Task %r failed: %s", task.label, e)
-                return AgentTaskResult(label=task.label, error=str(e), error_type=type(e).__name__)  # type: ignore[arg-type]
+            return await _run_compatibility_task(
+                service=service,
+                task=task,
+                ctx=ctx,
+                task_index=idx + 1,
+                task_count=1 if is_single_task else len(labelled),
+            )
 
-    results = await asyncio.gather(*[_run_single(i, t) for i, t in enumerate(labelled)])
+    async with runtime_provider.borrow() as runtime:
+        results = await asyncio.gather(
+            *[_run_single(runtime.service, i, task) for i, task in enumerate(labelled)]
+        )
     response = MultiPromptResponse(results=list(results))
     if ctx:
         await ctx.info(f"Batch complete: {response.succeeded}/{response.total} succeeded")

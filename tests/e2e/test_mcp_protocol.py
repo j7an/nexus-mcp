@@ -191,10 +191,10 @@ class TestPromptProtocol:
     """
 
     async def test_success_returns_parsed_output(
-        self, mock_subprocess, mcp_client, fake_runner_registry
+        self, mock_subprocess, job_mcp_client, fake_runner_registry
     ):
         """Full success path: subprocess returns valid JSON → call_tool returns output text."""
-        result = await mcp_client.call_tool(
+        result = await job_mcp_client.call_tool(
             "prompt",
             {
                 "cli": fake_runner_registry,
@@ -207,9 +207,9 @@ class TestPromptProtocol:
         assert strip_runner_header(result.data) == "hello from e2e"
         assert mock_subprocess.await_count == 0
 
-    async def test_task_true_lifecycle(self, mock_subprocess, mcp_client, fake_runner_registry):
+    async def test_task_true_lifecycle(self, mock_subprocess, job_mcp_client, fake_runner_registry):
         """task=True returns a ToolTask; awaiting it resolves to the final output."""
-        task = await mcp_client.call_tool(
+        task = await job_mcp_client.call_tool(
             "prompt",
             {
                 "cli": fake_runner_registry,
@@ -253,8 +253,7 @@ class TestPromptProtocol:
     async def test_retryable_error_retry_then_success(
         self,
         mock_subprocess,
-        mcp_client,
-        fast_retry_sleep,
+        fast_job_mcp_client,
         error_code,
         error_message,
     ):
@@ -265,7 +264,7 @@ class TestPromptProtocol:
             create_mock_process(stdout=CODEX_NDJSON_RESPONSE),
         ]
 
-        result = await mcp_client.call_tool(
+        result = await fast_job_mcp_client.call_tool(
             "prompt",
             {"cli": "codex", "prompt": "test", "max_retries": 2},
         )
@@ -281,9 +280,9 @@ class TestPromptProtocol:
         assert result.is_error is False
         assert strip_runner_header(result.data) == "test output"
 
-    async def test_context_parameter_survives_json_rpc(self, mcp_client, fake_runner_registry):
+    async def test_context_parameter_survives_json_rpc(self, job_mcp_client, fake_runner_registry):
         """context dict survives JSON-RPC round-trip; call succeeds (context is pass-through)."""
-        result = await mcp_client.call_tool(
+        result = await job_mcp_client.call_tool(
             "prompt",
             {
                 "cli": fake_runner_registry,
@@ -309,9 +308,9 @@ class TestPromptProtocol:
 class TestBatchPromptProtocol:
     """Verify the batch_prompt tool through the full MCP protocol stack."""
 
-    async def test_two_tasks_both_succeed(self, mcp_client, fake_runner_registry):
+    async def test_two_tasks_both_succeed(self, job_mcp_client, fake_runner_registry):
         """Two tasks both succeed; response has correct succeeded/failed counts."""
-        result = await mcp_client.call_tool(
+        result = await job_mcp_client.call_tool(
             "batch_prompt",
             {
                 "tasks": [
@@ -352,9 +351,9 @@ class TestBatchPromptProtocol:
         failed = next(r for r in result.data.results if r.error is not None)
         assert failed.error_type == "ParseError"
 
-    async def test_auto_labels_are_unique(self, mcp_client, fake_runner_registry):
+    async def test_auto_labels_are_unique(self, job_mcp_client, fake_runner_registry):
         """Auto-assigned labels for same-agent tasks are unique."""
-        result = await mcp_client.call_tool(
+        result = await job_mcp_client.call_tool(
             "batch_prompt",
             {
                 "tasks": [
@@ -368,9 +367,9 @@ class TestBatchPromptProtocol:
         assert fake_runner_registry in labels
         assert f"{fake_runner_registry}-2" in labels
 
-    async def test_explicit_labels_survive_json_rpc(self, mcp_client, fake_runner_registry):
+    async def test_explicit_labels_survive_json_rpc(self, job_mcp_client, fake_runner_registry):
         """Explicit task labels survive JSON-RPC serialization round-trip."""
-        result = await mcp_client.call_tool(
+        result = await job_mcp_client.call_tool(
             "batch_prompt",
             {
                 "tasks": [
@@ -383,9 +382,9 @@ class TestBatchPromptProtocol:
         labels = {r.label for r in result.data.results}
         assert labels == {"my-task-a", "my-task-b"}
 
-    async def test_task_true_docket_coercion(self, mcp_client, fake_runner_registry):
+    async def test_task_true_docket_coercion(self, job_mcp_client, fake_runner_registry):
         """batch_prompt with task=True handles dict→AgentTask coercion after Docket."""
-        task = await mcp_client.call_tool(
+        task = await job_mcp_client.call_tool(
             "batch_prompt",
             {"tasks": [{"cli": fake_runner_registry, "prompt": "docket test"}]},
             task=True,
@@ -395,9 +394,9 @@ class TestBatchPromptProtocol:
         assert result.is_error is False
         assert result.data.succeeded == 1
 
-    async def test_max_concurrency_parameter_accepted(self, mcp_client, fake_runner_registry):
+    async def test_max_concurrency_parameter_accepted(self, job_mcp_client, fake_runner_registry):
         """max_concurrency=1 is accepted through JSON-RPC without error; both tasks succeed."""
-        result = await mcp_client.call_tool(
+        result = await job_mcp_client.call_tool(
             "batch_prompt",
             {
                 "tasks": [
