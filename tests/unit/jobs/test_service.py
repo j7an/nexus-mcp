@@ -1,8 +1,9 @@
 """Canonical application-service admission, access, query, and control behavior."""
 
-from datetime import UTC, datetime
+import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
@@ -11,12 +12,16 @@ from nexus_mcp.backends import BackendManager
 from nexus_mcp.core import (
     AccessDeniedError,
     BackendAvailability,
+    BackendEvent,
     BackendStatus,
     CancelledJobResultResponse,
     CancelReceipt,
+    ConfigLayerSnapshot,
+    DiagnosticsOperation,
     ExecutionConfigValues,
     FailedJobResultResponse,
     ForkOperation,
+    IdempotencyConflictError,
     InputAlreadyResolvedError,
     InputResolutionReceipt,
     JobAttempt,
@@ -39,7 +44,16 @@ from nexus_mcp.core import (
 from nexus_mcp.jobs.configuration import NexusConfigResolver
 from nexus_mcp.jobs.events import EventNotifier, JobEventSubscription
 from nexus_mcp.jobs.service import AgentJobService
-from nexus_mcp.jobs.store import CreateJobResult, EventPage, JobStore, StoredJobPage
+from nexus_mcp.jobs.sqlite_store import SQLiteJobStore
+from nexus_mcp.jobs.store import (
+    CancelJobCommand,
+    CreateJobCommand,
+    CreateJobResult,
+    EventPage,
+    JobStore,
+    StoredJobPage,
+    SucceededTerminalOutcome,
+)
 from tests.fixtures import (
     make_access_context,
     make_agent_job,
@@ -51,6 +65,7 @@ from tests.fixtures import (
     make_turn_result,
     make_workspace,
 )
+from tests.job_fakes import InMemoryJobStore, ScriptedBackend
 
 NOW = datetime(2026, 8, 30, 20, 0, tzinfo=UTC)
 WORKSPACE_SELECTOR = WorkspaceSelector(workspace_id="ws-test")
@@ -90,6 +105,7 @@ def store(tmp_path: Path) -> Mock:
         state="cancelled",
         cancel_requested=True,
         completed_immediately=True,
+        event_committed=True,
     )
     job_store.resolve_input.return_value = InputResolutionReceipt(
         job_id="job-test", input_id="input-test"
@@ -273,6 +289,33 @@ async def test_creation_rejects_a_removed_workspace_path(
         await service.start(
             workspace=WORKSPACE_SELECTOR,
             access=authorized_access(),
+            backend_id="codex",
+            operation=TurnOperation(prompt="Inspect"),
+            explicit_config=ExecutionConfigValues(),
+        )
+
+    manager.require_operation.assert_not_called()
+    store.create_job.assert_not_awaited()
+
+
+@pytest.mark.parametrize("path_kind", ["missing", "file"])
+async def test_unauthorized_creation_does_not_disclose_workspace_liveness(
+    service: AgentJobService,
+    store: Mock,
+    manager: Mock,
+    tmp_path: Path,
+    path_kind: str,
+):
+    """Authorization must reject before missing versus non-directory path probes diverge."""
+    canonical_path = tmp_path / path_kind
+    if path_kind == "file":
+        canonical_path.write_text("not a directory", encoding="utf-8")
+    store.resolve_workspace.return_value = make_workspace(canonical_path=canonical_path)
+
+    with pytest.raises(AccessDeniedError):
+        await service.start(
+            workspace=WORKSPACE_SELECTOR,
+            access=make_access_context(),
             backend_id="codex",
             operation=TurnOperation(prompt="Inspect"),
             explicit_config=ExecutionConfigValues(),
@@ -792,7 +835,9 @@ async def test_queued_cancel_is_immediate_without_backend_capability(
 
     command = store.request_cancel.await_args.args[0]
     assert receipt.completed_immediately is True
-    assert command.event.type == "job_cancelled"
+    assert command.active_cancellation_allowed is False
+    assert command.queued_event.type == "job_cancelled"
+    assert command.active_event.type == "cancel_requested"
     assert notifier.revision == 1
 
 
@@ -811,6 +856,13 @@ async def test_active_cancel_without_backend_capability_records_no_intent(
         }
     )
     store.get_job.return_value = make_agent_job(state="running")
+    store.request_cancel.return_value = CancelReceipt(
+        job_id="job-test",
+        state="running",
+        cancel_requested=False,
+        completed_immediately=False,
+        event_committed=False,
+    )
 
     with pytest.raises(UnsupportedCapabilityError):
         await service.cancel(
@@ -819,8 +871,83 @@ async def test_active_cancel_without_backend_capability_records_no_intent(
             job_id="job-test",
         )
 
-    store.request_cancel.assert_not_awaited()
+    command = store.request_cancel.await_args.args[0]
+    assert command.active_cancellation_allowed is False
     assert notifier.revision == 0
+
+
+async def test_queued_to_running_cancel_race_raises_without_false_wake(
+    service: AgentJobService,
+    store: Mock,
+    backend: Mock,
+    notifier: EventNotifier,
+):
+    """The atomic store result overrides the stale queued snapshot used for authorization."""
+    backend.descriptor = backend.descriptor.model_copy(
+        update={
+            "capabilities": backend.descriptor.capabilities.model_copy(
+                update={"cancellation": False}
+            )
+        }
+    )
+    store.get_job.return_value = make_agent_job(state="queued")
+    store.request_cancel.return_value = CancelReceipt(
+        job_id="job-test",
+        state="running",
+        cancel_requested=False,
+        completed_immediately=False,
+        event_committed=False,
+    )
+
+    with pytest.raises(UnsupportedCapabilityError):
+        await service.cancel(
+            workspace=WORKSPACE_SELECTOR,
+            access=authorized_access(),
+            job_id="job-test",
+        )
+
+    assert notifier.revision == 0
+
+
+async def test_concurrent_service_cancel_notifies_only_the_event_winner(
+    service: AgentJobService,
+    store: Mock,
+    notifier: EventNotifier,
+):
+    """Receipt event truth prevents a concurrent cancellation replay from emitting a wake."""
+    store.get_job.return_value = make_agent_job(state="running")
+    store.request_cancel.side_effect = [
+        CancelReceipt(
+            job_id="job-test",
+            state="running",
+            cancel_requested=True,
+            completed_immediately=False,
+            event_committed=True,
+        ),
+        CancelReceipt(
+            job_id="job-test",
+            state="running",
+            cancel_requested=True,
+            completed_immediately=False,
+            event_committed=False,
+        ),
+    ]
+
+    receipts = await asyncio.gather(
+        service.cancel(
+            workspace=WORKSPACE_SELECTOR,
+            access=authorized_access(),
+            job_id="job-test",
+        ),
+        service.cancel(
+            workspace=WORKSPACE_SELECTOR,
+            access=authorized_access(),
+            job_id="job-test",
+        ),
+    )
+
+    assert sum(receipt.event_committed for receipt in receipts) == 1
+    assert notifier.revision == 1
 
 
 async def test_active_cancel_records_intent_event_after_commit(
@@ -837,6 +964,7 @@ async def test_active_cancel_records_intent_event_after_commit(
             state="running",
             cancel_requested=True,
             completed_immediately=False,
+            event_committed=True,
         )
 
     store.get_job.return_value = make_agent_job(state="running")
@@ -850,7 +978,9 @@ async def test_active_cancel_records_intent_event_after_commit(
 
     command = store.request_cancel.await_args.args[0]
     assert receipt.cancel_requested is True
-    assert command.event.type == "cancel_requested"
+    assert command.active_cancellation_allowed is True
+    assert command.queued_event.type == "job_cancelled"
+    assert command.active_event.type == "cancel_requested"
     assert notifier.revision == 1
 
 
@@ -874,6 +1004,7 @@ async def test_terminal_cancel_is_an_idempotent_no_op_without_wake_or_capability
         state="completed",
         cancel_requested=False,
         completed_immediately=False,
+        event_committed=False,
     )
 
     receipt = await service.cancel(
@@ -975,3 +1106,362 @@ async def test_list_backends_requires_workspace_authority_and_runs_health_only_t
 
     assert statuses == (status,)
     manager.list_statuses.assert_awaited_once()
+
+
+class _ChangingCaptureResolver:
+    """Return semantically equal lower config through changing capture metadata."""
+
+    def __init__(self) -> None:
+        self._capture = 0
+
+    def snapshot(
+        self,
+        backend_id: str,
+        workspace,
+        explicit: ExecutionConfigValues,
+    ) -> RequestedExecutionConfig:
+        self._capture += 1
+        return RequestedExecutionConfig(
+            explicit=explicit,
+            workspace=ConfigLayerSnapshot(
+                values=ExecutionConfigValues(timeout_seconds=30),
+                source=f"workspace-{self._capture}",
+                source_hash=f"{self._capture:064x}",
+                captured_at=NOW + timedelta(seconds=self._capture),
+            ),
+        )
+
+
+class _StableCaptureResolver:
+    """Capture only explicit values so checkpoint changes are isolated."""
+
+    def snapshot(
+        self,
+        backend_id: str,
+        workspace,
+        explicit: ExecutionConfigValues,
+    ) -> RequestedExecutionConfig:
+        return RequestedExecutionConfig(explicit=explicit)
+
+
+@pytest.fixture(params=["memory", "sqlite"], ids=["memory", "sqlite"])
+async def real_service_environment(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+):
+    """Run application idempotency behavior against both complete store implementations."""
+    durable_store: JobStore = (
+        SQLiteJobStore(tmp_path / "service.sqlite3")
+        if request.param == "sqlite"
+        else InMemoryJobStore()
+    )
+    await durable_store.open()
+    workspace = make_workspace(canonical_path=tmp_path, created_at=NOW, updated_at=NOW)
+    seed = await durable_store.create_job(
+        CreateJobCommand(
+            workspace=workspace,
+            backend_id="codex",
+            owner_id="local:501",
+            access_policy="private",
+            operation=DiagnosticsOperation(),
+            requested_config=RequestedExecutionConfig(),
+            session_id=None,
+            create_session=False,
+            command_family="seed",
+            queued_event=BackendEvent(type="job_queued", occurred_at=NOW),
+        )
+    )
+    await durable_store.request_cancel(
+        CancelJobCommand(
+            job_id=seed.handle.job_id,
+            requested_at=NOW,
+            active_cancellation_allowed=False,
+            queued_event=BackendEvent(type="job_cancelled", occurred_at=NOW),
+            active_event=BackendEvent(type="cancel_requested", occurred_at=NOW),
+        )
+    )
+    backend = ScriptedBackend(backend_id="codex")
+    backend.descriptor = backend.descriptor.model_copy(
+        update={
+            "capabilities": backend.descriptor.capabilities.model_copy(
+                update={
+                    "sandbox_modes": frozenset(
+                        {"read_only", "workspace_write", "danger_full_access"}
+                    ),
+                    "review_targets": frozenset(
+                        {"working_tree", "branch", "commit", "pull_request"}
+                    ),
+                    "review_deliveries": frozenset({"inline", "detached"}),
+                }
+            )
+        }
+    )
+    notifier = EventNotifier()
+    service = AgentJobService(
+        store=durable_store,
+        backend_manager=BackendManager([backend]),
+        config_resolver=cast("NexusConfigResolver", _ChangingCaptureResolver()),
+        notifier=notifier,
+    )
+    try:
+        yield service, durable_store, backend, notifier
+    finally:
+        await durable_store.close()
+
+
+async def _source_session(service: AgentJobService) -> str:
+    """Create and terminalize one source session for idempotency tests."""
+    source = await service.start(
+        workspace=WORKSPACE_SELECTOR,
+        access=authorized_access(),
+        backend_id="codex",
+        operation=TurnOperation(prompt="Establish source"),
+        explicit_config=ExecutionConfigValues(),
+        idempotency_key="source",
+    )
+    assert source.session_id is not None
+    await service.cancel(
+        workspace=WORKSPACE_SELECTOR,
+        access=authorized_access(),
+        job_id=source.job_id,
+    )
+    return source.session_id
+
+
+@pytest.mark.parametrize(
+    "family",
+    ["start", "continue", "fork", "review_inline", "review_detached", "diagnose"],
+)
+async def test_semantic_idempotency_replays_every_service_command_family(
+    real_service_environment,
+    family: str,
+):
+    """Generated identities and lower capture metadata cannot conflict with the same intent."""
+    service, _, _, _ = real_service_environment
+    common = {
+        "workspace": WORKSPACE_SELECTOR,
+        "access": authorized_access(),
+        "explicit_config": ExecutionConfigValues(model="gpt-5"),
+        "idempotency_key": f"replay-{family}",
+    }
+    source_session_id = None
+    if family not in {"start", "diagnose"}:
+        source_session_id = await _source_session(service)
+
+    async def invoke():
+        match family:
+            case "start":
+                return await service.start(
+                    **common,
+                    backend_id="codex",
+                    operation=TurnOperation(prompt="Inspect"),
+                )
+            case "diagnose":
+                return await service.diagnose(**common, backend_id="codex")
+            case "continue":
+                return await service.continue_session(
+                    **common,
+                    session_id=source_session_id,
+                    operation=TurnOperation(prompt="Continue"),
+                )
+            case "fork":
+                return await service.fork_session(
+                    **common,
+                    session_id=source_session_id,
+                    operation=ForkOperation(prompt="Fork"),
+                )
+            case "review_inline" | "review_detached":
+                delivery = "inline" if family == "review_inline" else "detached"
+                return await service.review(
+                    **common,
+                    session_id=source_session_id,
+                    operation=make_review_operation(delivery=delivery),
+                )
+            case _:
+                raise AssertionError(f"unknown command family: {family}")
+
+    first = await invoke()
+    replay = await invoke()
+
+    assert replay == first
+
+
+async def test_semantic_idempotency_still_conflicts_on_explicit_intent_change(
+    real_service_environment,
+):
+    """Excluding persistence captures must not collapse two different caller prompts."""
+    service, _, _, _ = real_service_environment
+    common = {
+        "workspace": WORKSPACE_SELECTOR,
+        "access": authorized_access(),
+        "backend_id": "codex",
+        "explicit_config": ExecutionConfigValues(),
+        "idempotency_key": "conflict",
+    }
+    await service.start(**common, operation=TurnOperation(prompt="First"))
+
+    with pytest.raises(IdempotencyConflictError):
+        await service.start(**common, operation=TurnOperation(prompt="Second"))
+
+
+async def test_semantic_idempotency_replays_after_terminal_completion(
+    real_service_environment,
+):
+    """A semantic retry returns its original handle even after that job terminalizes."""
+    service, _, _, _ = real_service_environment
+    kwargs = {
+        "workspace": WORKSPACE_SELECTOR,
+        "access": authorized_access(),
+        "backend_id": "codex",
+        "operation": TurnOperation(prompt="Terminal replay"),
+        "explicit_config": ExecutionConfigValues(),
+        "idempotency_key": "terminal-replay",
+    }
+    first = await service.start(**kwargs)
+    await service.cancel(
+        workspace=WORKSPACE_SELECTOR,
+        access=authorized_access(),
+        job_id=first.job_id,
+    )
+
+    replay = await service.start(**kwargs)
+
+    assert replay == first
+
+
+async def test_semantic_idempotency_ignores_recaptured_source_checkpoints(
+    real_service_environment,
+):
+    """A later valid provider checkpoint must not change the caller's fork intent."""
+    service, durable_store, backend, _ = real_service_environment
+    source = await service.start(
+        workspace=WORKSPACE_SELECTOR,
+        access=authorized_access(),
+        backend_id="codex",
+        operation=TurnOperation(prompt="Checkpoint source"),
+        explicit_config=ExecutionConfigValues(),
+    )
+    assert source.session_id is not None
+    claimed = await durable_store.claim_next(
+        "worker-checkpoint",
+        datetime(2099, 1, 1, tzinfo=UTC),
+        event=BackendEvent(type="progress", occurred_at=NOW),
+    )
+    assert claimed is not None and claimed.job.job_id == source.job_id
+    first_reference = ProviderReference(kind="thread", value="thread-first")
+    second_reference = ProviderReference(kind="turn", value="turn-second")
+    await durable_store.record_provider_reference(claimed.token, first_reference)
+    await durable_store.record_provider_reference(claimed.token, second_reference)
+    await service.cancel(
+        workspace=WORKSPACE_SELECTOR,
+        access=authorized_access(),
+        job_id=source.job_id,
+    )
+    checkpoint_calls = 0
+
+    async def changing_checkpoint(
+        *,
+        session_id: str | None = None,
+        job_id: str | None = None,
+    ) -> tuple[ProviderReference, ...]:
+        nonlocal checkpoint_calls
+        assert session_id == source.session_id and job_id is None
+        checkpoint_calls += 1
+        if checkpoint_calls == 1:
+            return (first_reference,)
+        return (first_reference, second_reference)
+
+    durable_store.get_provider_references = changing_checkpoint  # type: ignore[method-assign]
+    stable_service = AgentJobService(
+        store=durable_store,
+        backend_manager=BackendManager([backend]),
+        config_resolver=cast("NexusConfigResolver", _StableCaptureResolver()),
+        notifier=EventNotifier(),
+    )
+    kwargs = {
+        "workspace": WORKSPACE_SELECTOR,
+        "access": authorized_access(),
+        "session_id": source.session_id,
+        "operation": ForkOperation(prompt="Fork from checkpoint"),
+        "explicit_config": ExecutionConfigValues(),
+        "idempotency_key": "checkpoint-replay",
+    }
+
+    first = await stable_service.fork_session(**kwargs)
+    replay = await stable_service.fork_session(**kwargs)
+
+    assert replay == first
+
+
+@pytest.mark.parametrize("terminal", [False, True], ids=["running", "terminal"])
+async def test_real_service_replays_resolved_input_after_job_state_changes(
+    real_service_environment,
+    terminal: bool,
+):
+    """Replay and conflict semantics survive running or terminal job transitions without wakes."""
+    service, durable_store, _, notifier = real_service_environment
+    handle = await service.start(
+        workspace=WORKSPACE_SELECTOR,
+        access=authorized_access(),
+        backend_id="codex",
+        operation=TurnOperation(prompt="Request input"),
+        explicit_config=ExecutionConfigValues(),
+    )
+    claimed = await durable_store.claim_next(
+        "worker-input-service",
+        datetime(2099, 1, 1, tzinfo=UTC),
+        event=BackendEvent(type="progress", occurred_at=NOW),
+    )
+    assert claimed is not None and claimed.job.job_id == handle.job_id
+    await durable_store.mark_running(
+        claimed.token,
+        (),
+        event=BackendEvent(type="job_started", occurred_at=NOW),
+    )
+    pending = make_pending_permission(job_id=handle.job_id, created_at=NOW)
+    await durable_store.mark_input_required(
+        claimed.token,
+        (pending,),
+        event=BackendEvent(type="input_required", occurred_at=NOW),
+    )
+    response = PermissionResponse(granted=frozenset({"network:api.example.com"}))
+    await service.respond(
+        workspace=WORKSPACE_SELECTOR,
+        access=authorized_access(),
+        job_id=handle.job_id,
+        input_id=pending.input_id,
+        response=response,
+    )
+    await durable_store.mark_running(
+        claimed.token,
+        (pending.input_id,),
+        event=BackendEvent(type="job_started", occurred_at=NOW),
+    )
+    if terminal:
+        await durable_store.terminalize(
+            claimed.token,
+            SucceededTerminalOutcome(result=make_turn_result(), completed_at=NOW),
+            event=BackendEvent(type="job_completed", occurred_at=NOW),
+        )
+    revision_before_replay = notifier.revision
+
+    replay = await service.respond(
+        workspace=WORKSPACE_SELECTOR,
+        access=authorized_access(),
+        job_id=handle.job_id,
+        input_id=pending.input_id,
+        response=response,
+    )
+    with pytest.raises(InputAlreadyResolvedError):
+        await service.respond(
+            workspace=WORKSPACE_SELECTOR,
+            access=authorized_access(),
+            job_id=handle.job_id,
+            input_id=pending.input_id,
+            response=PermissionResponse(granted=frozenset()),
+        )
+
+    events = await durable_store.read_events(handle.job_id, 0, 20)
+    assert replay.replayed is True
+    assert notifier.revision == revision_before_replay
+    assert [event.type for event in events.events].count("input_resolved") == 1

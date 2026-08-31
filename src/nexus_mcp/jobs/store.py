@@ -113,11 +113,19 @@ class CreateJobCommand(_StoreModel):
 
 
 def _create_job_request_hash(command: CreateJobCommand) -> str:
-    """Return the canonical hash used by every store for idempotency comparison."""
-    payload = command.model_dump(
-        mode="json",
-        exclude={"idempotency_key", "queued_event"},
-    )
+    """Hash caller intent without generated identities or recaptured persistence state."""
+    payload = {
+        "version": 1,
+        "owner_id": command.owner_id,
+        "workspace_id": command.workspace.workspace_id,
+        "backend_id": command.backend_id,
+        "access_policy": command.access_policy,
+        "operation": command.operation.model_dump(mode="json"),
+        "explicit_config": command.requested_config.explicit.model_dump(mode="json"),
+        "source_session_id": command.source_session_id,
+        "command_family": command.command_family,
+        "create_session": command.create_session,
+    }
     encoded = json.dumps(
         payload,
         ensure_ascii=False,
@@ -210,17 +218,28 @@ class ResolveInputCommand(_StoreModel):
 
 
 class CancelJobCommand(_StoreModel):
-    """One idempotent cancellation intent and its atomic semantic event."""
+    """One atomic cancellation decision with state-specific semantic events."""
 
     job_id: str = Field(min_length=1, max_length=256)
+    active_cancellation_allowed: bool
     requested_at: datetime = Field(default_factory=_utc_now)
-    event: BackendEvent
+    queued_event: BackendEvent
+    active_event: BackendEvent
 
     @field_validator("requested_at", mode="after")
     @classmethod
     def normalize_timestamp(cls, value: datetime) -> datetime:
         """Persist the cancellation timestamp in UTC."""
         return _normalize_utc(value)
+
+    @model_validator(mode="after")
+    def require_truthful_state_events(self) -> "CancelJobCommand":
+        """Prevent queued completion and active intent from using misleading event types."""
+        if self.queued_event.type != "job_cancelled":
+            raise ValueError("queued_event must be job_cancelled")
+        if self.active_event.type != "cancel_requested":
+            raise ValueError("active_event must be cancel_requested")
+        return self
 
 
 class SucceededTerminalOutcome(_StoreModel):

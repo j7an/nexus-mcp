@@ -3,7 +3,6 @@
 import asyncio
 import base64
 import binascii
-import hashlib
 import json
 import os
 import re
@@ -73,6 +72,7 @@ from nexus_mcp.jobs.store import (
     StoredJobPage,
     SucceededTerminalOutcome,
     TerminalOutcome,
+    _create_job_request_hash,
 )
 
 __all__ = ["InvalidCursorError", "SQLiteJobStore", "StoreSchemaError"]
@@ -514,7 +514,7 @@ class SQLiteJobStore:
         connection.execute("BEGIN IMMEDIATE")
         try:
             _validate_source_checkpoint(connection, command)
-            request_hash = _create_request_hash(command)
+            request_hash = _create_job_request_hash(command)
             replay = _read_idempotency_replay(connection, command, request_hash)
             if replay is not None:
                 connection.execute("COMMIT")
@@ -636,14 +636,6 @@ def _canonical_json(value: BaseModel | object) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
-
-
-def _create_request_hash(command: CreateJobCommand) -> str:
-    payload = command.model_dump(
-        mode="json",
-        exclude={"idempotency_key", "queued_event"},
-    )
-    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
 
 def _normalize_datetime(value: datetime) -> datetime:
@@ -1319,8 +1311,6 @@ def _resolve_input_transaction(
         )
         if job is None:
             raise JobNotFoundError(command.job_id)
-        if job["state"] != "input_required":
-            raise InputNotFoundError(command.job_id, command.input_id)
         row = _fetch_one_mapping(
             connection,
             "SELECT * FROM pending_inputs WHERE job_id = ? AND input_id = ?",
@@ -1338,6 +1328,8 @@ def _resolve_input_transaction(
                 input_id=command.input_id,
                 replayed=True,
             )
+        if job["state"] != "input_required":
+            raise InputNotFoundError(command.job_id, command.input_id)
         cursor = connection.execute(
             """
             UPDATE pending_inputs
@@ -1399,6 +1391,7 @@ def _request_cancel_transaction(
                 state=row["state"],
                 cancel_requested=row["cancel_requested_at_ms"] is not None,
                 completed_immediately=row["state"] == "cancelled",
+                event_committed=False,
             )
         if row["cancel_requested_at_ms"] is not None:
             return CancelReceipt(
@@ -1406,6 +1399,15 @@ def _request_cancel_transaction(
                 state=row["state"],
                 cancel_requested=True,
                 completed_immediately=False,
+                event_committed=False,
+            )
+        if row["state"] != "queued" and not command.active_cancellation_allowed:
+            return CancelReceipt(
+                job_id=command.job_id,
+                state=row["state"],
+                cancel_requested=False,
+                completed_immediately=False,
+                event_committed=False,
             )
 
         requested_at_ms = _datetime_to_ms(command.requested_at)
@@ -1421,13 +1423,6 @@ def _request_cancel_transaction(
                 """,
                 (requested_at_ms, command.job_id),
             )
-        _insert_job_event(
-            connection,
-            command.job_id,
-            command.event,
-            _current_attempt_number(connection, command.job_id),
-            _now_ms(),
-        )
         if completed_immediately:
             connection.execute(
                 """
@@ -1468,11 +1463,19 @@ def _request_cancel_transaction(
             state = cast("JobState", row["state"])
         if cursor.rowcount != 1:
             raise JobNotFoundError(command.job_id)
+        _insert_job_event(
+            connection,
+            command.job_id,
+            command.queued_event if completed_immediately else command.active_event,
+            _current_attempt_number(connection, command.job_id),
+            _now_ms(),
+        )
         return CancelReceipt(
             job_id=command.job_id,
             state=state,
             cancel_requested=True,
             completed_immediately=completed_immediately,
+            event_committed=True,
         )
 
     return _run_immediate(connection, cancel)

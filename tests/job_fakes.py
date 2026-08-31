@@ -502,8 +502,6 @@ class InMemoryJobStore:
             job = self._jobs.get(command.job_id)
             if job is None:
                 raise JobNotFoundError(command.job_id)
-            if job.state != "input_required":
-                raise InputNotFoundError(job.job_id, command.input_id)
             pending = self._inputs[job.job_id].get(command.input_id)
             if pending is None:
                 raise InputNotFoundError(job.job_id, command.input_id)
@@ -516,6 +514,8 @@ class InMemoryJobStore:
                     input_id=pending.input_id,
                     replayed=True,
                 )
+            if job.state != "input_required":
+                raise InputNotFoundError(job.job_id, command.input_id)
             resolved = PendingInput(
                 input_id=pending.input_id,
                 job_id=pending.job_id,
@@ -542,6 +542,7 @@ class InMemoryJobStore:
                     state=job.state,
                     cancel_requested=job.cancel_requested_at is not None,
                     completed_immediately=job.state == "cancelled",
+                    event_committed=False,
                 )
             if job.cancel_requested_at is not None:
                 return CancelReceipt(
@@ -549,6 +550,15 @@ class InMemoryJobStore:
                     state=job.state,
                     cancel_requested=True,
                     completed_immediately=False,
+                    event_committed=False,
+                )
+            if job.state != "queued" and not command.active_cancellation_allowed:
+                return CancelReceipt(
+                    job_id=job.job_id,
+                    state=job.state,
+                    cancel_requested=False,
+                    completed_immediately=False,
+                    event_committed=False,
                 )
             now = command.requested_at
             updates: dict[str, object] = {"cancel_requested_at": now, "updated_at": now}
@@ -570,7 +580,7 @@ class InMemoryJobStore:
             self._jobs[job.job_id] = job
             self._commit_event(
                 job.job_id,
-                command.event,
+                command.queued_event if completed_immediately else command.active_event,
                 attempt_number=self._current_attempt_number(job.job_id),
             )
             return CancelReceipt(
@@ -578,6 +588,7 @@ class InMemoryJobStore:
                 state=job.state,
                 cancel_requested=True,
                 completed_immediately=completed_immediately,
+                event_committed=True,
             )
 
     async def terminalize(

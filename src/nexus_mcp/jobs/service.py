@@ -5,7 +5,6 @@ from collections.abc import Awaitable, Callable
 
 from nexus_mcp.backends import AgentBackend, BackendManager
 from nexus_mcp.core import (
-    TERMINAL_STATES,
     AccessContext,
     AccessDeniedError,
     AccessPolicy,
@@ -24,7 +23,6 @@ from nexus_mcp.core import (
     InputResponse,
     JobError,
     JobEvent,
-    JobEventType,
     JobHandle,
     JobListPage,
     JobNotFoundError,
@@ -310,19 +308,21 @@ class AgentJobService:
         """Request idempotent queued or provider-supported active cancellation."""
         resolved_workspace = await self._store.resolve_workspace(workspace)
         job = await self._authorized_job(resolved_workspace, access, job_id)
-        records_event = job.state not in TERMINAL_STATES and job.cancel_requested_at is None
-        if job.state in {"running", "input_required"} and records_event:
+        active_cancellation_allowed = False
+        if job.state not in {"completed", "failed", "cancelled"}:
             backend = self._backend_manager.get(job.backend_id)
-            if not backend.descriptor.capabilities.cancellation:
-                raise UnsupportedCapabilityError(job.backend_id, "cancellation")
-        event_type: JobEventType = "job_cancelled" if job.state == "queued" else "cancel_requested"
+            active_cancellation_allowed = backend.descriptor.capabilities.cancellation
         receipt = await self._store.request_cancel(
             CancelJobCommand(
                 job_id=job.job_id,
-                event=BackendEvent(type=event_type, payload={"state": job.state}),
+                active_cancellation_allowed=active_cancellation_allowed,
+                queued_event=BackendEvent(type="job_cancelled"),
+                active_event=BackendEvent(type="cancel_requested"),
             )
         )
-        if records_event:
+        if receipt.state in {"running", "input_required"} and not receipt.cancel_requested:
+            raise UnsupportedCapabilityError(job.backend_id, "cancellation")
+        if receipt.event_committed:
             self._notifier.notify()
         return receipt
 
@@ -459,12 +459,12 @@ class AgentJobService:
         access: AccessContext,
     ) -> Workspace:
         workspace = await self._store.resolve_workspace(selector)
+        self._require_workspace_access(access, workspace)
         path = workspace.canonical_path
         if not path.exists():
             raise WorkspaceInvalidError(str(path), "workspace path does not exist")
         if not path.is_dir():
             raise WorkspaceInvalidError(str(path), "workspace path is not a directory")
-        self._require_workspace_access(access, workspace)
         return workspace
 
     async def _resolve_creation_session(

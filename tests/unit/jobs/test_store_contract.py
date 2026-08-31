@@ -1,5 +1,6 @@
 """Shared behavioral contract for every durable job-store implementation."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -76,6 +77,21 @@ def make_create_job_command(**overrides: Any) -> CreateJobCommand:
     return CreateJobCommand(**(defaults | overrides))
 
 
+def make_cancel_job_command(
+    job_id: str,
+    *,
+    active_cancellation_allowed: bool = True,
+) -> CancelJobCommand:
+    """Build one atomic cancellation decision with truthful state-specific events."""
+    return CancelJobCommand(
+        job_id=job_id,
+        requested_at=NOW,
+        active_cancellation_allowed=active_cancellation_allowed,
+        queued_event=make_event("job_cancelled"),
+        active_event=make_event("cancel_requested"),
+    )
+
+
 @pytest.fixture(params=["memory", "sqlite"], ids=["memory", "sqlite"])
 async def admission_store(request: pytest.FixtureRequest, tmp_path: Path):
     """Run admission, identity, and query assertions against every implementation."""
@@ -132,6 +148,40 @@ def test_create_session_requires_session_id():
             operation=DiagnosticsOperation(),
             session_id=None,
             create_session=True,
+        )
+
+
+def test_cancel_command_carries_atomic_queued_and_active_decisions():
+    """The store must choose capability and semantic event from one locked job state."""
+    command = CancelJobCommand(
+        job_id="job-test",
+        requested_at=NOW,
+        active_cancellation_allowed=False,
+        queued_event=make_event("job_cancelled"),
+        active_event=make_event("cancel_requested"),
+    )
+
+    assert command.active_cancellation_allowed is False
+    assert command.queued_event.type == "job_cancelled"
+    assert command.active_event.type == "cancel_requested"
+
+
+@pytest.mark.parametrize(
+    ("queued_type", "active_type"),
+    [("cancel_requested", "cancel_requested"), ("job_cancelled", "job_cancelled")],
+)
+def test_cancel_command_rejects_untruthful_state_event_types(
+    queued_type: JobEventType,
+    active_type: JobEventType,
+):
+    """Swapping state-specific event types would make durable cancellation history false."""
+    with pytest.raises(ValidationError):
+        CancelJobCommand(
+            job_id="job-test",
+            requested_at=NOW,
+            active_cancellation_allowed=True,
+            queued_event=make_event(queued_type),
+            active_event=make_event(active_type),
         )
 
 
@@ -209,13 +259,7 @@ async def test_idempotency_replay_after_terminal_returns_original_handle(job_sto
     """A late retry cannot reopen a terminal job or change its original admission handle."""
     command = make_create_job_command(idempotency_key="request-terminal")
     first = await job_store.create_job(command)
-    await job_store.request_cancel(
-        CancelJobCommand(
-            job_id=first.handle.job_id,
-            requested_at=NOW,
-            event=make_event("job_cancelled"),
-        )
-    )
+    await job_store.request_cancel(make_cancel_job_command(first.handle.job_id))
 
     replay = await job_store.create_job(command)
 
@@ -263,13 +307,7 @@ async def test_second_nonterminal_job_for_session_is_rejected(admission_store):
 async def test_terminal_session_accepts_a_new_job(job_store):
     """The per-session uniqueness fence releases only after terminal cancellation."""
     first = await job_store.create_job(make_create_job_command(session_id="session-1"))
-    receipt = await job_store.request_cancel(
-        CancelJobCommand(
-            job_id=first.handle.job_id,
-            requested_at=NOW,
-            event=make_event("job_cancelled"),
-        )
-    )
+    receipt = await job_store.request_cancel(make_cancel_job_command(first.handle.job_id))
 
     second = await job_store.create_job(make_create_job_command(session_id="session-1"))
 
@@ -285,13 +323,7 @@ async def test_claimed_queued_cancellation_closes_the_attempt(job_store):
     )
     assert claimed is not None
 
-    await job_store.request_cancel(
-        CancelJobCommand(
-            job_id=created.handle.job_id,
-            requested_at=NOW,
-            event=make_event("job_cancelled"),
-        )
-    )
+    await job_store.request_cancel(make_cancel_job_command(created.handle.job_id))
 
     attempts = await job_store.get_job_attempts(created.handle.job_id)
     assert attempts[-1].phase == "finalizing"
@@ -548,10 +580,62 @@ async def test_input_lifecycle_is_atomic_validated_and_idempotent(job_store):
         (pending.input_id,),
         event=make_event("job_started", resumed=True),
     )
+    replay_after_running = await job_store.resolve_input(command)
+    assert replay_after_running.replayed is True
+    with pytest.raises(InputAlreadyResolvedError):
+        await job_store.resolve_input(
+            command.model_copy(update={"response": PermissionResponse(granted=[])})
+        )
     after = await job_store.get_control_snapshot(claimed.token)
     assert after.state == "running"
     events = await job_store.read_events(created.handle.job_id, 0, 20)
     assert [event.type for event in events.events].count("input_resolved") == 1
+
+
+async def test_resolved_input_replay_and_conflict_survive_terminal_state(job_store):
+    """Stored response identity remains authoritative after the job terminalizes."""
+    created = await job_store.create_job(make_create_job_command())
+    claimed = await job_store.claim_next(
+        "worker-input-terminal", LEASE_UNTIL, event=make_event("progress")
+    )
+    assert claimed is not None
+    await job_store.mark_running(claimed.token, (), event=make_event("job_started"))
+    pending = make_pending_permission(job_id=created.handle.job_id, created_at=NOW)
+    await job_store.mark_input_required(
+        claimed.token,
+        (pending,),
+        event=make_event("input_required", input_id=pending.input_id),
+    )
+    command = ResolveInputCommand(
+        job_id=created.handle.job_id,
+        input_id=pending.input_id,
+        response=PermissionResponse(granted=["network:api.example.com"]),
+        resolved_at=NOW,
+        event=make_event("input_resolved", input_id=pending.input_id),
+    )
+    await job_store.resolve_input(command)
+    await job_store.mark_running(
+        claimed.token,
+        (pending.input_id,),
+        event=make_event("job_started", resumed=True),
+    )
+    await job_store.terminalize(
+        claimed.token,
+        SucceededTerminalOutcome(result=make_turn_result(), completed_at=NOW),
+        event=make_event("job_completed"),
+    )
+    before = await job_store.read_events(created.handle.job_id, 0, 20)
+
+    replay = await job_store.resolve_input(command)
+    with pytest.raises(InputAlreadyResolvedError):
+        await job_store.resolve_input(
+            command.model_copy(update={"response": PermissionResponse(granted=[])})
+        )
+
+    after = await job_store.read_events(created.handle.job_id, 0, 20)
+    assert replay.replayed is True
+    assert after.events == before.events
+    assert [event.type for event in after.events].count("input_resolved") == 1
 
 
 async def test_terminalization_wins_race_with_input_resolution(job_store):
@@ -655,11 +739,7 @@ async def test_active_cancellation_is_idempotent_and_completion_may_win(job_stor
     claimed = await job_store.claim_next("worker-1", LEASE_UNTIL, event=make_event("progress"))
     assert claimed is not None
     await job_store.mark_running(claimed.token, (), event=make_event("job_started"))
-    command = CancelJobCommand(
-        job_id=created.handle.job_id,
-        requested_at=NOW,
-        event=make_event("cancel_requested"),
-    )
+    command = make_cancel_job_command(created.handle.job_id)
 
     first = await job_store.request_cancel(command)
     replay = await job_store.request_cancel(command)
@@ -671,11 +751,106 @@ async def test_active_cancellation_is_idempotent_and_completion_may_win(job_stor
     after_terminal = await job_store.request_cancel(command)
 
     assert first.cancel_requested is True
-    assert replay == first
+    assert first.event_committed is True
+    assert replay.cancel_requested is True
+    assert replay.state == first.state
+    assert replay.event_committed is False
     assert terminal.state == "completed"
     assert after_terminal.state == "completed"
+    assert after_terminal.event_committed is False
     events = await job_store.read_events(created.handle.job_id, 0, 20)
     assert [event.type for event in events.events].count("cancel_requested") == 1
+
+
+async def test_queued_cancellation_ignores_active_backend_capability(job_store):
+    """The atomic queued branch terminalizes even when active interruption is unavailable."""
+    created = await job_store.create_job(make_create_job_command())
+
+    receipt = await job_store.request_cancel(
+        make_cancel_job_command(
+            created.handle.job_id,
+            active_cancellation_allowed=False,
+        )
+    )
+
+    assert receipt.state == "cancelled"
+    assert receipt.completed_immediately is True
+    assert receipt.event_committed is True
+    events = await job_store.read_events(created.handle.job_id, 0, 20)
+    assert events.events[-1].type == "job_cancelled"
+
+
+async def test_queued_to_running_race_refuses_unsupported_active_cancellation(job_store):
+    """A state change before the locked decision cannot persist unsupported active intent."""
+    created = await job_store.create_job(make_create_job_command())
+    claimed = await job_store.claim_next("worker-race", LEASE_UNTIL, event=make_event("progress"))
+    assert claimed is not None
+    await job_store.mark_running(claimed.token, (), event=make_event("job_started"))
+    before = await job_store.read_events(created.handle.job_id, 0, 20)
+
+    receipt = await job_store.request_cancel(
+        make_cancel_job_command(
+            created.handle.job_id,
+            active_cancellation_allowed=False,
+        )
+    )
+
+    stored = await job_store.get_job(created.handle.job_id)
+    after = await job_store.read_events(created.handle.job_id, 0, 20)
+    assert stored is not None and stored.cancel_requested_at is None
+    assert receipt.state == "running"
+    assert receipt.cancel_requested is False
+    assert receipt.event_committed is False
+    assert after.events == before.events
+
+
+async def test_concurrent_active_cancel_commits_exactly_one_intent_event(job_store):
+    """Concurrent callers receive receipt truth for the single winning event transaction."""
+    created = await job_store.create_job(make_create_job_command())
+    claimed = await job_store.claim_next(
+        "worker-concurrent", LEASE_UNTIL, event=make_event("progress")
+    )
+    assert claimed is not None
+    await job_store.mark_running(claimed.token, (), event=make_event("job_started"))
+    command = make_cancel_job_command(created.handle.job_id)
+
+    receipts = await asyncio.gather(
+        job_store.request_cancel(command),
+        job_store.request_cancel(command),
+    )
+
+    assert sum(receipt.event_committed for receipt in receipts) == 1
+    assert all(receipt.cancel_requested for receipt in receipts)
+    events = await job_store.read_events(created.handle.job_id, 0, 20)
+    assert [event.type for event in events.events].count("cancel_requested") == 1
+
+
+async def test_terminal_state_wins_without_committing_cancel_event(job_store):
+    """A terminal job returns a no-op receipt even when active cancellation is disallowed."""
+    created = await job_store.create_job(make_create_job_command())
+    claimed = await job_store.claim_next(
+        "worker-terminal", LEASE_UNTIL, event=make_event("progress")
+    )
+    assert claimed is not None
+    await job_store.mark_running(claimed.token, (), event=make_event("job_started"))
+    await job_store.terminalize(
+        claimed.token,
+        SucceededTerminalOutcome(result=make_turn_result(), completed_at=NOW),
+        event=make_event("job_completed"),
+    )
+    before = await job_store.read_events(created.handle.job_id, 0, 20)
+
+    receipt = await job_store.request_cancel(
+        make_cancel_job_command(
+            created.handle.job_id,
+            active_cancellation_allowed=False,
+        )
+    )
+
+    after = await job_store.read_events(created.handle.job_id, 0, 20)
+    assert receipt.state == "completed"
+    assert receipt.event_committed is False
+    assert after.events == before.events
 
 
 @pytest.mark.parametrize(
@@ -725,13 +900,7 @@ async def test_terminalize_atomically_stores_each_outcome(
         assert attempts[-1].retry_classification is None
 
     event_count = len((await job_store.read_events(created.handle.job_id, 0, 20)).events)
-    receipt = await job_store.request_cancel(
-        CancelJobCommand(
-            job_id=created.handle.job_id,
-            requested_at=NOW,
-            event=make_event("cancel_requested"),
-        )
-    )
+    receipt = await job_store.request_cancel(make_cancel_job_command(created.handle.job_id))
     assert receipt.state == expected_state
     assert len((await job_store.read_events(created.handle.job_id, 0, 20)).events) == event_count
 

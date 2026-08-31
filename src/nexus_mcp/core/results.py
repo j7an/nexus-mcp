@@ -274,3 +274,4 @@ class CancelReceipt(_ResultModel):
     state: JobState
     cancel_requested: bool
     completed_immediately: bool
+    event_committed: bool

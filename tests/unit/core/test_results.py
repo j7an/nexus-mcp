@@ -6,6 +6,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from nexus_mcp.core.operations import ReviewTarget
 from nexus_mcp.core.results import (
+    CancelReceipt,
     JobError,
     JobResultResponse,
     OperationResult,
@@ -112,3 +113,16 @@ def test_result_fixture_accepts_explicit_overrides():
     result = make_turn_result(message="custom")
 
     assert result.message == "custom"
+
+
+def test_cancel_receipt_reports_whether_this_call_committed_an_event():
+    """Callers need committed-event truth to avoid notifier wakes for atomic no-ops."""
+    receipt = CancelReceipt(
+        job_id="job-test",
+        state="running",
+        cancel_requested=True,
+        completed_immediately=False,
+        event_committed=True,
+    )
+
+    assert receipt.event_committed is True

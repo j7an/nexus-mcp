@@ -9,8 +9,12 @@ import pytest
 
 from nexus_mcp.jobs.events import EventNotifier, EventPollingPolicy, JobEventSubscription
 from nexus_mcp.jobs.sqlite_store import SQLiteJobStore
-from nexus_mcp.jobs.store import CancelJobCommand, ClaimedJob, JobStore
-from tests.unit.jobs.test_store_contract import make_create_job_command, make_event
+from nexus_mcp.jobs.store import ClaimedJob, JobStore
+from tests.unit.jobs.test_store_contract import (
+    make_cancel_job_command,
+    make_create_job_command,
+    make_event,
+)
 
 NOW = datetime(2026, 8, 30, 20, 0, tzinfo=UTC)
 LEASE_UNTIL = datetime(2099, 1, 1, tzinfo=UTC)
@@ -35,13 +39,7 @@ async def terminal_job(job_store: SQLiteJobStore):
         "worker-1", LEASE_UNTIL, event=make_event("provider_connected")
     )
     assert claimed is not None
-    await job_store.request_cancel(
-        CancelJobCommand(
-            job_id=created.handle.job_id,
-            requested_at=NOW,
-            event=make_event("job_cancelled"),
-        )
-    )
+    await job_store.request_cancel(make_cancel_job_command(created.handle.job_id))
     terminal = await job_store.get_job(created.handle.job_id)
     assert terminal is not None and terminal.state == "cancelled"
     return terminal
