@@ -117,6 +117,7 @@ INITIAL_STATEMENTS = (
       created_at_ms INTEGER NOT NULL,
       provider_event_type TEXT,
       provider_event_id TEXT,
+      provider_reference_id TEXT REFERENCES provider_references(provider_reference_id),
       PRIMARY KEY (job_id, sequence)
     )
     """,

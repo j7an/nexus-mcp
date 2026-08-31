@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from nexus_mcp.core import (
+    BackendEvent,
     DiagnosticsOperation,
     IdempotencyConflictError,
     ProviderReference,
@@ -92,6 +93,33 @@ async def test_canonical_request_hash_ignores_mapping_order(sqlite_store: SQLite
     assert replayed.handle == created.handle
 
 
+async def test_idempotent_replay_returns_the_stable_admission_handle(
+    sqlite_store: SQLiteJobStore,
+):
+    """A later persisted state change cannot alter the handle returned by admission replay."""
+    command = make_create_job_command(idempotency_key="stable-handle")
+    created = await sqlite_store.create_job(command)
+
+    def seed_terminal_snapshot(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            UPDATE jobs
+            SET state = 'completed', terminal_at_ms = 1, updated_at_ms = 1
+            WHERE job_id = ?
+            """,
+            (created.handle.job_id,),
+        )
+
+    await sqlite_store._worker._call(seed_terminal_snapshot)
+    replayed = await sqlite_store.create_job(command)
+    stored = await sqlite_store.get_job(created.handle.job_id)
+
+    assert stored is not None and stored.state == "completed"
+    assert replayed.created is False
+    assert replayed.handle == created.handle
+    assert replayed.handle.state == "queued"
+
+
 async def test_source_checkpoint_membership_is_checked_before_admission_mutation(
     sqlite_store: SQLiteJobStore,
 ):
@@ -130,6 +158,97 @@ async def test_source_checkpoint_membership_is_checked_before_admission_mutation
     assert valid.created is True
     assert valid.handle.job_id != source.handle.job_id
     assert await sqlite_store.get_provider_references(job_id=valid.handle.job_id) == (owned,)
+
+
+async def test_queued_event_provider_reference_is_relational_and_reuses_checkpoint(
+    sqlite_store: SQLiteJobStore,
+):
+    """Queued-event references use one job-scoped row while raw provider event ids stay metadata."""
+    await sqlite_store.create_job(
+        make_create_job_command(session_id="event-source", idempotency_key=None)
+    )
+    reference = ProviderReference(kind="thread", value="thread-event")
+
+    def seed_source_reference(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            INSERT INTO provider_references (
+              provider_reference_id, backend_id, kind, value,
+              session_id, job_id, attempt_number, created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)
+            """,
+            ("ref-event-source", "codex", reference.kind, reference.value, "event-source", 1),
+        )
+
+    await sqlite_store._worker._call(seed_source_reference)
+    queued_event = BackendEvent(
+        type="job_queued",
+        payload={"status": "queued"},
+        occurred_at=NOW,
+        provider_event_type="thread.created",
+        provider_reference=reference,
+    )
+    created = await sqlite_store.create_job(
+        make_create_job_command(
+            session_id="event-child",
+            parent_session_id="event-source",
+            source_checkpoint=(reference,),
+            queued_event=queued_event,
+        )
+    )
+
+    def inspect_and_seed_raw_metadata(
+        connection: sqlite3.Connection,
+    ) -> tuple[str | None, str | None, int]:
+        row = connection.execute(
+            """
+            SELECT e.provider_event_id, e.provider_reference_id, count(r.provider_reference_id)
+            FROM job_events AS e
+            LEFT JOIN provider_references AS r ON r.job_id = e.job_id
+            WHERE e.job_id = ?
+            GROUP BY e.job_id, e.sequence
+            """,
+            (created.handle.job_id,),
+        ).fetchone()
+        assert row is not None
+        connection.execute(
+            "UPDATE job_events SET provider_event_id = ? WHERE job_id = ?",
+            ("provider-event-raw", created.handle.job_id),
+        )
+        return row
+
+    provider_event_id, provider_reference_id, reference_count = await sqlite_store._worker._call(
+        inspect_and_seed_raw_metadata
+    )
+    event = (await sqlite_store.read_events(created.handle.job_id, 0, 10)).events[0]
+
+    assert provider_event_id is None
+    assert provider_reference_id is not None
+    assert reference_count == 1
+    assert event.provider_event_type == "thread.created"
+    assert event.provider_reference == reference
+
+
+async def test_event_only_provider_reference_does_not_become_a_source_checkpoint(
+    sqlite_store: SQLiteJobStore,
+):
+    """A queued-event reference cannot change the immutable source-checkpoint snapshot."""
+    reference = ProviderReference(kind="request", value="request-event")
+    created = await sqlite_store.create_job(
+        make_create_job_command(
+            queued_event=BackendEvent(
+                type="job_queued",
+                occurred_at=NOW,
+                provider_reference=reference,
+            )
+        )
+    )
+
+    job = await sqlite_store.get_job(created.handle.job_id)
+    event = (await sqlite_store.read_events(created.handle.job_id, 0, 10)).events[0]
+
+    assert job is not None and job.source_checkpoint == ()
+    assert event.provider_reference == reference
 
 
 @pytest.mark.parametrize(
@@ -180,6 +299,28 @@ async def test_event_reads_reject_unknown_payload_schema_version(sqlite_store: S
         )
         .decode("ascii")
         .rstrip("="),
+        base64.urlsafe_b64encode(
+            json.dumps(
+                {"v": True, "created_at_ms": 1, "job_id": "job"}, separators=(",", ":")
+            ).encode("utf-8")
+        )
+        .decode("ascii")
+        .rstrip("="),
+        "eyJ2IjoxLCJjcmVhdGVkX2F0X21zIjoxLCJqb2JfaWQiOiI+In0",
+        base64.urlsafe_b64encode(
+            json.dumps({"v": 1, "created_at_ms": 1, "job_id": "job"}, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).decode("ascii"),
+        " eyJ2IjoxLCJjcmVhdGVkX2F0X21zIjoxLCJqb2JfaWQiOiJqb2IifQ",
+    ],
+    ids=[
+        "malformed",
+        "future-version",
+        "boolean-version",
+        "standard-base64",
+        "padded-base64",
+        "whitespace",
     ],
 )
 async def test_list_jobs_rejects_malformed_or_future_cursors(

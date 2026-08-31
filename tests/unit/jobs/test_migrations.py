@@ -106,6 +106,7 @@ EXPECTED_COLUMNS: dict[str, tuple[ColumnSpec, ...]] = {
         ("created_at_ms", "INTEGER", True, None, 0),
         ("provider_event_type", "TEXT", False, None, 0),
         ("provider_event_id", "TEXT", False, None, 0),
+        ("provider_reference_id", "TEXT", False, None, 0),
     ),
     "job_results": (
         ("job_id", "TEXT", False, None, 1),
@@ -163,7 +164,16 @@ EXPECTED_FOREIGN_KEYS: dict[str, set[ForeignKeySpec]] = {
             "NO ACTION",
         ),
     },
-    "job_events": {("job_id", "jobs", "job_id", "NO ACTION", "NO ACTION")},
+    "job_events": {
+        ("job_id", "jobs", "job_id", "NO ACTION", "NO ACTION"),
+        (
+            "provider_reference_id",
+            "provider_references",
+            "provider_reference_id",
+            "NO ACTION",
+            "NO ACTION",
+        ),
+    },
     "job_results": {("job_id", "jobs", "job_id", "NO ACTION", "NO ACTION")},
     "idempotency_keys": {
         ("workspace_id", "workspaces", "workspace_id", "NO ACTION", "NO ACTION"),
@@ -409,7 +419,7 @@ async def test_foreign_keys_retain_referenced_execution_rows(tmp_path):
         )
         insert_job(connection, "job", session_id="session")
         connection.execute(
-            "INSERT INTO job_events VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, NULL)",
+            "INSERT INTO job_events VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL)",
             ("job", 1, "job_queued", "{}", 1, 1),
         )
 
@@ -423,6 +433,31 @@ async def test_foreign_keys_retain_referenced_execution_rows(tmp_path):
             assert connection.execute(
                 f"SELECT 1 FROM {table} WHERE {key_column} = ?", (key,)
             ).fetchone() == (1,)
+
+
+async def test_job_event_provider_reference_rejects_an_unknown_identity(tmp_path):
+    """An event cannot retain a provider-reference id that has no relational record."""
+    database_path = tmp_path / "event-reference.sqlite3"
+    await create_database(database_path)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            "INSERT INTO workspaces VALUES (?, ?, NULL, NULL, ?, ?)",
+            ("workspace", "/tmp/workspace", 1, 1),
+        )
+        insert_job(connection, "job")
+
+        with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY constraint failed"):
+            connection.execute(
+                """
+                INSERT INTO job_events (
+                  job_id, sequence, event_type, payload_json, payload_schema_version,
+                  created_at_ms, provider_reference_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("job", 1, "job_queued", "{}", 1, 1, "missing-reference"),
+            )
 
 
 async def test_nonterminal_session_index_uses_exact_partial_scope(tmp_path):

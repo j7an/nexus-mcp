@@ -6,6 +6,7 @@ import binascii
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 from collections.abc import Callable
@@ -268,7 +269,13 @@ class SQLiteJobStore:
             self._insert_job(connection, job_id, command, request_hash, now_ms)
             _insert_source_checkpoint(connection, job_id, command, now_ms)
             _insert_idempotency_key(connection, job_id, command, request_hash, now_ms)
-            _insert_queued_event(connection, job_id, command.queued_event)
+            _insert_queued_event(
+                connection,
+                job_id,
+                command.backend_id,
+                command.queued_event,
+                now_ms,
+            )
             connection.execute("COMMIT")
             return CreateJobResult(
                 handle=JobHandle(
@@ -618,15 +625,26 @@ def _insert_source_checkpoint(
     command: CreateJobCommand,
     now_ms: int,
 ) -> None:
+    source_session_id = command.source_session_id
+    if command.source_checkpoint:
+        assert source_session_id is not None
     for reference in command.source_checkpoint:
         connection.execute(
             """
             INSERT INTO provider_references (
               provider_reference_id, backend_id, kind, value,
               session_id, job_id, attempt_number, created_at_ms
-            ) VALUES (?, ?, ?, ?, NULL, ?, NULL, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
             """,
-            (new_id(), command.backend_id, reference.kind, reference.value, job_id, now_ms),
+            (
+                new_id(),
+                command.backend_id,
+                reference.kind,
+                reference.value,
+                source_session_id,
+                job_id,
+                now_ms,
+            ),
         )
 
 
@@ -663,17 +681,24 @@ def _insert_idempotency_key(
 def _insert_queued_event(
     connection: sqlite3.Connection,
     job_id: str,
+    backend_id: str,
     event: BackendEvent,
+    now_ms: int,
 ) -> None:
-    provider_event_id = (
-        None if event.provider_reference is None else _canonical_json(event.provider_reference)
+    provider_reference_id = _ensure_job_provider_reference(
+        connection,
+        job_id,
+        backend_id,
+        event.provider_reference,
+        now_ms,
     )
     connection.execute(
         """
         INSERT INTO job_events (
           job_id, sequence, event_type, payload_json, payload_schema_version,
-          attempt_number, created_at_ms, provider_event_type, provider_event_id
-        ) VALUES (?, 1, ?, ?, ?, NULL, ?, ?, ?)
+          attempt_number, created_at_ms, provider_event_type, provider_event_id,
+          provider_reference_id
+        ) VALUES (?, 1, ?, ?, ?, NULL, ?, ?, NULL, ?)
         """,
         (
             job_id,
@@ -682,9 +707,52 @@ def _insert_queued_event(
             _JSON_SCHEMA_VERSION,
             _datetime_to_ms(event.occurred_at),
             event.provider_event_type,
-            provider_event_id,
+            provider_reference_id,
         ),
     )
+
+
+def _ensure_job_provider_reference(
+    connection: sqlite3.Connection,
+    job_id: str,
+    backend_id: str,
+    reference: ProviderReference | None,
+    now_ms: int,
+) -> str | None:
+    if reference is None:
+        return None
+    row = connection.execute(
+        """
+        SELECT provider_reference_id
+        FROM provider_references
+        WHERE backend_id = ? AND kind = ? AND value = ?
+          AND job_id = ? AND attempt_number IS NULL
+        """,
+        (backend_id, reference.kind, reference.value, job_id),
+    ).fetchone()
+    if row is not None:
+        provider_reference_id = row[0]
+        if not isinstance(provider_reference_id, str) or not provider_reference_id:
+            raise StoreSchemaError("job provider reference has an invalid identity")
+        return provider_reference_id
+    provider_reference_id = new_id()
+    connection.execute(
+        """
+        INSERT INTO provider_references (
+          provider_reference_id, backend_id, kind, value,
+          session_id, job_id, attempt_number, created_at_ms
+        ) VALUES (?, ?, ?, ?, NULL, ?, NULL, ?)
+        """,
+        (
+            provider_reference_id,
+            backend_id,
+            reference.kind,
+            reference.value,
+            job_id,
+            now_ms,
+        ),
+    )
+    return provider_reference_id
 
 
 def _read_session(
@@ -778,7 +846,7 @@ def _job_from_row(connection: sqlite3.Connection, row: dict[str, Any]) -> AgentJ
         for kind, value in connection.execute(
             """
             SELECT kind, value FROM provider_references
-            WHERE job_id = ? AND attempt_number IS NULL
+            WHERE job_id = ? AND session_id IS NOT NULL AND attempt_number IS NULL
             ORDER BY created_at_ms, provider_reference_id
             """,
             (row["job_id"],),
@@ -859,7 +927,6 @@ def _job_handle(job: AgentJob) -> JobHandle:
         job_id=job.job_id,
         session_id=job.session_id,
         operation=job.operation,
-        state=job.state,
     )
 
 
@@ -913,6 +980,8 @@ def _encode_cursor(created_at_ms: int, job_id: str) -> str:
 
 
 def _decode_cursor(cursor: str) -> tuple[int, str]:
+    if re.fullmatch(r"[A-Za-z0-9_-]+", cursor) is None:
+        raise InvalidCursorError("invalid stored-job cursor")
     try:
         padding = "=" * (-len(cursor) % 4)
         raw = base64.b64decode(
@@ -923,7 +992,7 @@ def _decode_cursor(cursor: str) -> tuple[int, str]:
         payload = json.loads(raw.decode("utf-8"))
         if not isinstance(payload, dict) or set(payload) != {"v", "created_at_ms", "job_id"}:
             raise ValueError
-        if payload["v"] != _CURSOR_VERSION:
+        if type(payload["v"]) is not int or payload["v"] != _CURSOR_VERSION:
             raise ValueError
         if type(payload["created_at_ms"]) is not int:
             raise ValueError
@@ -962,7 +1031,7 @@ def _read_events(
         (job_id, after_sequence, limit + 1),
     )
     page_rows = rows[:limit]
-    events = tuple(_event_from_row(row) for row in page_rows)
+    events = tuple(_event_from_row(connection, row) for row in page_rows)
     return EventPage(
         events=events,
         next_after_sequence=None if not events else events[-1].sequence,
@@ -970,20 +1039,13 @@ def _read_events(
     )
 
 
-def _event_from_row(row: dict[str, Any]) -> JobEvent:
+def _event_from_row(connection: sqlite3.Connection, row: dict[str, Any]) -> JobEvent:
     payload = _decode_json_object(
         row["payload_json"],
         row["payload_schema_version"],
         "payload_schema_version",
     )
-    provider_reference = None
-    if row["provider_event_id"] is not None:
-        provider_reference = _decode_model(
-            row["provider_event_id"],
-            _JSON_SCHEMA_VERSION,
-            "provider_event_reference_schema_version",
-            ProviderReference,
-        )
+    provider_reference = _read_event_provider_reference(connection, row)
     try:
         return JobEvent(
             job_id=row["job_id"],
@@ -998,6 +1060,29 @@ def _event_from_row(row: dict[str, Any]) -> JobEvent:
         )
     except ValidationError as error:
         raise StoreSchemaError("job event row is invalid") from error
+
+
+def _read_event_provider_reference(
+    connection: sqlite3.Connection,
+    event_row: dict[str, Any],
+) -> ProviderReference | None:
+    provider_reference_id = event_row["provider_reference_id"]
+    if provider_reference_id is None:
+        return None
+    row = connection.execute(
+        """
+        SELECT kind, value, job_id
+        FROM provider_references
+        WHERE provider_reference_id = ?
+        """,
+        (provider_reference_id,),
+    ).fetchone()
+    if row is None or row[2] != event_row["job_id"]:
+        raise StoreSchemaError("job event provider reference is missing or belongs to another job")
+    try:
+        return ProviderReference(kind=row[0], value=row[1])
+    except ValidationError as error:
+        raise StoreSchemaError("job event provider reference row is invalid") from error
 
 
 def _apply_migrations(connection: sqlite3.Connection) -> None:
