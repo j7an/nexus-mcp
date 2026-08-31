@@ -111,8 +111,9 @@ class InMemoryJobStore:
         self._events: dict[str, list[JobEvent]] = {}
         self._event_sequences: dict[str, int] = {}
         self._results: dict[str, JobResultEnvelope | JobError] = {}
-        self._idempotency: dict[tuple[str, str, str, str], tuple[str, str]] = {}
+        self._idempotency: dict[tuple[str, str, str, str, str | None], tuple[str, str]] = {}
         self._runtime_leases: dict[str, RuntimeLease] = {}
+        self._runtime_generations: dict[str, int] = {}
 
     async def open(self) -> None:
         """Open the in-memory lifecycle without external resources."""
@@ -142,6 +143,7 @@ class InMemoryJobStore:
     async def create_job(self, command: CreateJobCommand) -> CreateJobResult:
         """Atomically persist one admitted job, session if needed, and queued event."""
         async with self._lock:
+            self._validate_source_checkpoint(command)
             request_hash = _create_job_request_hash(command)
             idempotency_scope = self._idempotency_scope(command)
             if idempotency_scope is not None:
@@ -500,6 +502,8 @@ class InMemoryJobStore:
             job = self._jobs.get(command.job_id)
             if job is None:
                 raise JobNotFoundError(command.job_id)
+            if job.state != "input_required":
+                raise InputNotFoundError(job.job_id, command.input_id)
             pending = self._inputs[job.job_id].get(command.input_id)
             if pending is None:
                 raise InputNotFoundError(job.job_id, command.input_id)
@@ -673,14 +677,16 @@ class InMemoryJobStore:
                     }
                 )
             else:
+                generation = self._runtime_generations.get(runtime_key, 0) + 1
                 lease = RuntimeLease(
                     runtime_key=runtime_key,
                     owner_id=owner_id,
-                    generation=1 if current is None else current.generation + 1,
+                    generation=generation,
                     lease_until=lease_until,
                     heartbeat_at=now,
                 )
             self._runtime_leases[runtime_key] = lease
+            self._runtime_generations[runtime_key] = lease.generation
             return lease
 
     async def renew_runtime_lease(self, lease: RuntimeLease, lease_until: datetime) -> bool:
@@ -727,6 +733,7 @@ class InMemoryJobStore:
                     if job.state in TERMINAL_STATES
                     and job.completed_at is not None
                     and job.completed_at < cutoff
+                    and not any(item.response is None for item in self._inputs[job.job_id].values())
                 }
             events_deleted = sum(len(self._events.get(job_id, ())) for job_id in terminal_ids)
             for job_id in terminal_ids:
@@ -755,6 +762,20 @@ class InMemoryJobStore:
         self._workspaces[workspace.workspace_id] = workspace
         self._workspace_ids_by_path[path] = workspace.workspace_id
 
+    def _validate_source_checkpoint(self, command: CreateJobCommand) -> None:
+        if not command.source_checkpoint:
+            return
+        source_session_id = command.source_session_id
+        assert source_session_id is not None
+        source_session = self._sessions.get(source_session_id)
+        if source_session is None:
+            raise SessionNotFoundError(source_session_id)
+        if any(
+            reference not in source_session.provider_references
+            for reference in command.source_checkpoint
+        ):
+            raise ValueError("source checkpoint contains a reference not owned by its session")
+
     def _prepare_session(self, command: CreateJobCommand) -> AgentSession | None:
         if command.session_id is None:
             return None
@@ -774,7 +795,6 @@ class InMemoryJobStore:
                 owner_id=command.owner_id,
                 access_policy=command.access_policy,
                 parent_session_id=command.parent_session_id,
-                provider_references=command.source_checkpoint,
             )
 
         expected = (
@@ -810,7 +830,7 @@ class InMemoryJobStore:
     @staticmethod
     def _idempotency_scope(
         command: CreateJobCommand,
-    ) -> tuple[str, str, str, str] | None:
+    ) -> tuple[str, str, str, str, str | None] | None:
         if command.idempotency_key is None:
             return None
         return (
@@ -818,6 +838,7 @@ class InMemoryJobStore:
             command.workspace.workspace_id,
             command.command_family,
             command.idempotency_key,
+            command.source_session_id,
         )
 
     @staticmethod

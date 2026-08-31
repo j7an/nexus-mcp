@@ -88,6 +88,15 @@ class CreateJobCommand(_StoreModel):
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=512)
     queued_event: BackendEvent
 
+    @property
+    def source_session_id(self) -> str | None:
+        """Return the session from which continuation or child work derives."""
+        if self.parent_session_id is not None:
+            return self.parent_session_id
+        if not self.create_session:
+            return self.session_id
+        return None
+
     @model_validator(mode="after")
     def validate_session_shape(self) -> "CreateJobCommand":
         """Keep diagnostics sessionless and every conversational operation session-bound."""
@@ -98,6 +107,8 @@ class CreateJobCommand(_StoreModel):
                 raise ValueError("diagnostics operations must be sessionless")
         elif self.session_id is None:
             raise ValueError("non-diagnostics operations require session_id")
+        if self.source_checkpoint and self.source_session_id is None:
+            raise ValueError("source_checkpoint requires a source session")
         return self
 
 

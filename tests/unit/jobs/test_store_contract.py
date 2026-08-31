@@ -13,6 +13,7 @@ from nexus_mcp.core import (
     DiagnosticsResult,
     IdempotencyConflictError,
     InputAlreadyResolvedError,
+    InputNotFoundError,
     JobEventType,
     PermissionResponse,
     ProviderReference,
@@ -115,6 +116,32 @@ def test_create_session_requires_session_id():
         )
 
 
+def test_source_checkpoint_requires_a_derived_source_session():
+    """Provider checkpoints cannot be admitted without a session that owns them."""
+    with pytest.raises(ValidationError):
+        make_create_job_command(
+            operation=DiagnosticsOperation(),
+            session_id=None,
+            create_session=False,
+            source_checkpoint=(ProviderReference(kind="thread", value="thread-1"),),
+        )
+
+
+def test_create_command_exposes_derived_source_session():
+    """Idempotency and checkpoint provenance use one explicit source-session derivation."""
+    root = make_create_job_command(session_id="root", create_session=True)
+    continuation = make_create_job_command(session_id="existing", create_session=False)
+    child = make_create_job_command(
+        session_id="child",
+        create_session=True,
+        parent_session_id="parent",
+    )
+
+    assert root.source_session_id is None
+    assert continuation.source_session_id == "existing"
+    assert child.source_session_id == "parent"
+
+
 def test_job_query_requires_nonempty_states_and_bounded_limit():
     """List calls cannot become unbounded scans or meaningless state filters."""
     access = JobAccessFilter(principal_id="local:501")
@@ -177,6 +204,38 @@ async def test_idempotency_replay_after_terminal_returns_original_handle(job_sto
     assert replay.handle == first.handle
     stored = await job_store.get_job(first.handle.job_id)
     assert stored is not None and stored.state == "cancelled"
+
+
+async def test_same_idempotency_key_is_independent_across_source_sessions(job_store):
+    """Continuation idempotency is scoped to the session from which work derives."""
+    for session_id in ("source-a", "source-b"):
+        root = await job_store.create_job(make_create_job_command(session_id=session_id))
+        await job_store.request_cancel(
+            CancelJobCommand(
+                job_id=root.handle.job_id,
+                requested_at=NOW,
+                event=make_event("job_cancelled"),
+            )
+        )
+
+    first = await job_store.create_job(
+        make_create_job_command(
+            session_id="source-a",
+            create_session=False,
+            idempotency_key="same-key",
+        )
+    )
+    second = await job_store.create_job(
+        make_create_job_command(
+            session_id="source-b",
+            create_session=False,
+            idempotency_key="same-key",
+        )
+    )
+
+    assert first.created is True
+    assert second.created is True
+    assert second.handle.job_id != first.handle.job_id
 
 
 async def test_second_nonterminal_job_for_session_is_rejected(job_store):
@@ -262,6 +321,58 @@ async def test_failed_create_job_leaves_no_partial_workspace(job_store):
         await job_store.create_job(command)
     with pytest.raises(WorkspaceInvalidError):
         await job_store.resolve_workspace(WorkspaceSelector(workspace_id="ws-rollback"))
+
+
+async def test_source_checkpoint_requires_existing_source_before_any_mutation(job_store):
+    """A missing checkpoint source rolls back workspace, child session, job, event, and key."""
+    workspace = Workspace(
+        workspace_id="ws-missing-source",
+        canonical_path=Path("/tmp/nexus-missing-source"),
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    command = make_create_job_command(
+        workspace=workspace,
+        session_id="child-missing-source",
+        parent_session_id="missing-source",
+        source_checkpoint=(ProviderReference(kind="thread", value="thread-missing"),),
+        idempotency_key="missing-source-key",
+    )
+
+    with pytest.raises(SessionNotFoundError):
+        await job_store.create_job(command)
+    assert await job_store.get_session("child-missing-source") is None
+    with pytest.raises(WorkspaceInvalidError):
+        await job_store.resolve_workspace(WorkspaceSelector(workspace_id=workspace.workspace_id))
+
+
+async def test_source_checkpoint_must_belong_to_source_session_atomically(job_store):
+    """A mismatched provider reference creates no child state or idempotency residue."""
+    await job_store.create_job(make_create_job_command(session_id="source-session"))
+    claimed = await job_store.claim_next(
+        "worker-1", LEASE_UNTIL, event=make_event("progress", action="claimed")
+    )
+    assert claimed is not None
+    owned = ProviderReference(kind="thread", value="thread-owned")
+    await job_store.record_provider_reference(claimed.token, owned)
+    mismatched = ProviderReference(kind="thread", value="thread-other")
+    invalid = make_create_job_command(
+        session_id="child-session",
+        parent_session_id="source-session",
+        source_checkpoint=(mismatched,),
+        idempotency_key="child-key",
+    )
+
+    with pytest.raises(ValueError, match="source checkpoint"):
+        await job_store.create_job(invalid)
+    assert await job_store.get_session("child-session") is None
+
+    valid = await job_store.create_job(invalid.model_copy(update={"source_checkpoint": (owned,)}))
+    assert valid.created is True
+    assert await job_store.get_provider_references(job_id=valid.handle.job_id) == (owned,)
+    child = await job_store.get_session("child-session")
+    assert child is not None
+    assert child.provider_references == ()
 
 
 async def test_claim_allocates_attempt_event_and_new_fencing_generation(job_store):
@@ -391,6 +502,42 @@ async def test_input_lifecycle_is_atomic_validated_and_idempotent(job_store):
     assert after.state == "running"
     events = await job_store.read_events(created.handle.job_id, 0, 20)
     assert [event.type for event in events.events].count("input_resolved") == 1
+
+
+async def test_terminalization_wins_race_with_input_resolution(job_store):
+    """A response arriving after terminal commit cannot mutate input state or append history."""
+    created = await job_store.create_job(make_create_job_command())
+    claimed = await job_store.claim_next("worker-1", LEASE_UNTIL, event=make_event("progress"))
+    assert claimed is not None
+    await job_store.mark_running(claimed.token, (), event=make_event("job_started"))
+    pending = make_pending_permission(job_id=created.handle.job_id)
+    await job_store.mark_input_required(
+        claimed.token,
+        (pending,),
+        event=make_event("input_required", input_id=pending.input_id),
+    )
+    await job_store.terminalize(
+        claimed.token,
+        CancelledTerminalOutcome(completed_at=NOW),
+        event=make_event("job_cancelled"),
+    )
+    before = await job_store.read_events(created.handle.job_id, 0, 20)
+
+    with pytest.raises(InputNotFoundError):
+        await job_store.resolve_input(
+            ResolveInputCommand(
+                job_id=created.handle.job_id,
+                input_id=pending.input_id,
+                response=PermissionResponse(granted=["network:api.example.com"]),
+                resolved_at=NOW,
+                event=make_event("input_resolved"),
+            )
+        )
+
+    after = await job_store.read_events(created.handle.job_id, 0, 20)
+    assert after.events == before.events
+    assert after.events[-1].type == "job_cancelled"
+    assert await job_store.get_pending_inputs(created.handle.job_id) == (pending,)
 
 
 async def test_reconciliation_and_retry_create_a_new_attempt_without_reopening_state(job_store):
@@ -611,13 +758,91 @@ async def test_runtime_lease_contention_generation_and_endpoint_fencing(job_stor
     )
     await job_store.release_runtime_lease(with_endpoint)
     replacement = await job_store.acquire_runtime_lease("opencode:ws-test", "process-3", far_future)
-    assert replacement.generation == 1
+    assert replacement.generation == first.generation + 1
 
     abandoned = await job_store.acquire_runtime_lease("opencode:abandoned", "process-1", OLD)
     assert await job_store.renew_runtime_lease(abandoned, far_future) is False
     await job_store.release_runtime_lease(abandoned)
     fenced = await job_store.acquire_runtime_lease("opencode:abandoned", "process-2", far_future)
     assert fenced.generation == abandoned.generation + 1
+
+    same_owner_old = await job_store.acquire_runtime_lease(
+        "opencode:same-owner", "process-1", far_future
+    )
+    await job_store.release_runtime_lease(same_owner_old)
+    same_owner_current = await job_store.acquire_runtime_lease(
+        "opencode:same-owner", "process-1", far_future
+    )
+    assert same_owner_current.generation == same_owner_old.generation + 1
+    assert await job_store.renew_runtime_lease(same_owner_old, far_future) is False
+    await job_store.release_runtime_lease(same_owner_old)
+    assert await job_store.renew_runtime_lease(same_owner_current, far_future) is True
+
+
+async def test_prune_retains_terminal_jobs_with_unresolved_inputs(job_store):
+    """Retention cannot erase a terminal snapshot while durable input remains unresolved."""
+    unresolved_job = await job_store.create_job(
+        make_create_job_command(
+            operation=DiagnosticsOperation(),
+            session_id=None,
+            create_session=False,
+        )
+    )
+    unresolved_claim = await job_store.claim_next(
+        "worker-1", LEASE_UNTIL, event=make_event("progress")
+    )
+    assert unresolved_claim is not None
+    await job_store.mark_running(unresolved_claim.token, (), event=make_event("job_started"))
+    unresolved_input = make_pending_permission(job_id=unresolved_job.handle.job_id)
+    await job_store.mark_input_required(
+        unresolved_claim.token,
+        (unresolved_input,),
+        event=make_event("input_required"),
+    )
+    await job_store.terminalize(
+        unresolved_claim.token,
+        CancelledTerminalOutcome(completed_at=OLD),
+        event=make_event("job_cancelled"),
+    )
+
+    resolved_job = await job_store.create_job(
+        make_create_job_command(
+            operation=DiagnosticsOperation(),
+            session_id=None,
+            create_session=False,
+        )
+    )
+    resolved_claim = await job_store.claim_next(
+        "worker-2", LEASE_UNTIL, event=make_event("progress")
+    )
+    assert resolved_claim is not None
+    await job_store.mark_running(resolved_claim.token, (), event=make_event("job_started"))
+    resolved_input = make_pending_permission(job_id=resolved_job.handle.job_id)
+    await job_store.mark_input_required(
+        resolved_claim.token,
+        (resolved_input,),
+        event=make_event("input_required"),
+    )
+    await job_store.resolve_input(
+        ResolveInputCommand(
+            job_id=resolved_job.handle.job_id,
+            input_id=resolved_input.input_id,
+            response=PermissionResponse(granted=["network:api.example.com"]),
+            resolved_at=NOW,
+            event=make_event("input_resolved"),
+        )
+    )
+    await job_store.terminalize(
+        resolved_claim.token,
+        CancelledTerminalOutcome(completed_at=OLD),
+        event=make_event("job_cancelled"),
+    )
+
+    result = await job_store.prune(PrunePolicy(terminal_job_before=NOW), now=NOW)
+
+    assert result.terminal_jobs_deleted == 1
+    assert await job_store.get_job(unresolved_job.handle.job_id) is not None
+    assert await job_store.get_job(resolved_job.handle.job_id) is None
 
 
 async def test_prune_removes_only_eligible_terminal_jobs_and_old_events(job_store):
