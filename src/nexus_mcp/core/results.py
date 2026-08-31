@@ -51,6 +51,7 @@ type JobErrorCode = Literal[
     "backend_disabled",
     "unsupported_capability",
     "workspace_invalid",
+    "workspace_unsupported",
     "session_not_found",
     "session_busy",
     "job_not_found",

@@ -1,4 +1,6 @@
 # tests/unit/test_process.py
+import asyncio
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -16,6 +18,31 @@ async def test_run_subprocess_success(mock_exec):
     result = await run_subprocess(["echo", "hello"])
     assert result.stdout == "output"
     assert result.returncode == 0
+
+
+@patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+async def test_run_subprocess_forwards_non_none_cwd_only(mock_exec):
+    """Explicit workspaces reach subprocess creation without changing the default call shape."""
+    mock_exec.return_value = create_mock_process(stdout="output", returncode=0)
+
+    await run_subprocess(["echo", "hello"])
+    mock_exec.assert_awaited_once_with(
+        "echo",
+        "hello",
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    mock_exec.reset_mock()
+    await run_subprocess(["pwd"], cwd=Path("/tmp/workspace"))
+    mock_exec.assert_awaited_once_with(
+        "pwd",
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=Path("/tmp/workspace"),
+    )
 
 
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")

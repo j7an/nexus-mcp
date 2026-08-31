@@ -140,6 +140,19 @@ def test_configuration_resolution_uses_explicit_provider_and_snapshotted_layers_
     }
 
 
+def test_configuration_resolution_labels_authorized_legacy_fallbacks():
+    """Legacy Nexus defaults remain distinguishable from provider-native defaults."""
+    resolved = ResolvedExecutionConfig.from_requested(
+        RequestedExecutionConfig(),
+        backend_defaults=ExecutionConfigValues(),
+        fallback_defaults=ExecutionConfigValues(model="legacy-model"),
+        fallback_source="legacy_nexus_fallback",
+    )
+
+    assert resolved.model == "legacy-model"
+    assert resolved.sources == {"model": "legacy_nexus_fallback"}
+
+
 def test_configuration_rejects_secret_bearing_fields():
     """Snapshots persist policy values, never credentials."""
     with pytest.raises(ValidationError):

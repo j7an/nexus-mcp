@@ -50,6 +50,13 @@ def test_job_error_rejects_unbounded_provider_payload():
         JobError(code="provider_failed", message="failed", details={"raw": "x" * 20_000})
 
 
+def test_workspace_unsupported_is_a_stable_job_error_code():
+    """Fail-closed backends retain a machine-readable workspace capability error."""
+    error = JobError(code="workspace_unsupported", message="workspace cannot be forwarded")
+
+    assert error.code == "workspace_unsupported"
+
+
 def test_job_error_details_are_deeply_immutable_and_serialize_as_json():
     """Normalized diagnostics cannot mutate after validation or leak read-only containers."""
     error = make_job_error(details={"provider": {"status": "failed"}, "attempts": [1, 2]})

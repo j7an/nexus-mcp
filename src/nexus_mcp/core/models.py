@@ -35,6 +35,7 @@ __all__ = [
     "ConfigLayerSnapshot",
     "ConfigSource",
     "ExecutionConfigValues",
+    "FallbackConfigSource",
     "JobAttempt",
     "JobEvent",
     "JobEventType",
@@ -81,7 +82,16 @@ type JobEventType = Literal[
     "job_failed",
     "job_cancelled",
 ]
-type ConfigSource = Literal["explicit", "provider", "workspace", "user", "environment", "fallback"]
+type FallbackConfigSource = Literal["fallback", "legacy_nexus_fallback"]
+type ConfigSource = Literal[
+    "explicit",
+    "provider",
+    "workspace",
+    "user",
+    "environment",
+    "fallback",
+    "legacy_nexus_fallback",
+]
 type ConfigFieldName = Literal[
     "model",
     "reasoning_effort",
@@ -404,6 +414,7 @@ class ResolvedExecutionConfig(FrozenModel):
         *,
         backend_defaults: ExecutionConfigValues | Mapping[str, object],
         fallback_defaults: ExecutionConfigValues | Mapping[str, object] | None = None,
+        fallback_source: FallbackConfigSource = "fallback",
     ) -> "ResolvedExecutionConfig":
         """Resolve one immutable config using the approved precedence order.
 
@@ -423,7 +434,7 @@ class ResolvedExecutionConfig(FrozenModel):
             layers.append(("user", requested.user.values))
         if requested.environment is not None:
             layers.append(("environment", requested.environment.values))
-        layers.append(("fallback", fallback_values))
+        layers.append((fallback_source, fallback_values))
         values: dict[ConfigFieldName, ConfigValue | None] = dict.fromkeys(cls._FIELD_NAMES)
         sources: dict[ConfigFieldName, ConfigSource] = {}
         for source, layer in layers:

@@ -2,30 +2,40 @@
 __all__ = ["run_subprocess"]
 
 import asyncio  # ← REQUIRED: Module-level import for mock patching to work (see Step 7 warning)
+from pathlib import Path
+from typing import Any
 
 from nexus_mcp.exceptions import SubprocessError, SubprocessTimeoutError
 from nexus_mcp.types import SubprocessResult
 
 
-async def run_subprocess(command: list[str], timeout: float | None = 600.0) -> SubprocessResult:
+async def run_subprocess(
+    command: list[str],
+    timeout: float | None = 600.0,
+    *,
+    cwd: Path | None = None,
+) -> SubprocessResult:
     """Execute a subprocess command and return result.
 
     Args:
         command: Command and arguments as list
         timeout: Maximum execution time in seconds (default: 600s / 10 minutes).
                  Pass None to disable timeout.
+        cwd: Canonical working directory. Omitted from subprocess creation when unset.
 
     Raises:
         SubprocessError: If command not found, permission denied, or decode errors.
         SubprocessTimeoutError: If command exceeds timeout.
     """
     try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdin=asyncio.subprocess.DEVNULL,  # Prevent inheriting MCP server's stdio pipe
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        subprocess_kwargs: dict[str, Any] = {
+            "stdin": asyncio.subprocess.DEVNULL,
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.PIPE,
+        }
+        if cwd is not None:
+            subprocess_kwargs["cwd"] = cwd
+        process = await asyncio.create_subprocess_exec(*command, **subprocess_kwargs)
 
         # Wait for process with optional timeout
         try:

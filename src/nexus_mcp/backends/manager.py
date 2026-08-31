@@ -18,7 +18,11 @@ __all__ = ["BackendManager"]
 class BackendManager:
     """Register backend runtimes once and expose deterministic capability discovery."""
 
-    def __init__(self, backends: Iterable[AgentBackend]) -> None:
+    def __init__(self, backends: Iterable[AgentBackend] | None = None) -> None:
+        if backends is None:
+            from nexus_mcp.legacy import legacy_backends
+
+            backends = legacy_backends()
         self._backends: dict[str, AgentBackend] = {}
         self._closed_backend_ids: set[str] = set()
         for backend in backends:

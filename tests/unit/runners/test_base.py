@@ -10,6 +10,7 @@ Tests verify:
 """
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -17,7 +18,7 @@ import pytest
 from nexus_mcp.exceptions import ParseError, RetryableError, SubprocessError
 from nexus_mcp.process import run_subprocess
 from nexus_mcp.runners.base import AbstractRunner, CLIRunner
-from nexus_mcp.types import AgentResponse, PromptRequest
+from nexus_mcp.types import AgentResponse, PromptRequest, SubprocessResult
 from tests.fixtures import create_mock_process, make_agent_response, make_prompt_request
 
 
@@ -191,6 +192,22 @@ class TestAbstractRunner:
             mock_run.assert_awaited_once()
             _, kwargs = mock_run.call_args
             assert kwargs.get("timeout") == runner.timeout
+
+    async def test_run_passes_request_cwd_to_subprocess(self, runner):
+        """Runner subprocesses execute in the admitted canonical workspace."""
+        request = make_prompt_request(cwd=Path("/tmp/workspace"))
+
+        with patch(
+            "nexus_mcp.runners.base.run_subprocess",
+            new=AsyncMock(return_value=SubprocessResult(stdout="output", stderr="", returncode=0)),
+        ) as mock_run:
+            await runner.run(request)
+
+        mock_run.assert_awaited_once_with(
+            ["test-cli", "-p", "Hello"],
+            timeout=runner.timeout,
+            cwd=Path("/tmp/workspace"),
+        )
 
     def test_make_recovered_response_stamps_metadata(self, runner):
         """_make_recovered_response adds recovery keys to a copy of the response."""
