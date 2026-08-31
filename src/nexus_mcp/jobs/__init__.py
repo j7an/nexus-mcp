@@ -1,5 +1,11 @@
 """Framework-independent job application and persistence contracts."""
 
+from nexus_mcp.jobs.events import (
+    EventNotifier,
+    EventPollingPolicy,
+    JobEventSubscription,
+    subscribe_events,
+)
 from nexus_mcp.jobs.store import (
     CancelJobCommand,
     CancelledTerminalOutcome,
@@ -31,8 +37,11 @@ __all__ = [
     "CreateJobCommand",
     "CreateJobResult",
     "EventPage",
+    "EventNotifier",
+    "EventPollingPolicy",
     "FailedTerminalOutcome",
     "JobAccessFilter",
+    "JobEventSubscription",
     "JobQuery",
     "JobStore",
     "LeaseToken",
@@ -44,4 +53,5 @@ __all__ = [
     "StoredJobPage",
     "SucceededTerminalOutcome",
     "TerminalOutcome",
+    "subscribe_events",
 ]
