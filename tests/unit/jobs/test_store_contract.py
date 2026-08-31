@@ -92,11 +92,13 @@ async def admission_store(request: pytest.FixtureRequest, tmp_path: Path):
 
 
 @pytest.fixture(params=["memory", "sqlite"], ids=["memory", "sqlite"])
-async def job_store(request: pytest.FixtureRequest):
-    """Keep Task 7 lifecycle cases shared while SQLite lifecycle is intentionally absent."""
-    if request.param == "sqlite":
-        pytest.skip("SQLite lifecycle is added in Task 7")
-    store = InMemoryJobStore()
+async def job_store(request: pytest.FixtureRequest, tmp_path: Path):
+    """Run the complete lifecycle contract against every store implementation."""
+    store = (
+        SQLiteJobStore(tmp_path / "jobs.sqlite3")
+        if request.param == "sqlite"
+        else InMemoryJobStore()
+    )
     await store.open()
     try:
         yield store
@@ -499,7 +501,7 @@ async def test_input_lifecycle_is_atomic_validated_and_idempotent(job_store):
     claimed = await job_store.claim_next("worker-1", LEASE_UNTIL, event=make_event("progress"))
     assert claimed is not None
     await job_store.mark_running(claimed.token, (), event=make_event("job_started"))
-    pending = make_pending_permission(job_id=created.handle.job_id)
+    pending = make_pending_permission(job_id=created.handle.job_id, created_at=NOW)
     await job_store.mark_input_required(
         claimed.token,
         (pending,),
@@ -546,7 +548,7 @@ async def test_terminalization_wins_race_with_input_resolution(job_store):
     claimed = await job_store.claim_next("worker-1", LEASE_UNTIL, event=make_event("progress"))
     assert claimed is not None
     await job_store.mark_running(claimed.token, (), event=make_event("job_started"))
-    pending = make_pending_permission(job_id=created.handle.job_id)
+    pending = make_pending_permission(job_id=created.handle.job_id, created_at=NOW)
     await job_store.mark_input_required(
         claimed.token,
         (pending,),
@@ -833,7 +835,10 @@ async def test_prune_retains_terminal_jobs_with_unresolved_inputs(job_store):
     )
     assert unresolved_claim is not None
     await job_store.mark_running(unresolved_claim.token, (), event=make_event("job_started"))
-    unresolved_input = make_pending_permission(job_id=unresolved_job.handle.job_id)
+    unresolved_input = make_pending_permission(
+        job_id=unresolved_job.handle.job_id,
+        created_at=NOW,
+    )
     await job_store.mark_input_required(
         unresolved_claim.token,
         (unresolved_input,),
@@ -857,7 +862,11 @@ async def test_prune_retains_terminal_jobs_with_unresolved_inputs(job_store):
     )
     assert resolved_claim is not None
     await job_store.mark_running(resolved_claim.token, (), event=make_event("job_started"))
-    resolved_input = make_pending_permission(job_id=resolved_job.handle.job_id)
+    resolved_input = make_pending_permission(
+        input_id="input-resolved",
+        job_id=resolved_job.handle.job_id,
+        created_at=NOW,
+    )
     await job_store.mark_input_required(
         resolved_claim.token,
         (resolved_input,),
