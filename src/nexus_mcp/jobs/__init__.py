@@ -12,6 +12,7 @@ from nexus_mcp.jobs.events import (
     JobEventSubscription,
     subscribe_events,
 )
+from nexus_mcp.jobs.service import AgentJobService
 from nexus_mcp.jobs.store import (
     CancelJobCommand,
     CancelledTerminalOutcome,
@@ -36,6 +37,7 @@ from nexus_mcp.jobs.store import (
 )
 
 __all__ = [
+    "AgentJobService",
     "CancelJobCommand",
     "CancelledTerminalOutcome",
     "ClaimedJob",

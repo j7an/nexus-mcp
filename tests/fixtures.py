@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 from nexus_mcp.cli_detector import CLIInfo
+from nexus_mcp.core.capabilities import BackendCapabilities, BackendDescriptor
 from nexus_mcp.core.interaction import PendingInput, PermissionRequest
 from nexus_mcp.core.models import (
     AccessContext,
@@ -34,6 +35,28 @@ def make_access_context(**overrides: Any) -> AccessContext:
     """Create a stable trusted local caller identity for core tests."""
     defaults = {"principal_id": "local:501", "authentication_kind": "local"}
     return AccessContext(**(defaults | overrides))
+
+
+def make_backend_descriptor(**overrides: Any) -> BackendDescriptor:
+    """Create a fully capable backend descriptor for application-service tests."""
+    defaults: dict[str, Any] = {
+        "backend_id": "codex",
+        "display_name": "Codex",
+        "capabilities": BackendCapabilities(
+            operations=frozenset({"turn", "fork", "review", "diagnostics"}),
+            cancellation=True,
+            session_fork=True,
+            input_required=True,
+            sandbox_modes=frozenset({"read_only", "workspace_write", "danger_full_access"}),
+            review_targets=frozenset({"working_tree", "branch", "commit", "pull_request"}),
+            review_deliveries=frozenset({"inline", "detached"}),
+        ),
+    }
+    values = defaults | overrides
+    capabilities = values["capabilities"]
+    if not isinstance(capabilities, BackendCapabilities):
+        values["capabilities"] = BackendCapabilities(**capabilities)
+    return BackendDescriptor(**values)
 
 
 def make_workspace(**overrides: Any) -> Workspace:
