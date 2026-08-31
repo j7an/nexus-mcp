@@ -40,6 +40,7 @@ from nexus_mcp.labels import assign_labels
 from nexus_mcp.mcp.compound_tools import register_compound_tools
 from nexus_mcp.mcp.elicitation import ElicitationGuard
 from nexus_mcp.mcp.emitters import make_mcp_emitter, make_progress_emitter
+from nexus_mcp.mcp.job_tools import register_job_tools
 from nexus_mcp.mcp.middleware import (
     ErrorNormalizationMiddleware,
     RequestLoggingMiddleware,
@@ -60,6 +61,7 @@ from nexus_mcp.mcp.preferences import (
 )
 from nexus_mcp.mcp.prompts import register_prompts
 from nexus_mcp.mcp.resources import register_resources
+from nexus_mcp.mcp.runtime import MCPRuntime, runtime_provider
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import (
     DEFAULT_MAX_CONCURRENCY,
@@ -155,6 +157,17 @@ def _inject_cli_enum() -> None:
 
 @asynccontextmanager
 async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
+    """Compose the durable job runtime with the existing OpenCode lifespan."""
+    async with (
+        MCPRuntime.open(runtime_provider.tuning) as runtime,
+        runtime_provider.install(runtime),
+        _opencode_lifespan(server),
+    ):
+        yield
+
+
+@asynccontextmanager
+async def _opencode_lifespan(server: FastMCP) -> AsyncIterator[None]:
     """Conditionally register OpenCode tools based on server availability.
 
     Tracks registered tools/resources and cleans them up on exit to support
@@ -584,6 +597,9 @@ mcp.tool(
     annotations=_SET_TIERS_ANNOTATIONS,
     tags={"configuration"},
 )(set_model_tiers)
+
+# Durable job tools are always discoverable; backend health is returned at call time.
+register_job_tools(mcp)
 _CONFIG_OC_ANNOTATIONS = ToolAnnotations(
     title="OpenCode Configuration",
     readOnlyHint=False,

@@ -18,6 +18,35 @@ from tests.fixtures import cli_detection_mocks
 
 
 @pytest.fixture(autouse=True)
+def _isolate_nexus_job_database(monkeypatch, tmp_path):
+    """Give every test process a private durable-job database path."""
+    monkeypatch.setenv("NEXUS_DB_PATH", str(tmp_path / "nexus.sqlite3"))
+
+
+@pytest.fixture
+def fast_job_runtime():
+    """Use real-yielding short polls and zero retry delay for durable-job tests."""
+    from nexus_mcp.jobs import EventPollingPolicy, WorkerPolicy
+    from nexus_mcp.mcp.runtime import RuntimeTuning, runtime_provider
+
+    tuning = RuntimeTuning(
+        worker_policy=WorkerPolicy(
+            lease_seconds=1.0,
+            heartbeat_seconds=0.2,
+            idle_poll_seconds=0.001,
+            reconciliation_timeout_seconds=1.0,
+        ),
+        event_polling_policy=EventPollingPolicy(
+            minimum_seconds=0.001,
+            maximum_seconds=0.005,
+        ),
+        retry_delay=lambda _attempt, _retry_after, _policy: 0.0,
+    )
+    with runtime_provider.override_tuning(tuning):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _clean_runner_cache():
     """Clear RunnerFactory cache before and after each test."""
     RunnerFactory.clear_cache()

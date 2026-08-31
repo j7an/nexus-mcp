@@ -14,6 +14,7 @@ import contextlib
 import pytest
 from fastmcp import Client
 
+from nexus_mcp.cli_detector import CLIInfo
 from nexus_mcp.server import mcp
 from nexus_mcp.store import PREFERENCES_COLLECTION, PREFERENCES_KEY, TIERS_COLLECTION, TIERS_KEY
 
@@ -74,6 +75,35 @@ async def mcp_client():
         # WORKAROUND: FastMCP _lifespan_result_set stays True after CancelledError,
         # causing subsequent Client(mcp) connections to skip Docket initialization.
         # Remove when upstream fixes lifespan state cleanup on CancelledError.
+        mcp._lifespan_result_set = False
+
+
+@pytest.fixture
+async def job_mcp_client(fake_runner_registry, fast_job_runtime, monkeypatch):
+    """Connected client whose lifespan sees the registered fake legacy runner."""
+    from nexus_mcp.legacy import runner_backend
+
+    original_detect = runner_backend.detect_cli
+    original_version = runner_backend.get_cli_version
+    monkeypatch.setattr(
+        runner_backend,
+        "detect_cli",
+        lambda backend: (
+            CLIInfo(found=True, path="/test/fake")
+            if backend == fake_runner_registry
+            else original_detect(backend)
+        ),
+    )
+    monkeypatch.setattr(
+        runner_backend,
+        "get_cli_version",
+        lambda backend: "test" if backend == fake_runner_registry else original_version(backend),
+    )
+    del fast_job_runtime
+    try:
+        async with Client(mcp) as client:
+            yield client
+    finally:
         mcp._lifespan_result_set = False
 
 
