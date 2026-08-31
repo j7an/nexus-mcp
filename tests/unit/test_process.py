@@ -154,6 +154,32 @@ async def test_timeout_kills_and_waits_for_process(mock_exec):
     mock_process.wait.assert_awaited_once()
 
 
+@pytest.mark.parametrize(("returncode", "should_kill"), [(None, True), (0, False)])
+@patch("nexus_mcp.process.asyncio.create_subprocess_exec")
+async def test_external_cancellation_reaps_subprocess(
+    mock_exec,
+    returncode: int | None,
+    should_kill: bool,
+):
+    """Caller cancellation cannot orphan a running child and still propagates cancellation."""
+    mock_process = create_mock_process(stdout="", delay=10)
+    mock_process.returncode = returncode
+    mock_exec.return_value = mock_process
+    task = asyncio.create_task(run_subprocess(["slow-command"], timeout=None))
+    await asyncio.sleep(0)
+    assert mock_process.communicate.await_count == 1
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    if should_kill:
+        mock_process.kill.assert_called_once()
+    else:
+        mock_process.kill.assert_not_called()
+    mock_process.wait.assert_awaited_once()
+
+
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
 async def test_success_with_nonempty_stderr(mock_exec):
     """returncode=0 with stderr content → result.stderr populated, returncode=0."""

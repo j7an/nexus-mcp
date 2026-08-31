@@ -45,6 +45,11 @@ async def run_subprocess(
                 )
             else:
                 stdout_bytes, stderr_bytes = await process.communicate()
+        except asyncio.CancelledError:
+            if process.returncode is None:
+                process.kill()
+            await process.wait()
+            raise
         except TimeoutError:
             # Kill process and capture its exit code
             process.kill()

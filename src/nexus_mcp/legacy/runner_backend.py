@@ -1,5 +1,6 @@
 """Temporary framework-independent backend over the existing runner implementations."""
 
+import asyncio
 from pathlib import Path
 
 from nexus_mcp.backends.base import (
@@ -77,7 +78,7 @@ class LegacyRunnerBackend:
             )
         return BackendAvailability(
             available=True,
-            version=get_cli_version(self._backend_id),
+            version=await asyncio.to_thread(get_cli_version, self._backend_id),
         )
 
     async def resolve_execution_config(

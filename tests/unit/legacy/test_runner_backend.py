@@ -1,5 +1,7 @@
 """Behavioral contracts for the temporary legacy runner backend."""
 
+import asyncio
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -141,6 +143,36 @@ async def test_legacy_availability_is_observed_without_changing_registration():
         "opencode_server",
     ]
     create.assert_not_called()
+
+
+async def test_legacy_version_detection_does_not_block_event_loop():
+    marker_reached = asyncio.Event()
+
+    async def mark_progress() -> None:
+        await asyncio.sleep(0)
+        marker_reached.set()
+
+    def blocking_version_detection(backend_id: str) -> str:
+        assert backend_id == "codex"
+        time.sleep(0.05)
+        return "1.2.3"
+
+    marker_task = asyncio.create_task(mark_progress())
+    with (
+        patch(
+            "nexus_mcp.legacy.runner_backend.detect_cli",
+            return_value=CLIInfo(found=True, path="/usr/bin/codex"),
+        ),
+        patch(
+            "nexus_mcp.legacy.runner_backend.get_cli_version",
+            side_effect=blocking_version_detection,
+        ),
+    ):
+        availability = await LegacyRunnerBackend("codex").check_availability(make_workspace())
+
+    assert marker_reached.is_set()
+    assert availability.version == "1.2.3"
+    await marker_task
 
 
 async def test_legacy_backend_normalizes_log_and_progress_events():

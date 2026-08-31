@@ -35,7 +35,9 @@ __all__ = ["OutputChunker", "StoreBackedExecutionContext"]
 type EventEmitter = Callable[[BackendEvent], Awaitable[None]]
 
 _PAYLOAD_FIELDS: dict[str, frozenset[str]] = {
-    "progress": frozenset({"message", "stage", "status", "percent", "current", "total"}),
+    "progress": frozenset(
+        {"message", "stage", "status", "percent", "current", "progress", "total"}
+    ),
     "provider_connected": frozenset({"backend_id", "status", "version"}),
     "provider_disconnected": frozenset({"backend_id", "status"}),
     "log": frozenset({"level", "message", "category"}),

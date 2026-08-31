@@ -1,15 +1,23 @@
 """Unit contracts for fence-bound worker control and output handling."""
 
 import unicodedata
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
 
-from nexus_mcp.core import BackendEvent, RetryPolicy
-from nexus_mcp.jobs.control import OutputChunker
-from nexus_mcp.jobs.store import ControlSnapshot
+from nexus_mcp.core import (
+    BackendEvent,
+    RequestedExecutionConfig,
+    ResolvedExecutionConfig,
+    RetryPolicy,
+)
+from nexus_mcp.jobs.control import OutputChunker, StoreBackedExecutionContext
+from nexus_mcp.jobs.events import EventNotifier
+from nexus_mcp.jobs.store import ControlSnapshot, CreateJobCommand
 from nexus_mcp.jobs.worker import ExponentialRetryDelay, WorkerPolicy
-from tests.fixtures import make_pending_permission
+from tests.fixtures import make_pending_permission, make_workspace
+from tests.job_fakes import InMemoryJobStore
 
 
 def test_worker_policy_requires_two_heartbeats_inside_every_lease():
@@ -79,3 +87,58 @@ async def test_output_chunker_flushes_before_a_nonmessage_boundary():
     await emit(BackendEvent(type="command", payload={"command": "pwd"}))
 
     assert [event.type for event in emitted] == ["message", "command"]
+
+
+async def test_store_context_persists_adapter_progress_with_bounded_sanitization():
+    """Adapter progress values survive the fence while opaque and oversized data do not."""
+    store = InMemoryJobStore()
+    workspace = make_workspace()
+    created = await store.create_job(
+        CreateJobCommand(
+            workspace=workspace,
+            backend_id="codex",
+            owner_id="local:control-test",
+            access_policy="private",
+            operation={"kind": "turn", "prompt": "Inspect"},
+            requested_config=RequestedExecutionConfig(),
+            session_id="session-control",
+            create_session=True,
+            command_family="control-test",
+            queued_event=BackendEvent(type="job_queued", payload={"state": "queued"}),
+        )
+    )
+    claimed = await store.claim_next(
+        "worker-control",
+        datetime.now(UTC) + timedelta(minutes=1),
+        event=BackendEvent(type="job_started", payload={"state": "running"}),
+    )
+    assert claimed is not None
+    context = StoreBackedExecutionContext(
+        store=store,
+        notifier=EventNotifier(),
+        token=claimed.token,
+        job=claimed.job,
+        attempt=claimed.attempt,
+        workspace=workspace,
+        resolved_config=ResolvedExecutionConfig(),
+    )
+
+    await context.emit(
+        BackendEvent(
+            type="progress",
+            payload={
+                "progress": 2.0,
+                "total": 5.0,
+                "message": "x" * 5000,
+                "raw_payload": "drop",
+            },
+        )
+    )
+
+    events = await store.read_events(created.handle.job_id, 0, 100)
+    progress = [event for event in events.events if event.type == "progress"][-1]
+    assert dict(progress.payload) == {
+        "progress": 2.0,
+        "total": 5.0,
+        "message": "x" * 4096,
+    }
