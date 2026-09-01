@@ -280,6 +280,21 @@ class TestPromptProtocol:
         assert result.is_error is False
         assert strip_runner_header(result.data) == "test output"
 
+    async def test_opencode_explicit_yolo_keeps_header_and_runs_default_policy(
+        self, mock_subprocess, mcp_client
+    ):
+        """Unsupported OpenCode yolo remains outwardly compatible and executes normally."""
+        mock_subprocess.return_value = create_mock_process(stdout=OPENCODE_NDJSON_RESPONSE)
+
+        result = await mcp_client.call_tool(
+            "prompt",
+            {"cli": "opencode", "prompt": "say hello", "execution_mode": "yolo"},
+        )
+
+        assert result.is_error is False
+        assert result.data.startswith("[cli: opencode | model: default | mode: yolo]")
+        assert strip_runner_header(result.data) == "test output"
+
     async def test_context_parameter_survives_json_rpc(self, job_mcp_client, fake_runner_registry):
         """context dict survives JSON-RPC round-trip; call succeeds (context is pass-through)."""
         result = await job_mcp_client.call_tool(

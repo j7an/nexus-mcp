@@ -345,10 +345,11 @@ async def test_mcp_runtime_injects_tuning_and_closes_in_reverse(monkeypatch):
             lifecycle.append("service.construct")
 
     class FakeWorkers:
-        def __init__(self, *, store, backends, notifier, policy, retry_delay):
+        def __init__(self, *, store, backends, notifier, worker_count, policy, retry_delay):
             assert isinstance(store, FakeStore)
             assert isinstance(backends, FakeBackendManager)
             assert isinstance(notifier, FakeNotifier)
+            assert worker_count == tuning.worker_count
             assert policy is tuning.worker_policy
             assert retry_delay is tuning.retry_delay
             lifecycle.append("workers.construct")

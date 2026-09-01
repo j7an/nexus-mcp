@@ -183,6 +183,42 @@ class TestPrompt:
         assert config.approval_policy == "never"
         assert config.sandbox != "workspace_write"
 
+    @pytest.mark.parametrize("cli", ["opencode", "opencode_server"])
+    async def test_prompt_keeps_unsupported_yolo_as_compatibility_default(
+        self, cli, job_service_boundary
+    ):
+        """Registered backends without full access omit both typed policy fields."""
+        result = await prompt(cli=cli, prompt="Compatibility task", execution_mode="yolo")
+
+        config = job_service_boundary.start.await_args.kwargs["explicit_config"]
+        assert config.sandbox is None
+        assert config.approval_policy is None
+        assert result.startswith(f"[cli: {cli} | model: default | mode: yolo]")
+
+    async def test_prompt_uses_registered_backend_descriptor_for_yolo_capability(
+        self, job_service_boundary, fake_runner_registry
+    ):
+        """Compatibility policy follows the admitted runtime descriptor, not runner metadata."""
+        async with runtime_provider.borrow() as runtime:
+            backend = runtime.backends.get(REPRESENTATIVE_CLI)
+            backend.descriptor = backend.descriptor.model_copy(
+                update={
+                    "capabilities": backend.descriptor.capabilities.model_copy(
+                        update={"sandbox_modes": frozenset()}
+                    )
+                }
+            )
+
+            await prompt(
+                cli=REPRESENTATIVE_CLI,
+                prompt="Runtime descriptor task",
+                execution_mode="yolo",
+            )
+
+        config = job_service_boundary.start.await_args.kwargs["explicit_config"]
+        assert config.sandbox is None
+        assert config.approval_policy is None
+
     async def test_prompt_maps_model_context_and_retry_values(
         self, job_service_boundary, fake_runner_registry
     ):

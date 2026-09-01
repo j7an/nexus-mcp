@@ -1,6 +1,7 @@
 """Race, control, timeout, output, and lifecycle tests for durable workers."""
 
 import asyncio
+import sqlite3
 from datetime import UTC, datetime
 
 import pytest
@@ -16,6 +17,7 @@ from nexus_mcp.backends import (
 )
 from nexus_mcp.backends.manager import BackendManager
 from nexus_mcp.core import (
+    AgentJob,
     AgentOperation,
     BackendEvent,
     ExecutionConfigValues,
@@ -28,7 +30,12 @@ from nexus_mcp.core import (
     StaleLeaseError,
 )
 from nexus_mcp.jobs.events import EventNotifier
-from nexus_mcp.jobs.store import CancelJobCommand, LeaseToken, ResolveInputCommand
+from nexus_mcp.jobs.store import (
+    CancelJobCommand,
+    LeaseToken,
+    ResolveInputCommand,
+    TerminalOutcome,
+)
 from nexus_mcp.jobs.worker import WorkerPolicy, WorkerPool
 from tests.fixtures import make_pending_permission, make_turn_result
 from tests.job_fakes import (
@@ -525,6 +532,76 @@ async def test_worker_pool_runs_until_idle_and_stops_interruptible_loops():
     await pool.start()
     assert pool.running is True
     await pool.stop()
+    assert pool.running is False
+
+
+class OneShotTerminalizationErrorStore(InMemoryJobStore):
+    """Store that injects one escaped SQLite failure after provider execution."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.failure_injected = asyncio.Event()
+
+    async def terminalize(
+        self,
+        token: LeaseToken,
+        outcome: TerminalOutcome,
+        *,
+        event: BackendEvent,
+    ) -> AgentJob:
+        if not self.failure_injected.is_set():
+            self.failure_injected.set()
+            raise sqlite3.OperationalError("one-shot terminalization failure")
+        return await super().terminalize(token, outcome, event=event)
+
+
+async def test_worker_loop_survives_terminalization_error_without_replaying_provider():
+    """One escaped store error keeps the same loop alive for later work and reconciliation."""
+    store = OneShotTerminalizationErrorStore()
+    notifier = EventNotifier()
+    backend = ScriptedBackend()
+    first = await admit(store)
+    first_result = make_turn_result(message="first result")
+    backend.queue_execute(ReturnResultAction(first_result))
+    backend.queue_reconcile(
+        ReturnReconciliationAction(CompletedReconciliationOutcome(result=first_result))
+    )
+    pool = WorkerPool(
+        store=store,
+        backends=BackendManager([backend]),
+        notifier=notifier,
+        worker_count=1,
+        worker_id_prefix="survivor",
+        policy=WorkerPolicy(
+            lease_seconds=0.03,
+            heartbeat_seconds=0.01,
+            idle_poll_seconds=0.001,
+            reconciliation_timeout_seconds=1.0,
+        ),
+    )
+    await pool.start()
+    try:
+        await asyncio.wait_for(store.failure_injected.wait(), timeout=1.0)
+        later = await admit(store, session_id="session-later")
+        backend.queue_execute(ReturnResultAction(make_turn_result(message="later result")))
+
+        async with asyncio.timeout(1.0):
+            while True:
+                persisted = (await store.get_job(first.job_id), await store.get_job(later.job_id))
+                if all(job is not None and job.state == "completed" for job in persisted):
+                    break
+                await asyncio.sleep(0)
+
+        assert pool.running is True
+        assert [context.job.job_id for _, context in backend.execute_calls] == [
+            first.job_id,
+            later.job_id,
+        ]
+        assert len(backend.reconcile_calls) == 1
+    finally:
+        async with asyncio.timeout(0.1):
+            await pool.stop()
+
     assert pool.running is False
 
 

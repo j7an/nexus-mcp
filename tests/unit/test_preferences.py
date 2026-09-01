@@ -112,7 +112,10 @@ class _PreferenceJobServiceBoundary:
 
 
 @pytest.fixture
-def preference_job_service_boundary(monkeypatch) -> _PreferenceJobServiceBoundary:
+def preference_job_service_boundary(
+    monkeypatch, fake_runner_registry
+) -> _PreferenceJobServiceBoundary:
+    del fake_runner_registry
     boundary = _PreferenceJobServiceBoundary()
     boundary.install(monkeypatch)
     return boundary

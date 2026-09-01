@@ -37,6 +37,7 @@ from nexus_mcp.cli_detector import detect_cli
 from nexus_mcp.config import get_runner_defaults, get_runner_models, get_tool_timeout
 from nexus_mcp.core import (
     AccessContext,
+    BackendDescriptor,
     BackendUnknownError,
     CancelledJobResultResponse,
     ExecutionConfigValues,
@@ -298,7 +299,11 @@ def _resolve_elicit(elicit: bool | None, prefs: SessionPreferences) -> bool:
     return True
 
 
-def _compatibility_config(task: AgentTask) -> ExecutionConfigValues:
+def _compatibility_config(
+    task: AgentTask,
+    *,
+    backend_descriptor: BackendDescriptor,
+) -> ExecutionConfigValues:
     """Translate fully resolved legacy task fields into a typed job configuration."""
     retry_policy = None
     if any(
@@ -325,7 +330,10 @@ def _compatibility_config(task: AgentTask) -> ExecutionConfigValues:
                 else defaults.retry_max_delay
             ),
         )
-    yolo = task.execution_mode == "yolo"
+    yolo = (
+        task.execution_mode == "yolo"
+        and "danger_full_access" in backend_descriptor.capabilities.sandbox_modes
+    )
     return ExecutionConfigValues(
         model=task.model,
         sandbox="danger_full_access" if yolo else None,
@@ -490,7 +498,7 @@ def _format_compatibility_result(
 
 async def _run_compatibility_task(
     *,
-    service: AgentJobService,
+    runtime: MCPRuntime,
     task: AgentTask,
     ctx: Context | None,
     task_index: int,
@@ -502,12 +510,17 @@ async def _run_compatibility_task(
     workspace = WorkspaceSelector(path=Path.cwd())
     access = local_access_context()
     try:
+        backend_descriptor = runtime.backends.get(task.cli).descriptor
+        service = runtime.service
         handle = await service.start(
             workspace=workspace,
             access=access,
             backend_id=task.cli,
             operation=TurnOperation(prompt=task.prompt, context=task.context),
-            explicit_config=_compatibility_config(task),
+            explicit_config=_compatibility_config(
+                task,
+                backend_descriptor=backend_descriptor,
+            ),
         )
         response = await _await_compatibility_result(
             service=service,
@@ -593,10 +606,10 @@ async def batch_prompt(
             await ctx.info("Batch complete: 0/0 succeeded")
         return response
 
-    async def _run_single(service: AgentJobService, idx: int, task: AgentTask) -> AgentTaskResult:
+    async def _run_single(runtime: MCPRuntime, idx: int, task: AgentTask) -> AgentTaskResult:
         async with semaphore:
             return await _run_compatibility_task(
-                service=service,
+                runtime=runtime,
                 task=task,
                 ctx=ctx,
                 task_index=idx + 1,
@@ -604,9 +617,8 @@ async def batch_prompt(
             )
 
     async with runtime_provider.borrow() as runtime:
-        await runtime.workers.ensure_capacity(min(max_concurrency, len(labelled)))
         results = await asyncio.gather(
-            *[_run_single(runtime.service, i, task) for i, task in enumerate(labelled)]
+            *[_run_single(runtime, i, task) for i, task in enumerate(labelled)]
         )
     response = MultiPromptResponse(results=list(results))
     if ctx:

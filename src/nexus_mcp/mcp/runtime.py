@@ -23,6 +23,7 @@ from nexus_mcp.jobs import (
 )
 from nexus_mcp.jobs.sqlite_store import SQLiteJobStore
 from nexus_mcp.legacy import legacy_backends
+from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY
 
 __all__ = ["MCPRuntime", "RuntimeProvider", "RuntimeTuning", "runtime_provider"]
 
@@ -31,6 +32,7 @@ __all__ = ["MCPRuntime", "RuntimeProvider", "RuntimeTuning", "runtime_provider"]
 class RuntimeTuning:
     """Explicit runtime timing dependencies, with production-safe defaults."""
 
+    worker_count: int = DEFAULT_MAX_CONCURRENCY
     worker_policy: WorkerPolicy = field(default_factory=WorkerPolicy)
     event_polling_policy: EventPollingPolicy = field(default_factory=EventPollingPolicy)
     retry_delay: RetryDelay = field(default_factory=ExponentialRetryDelay)
@@ -69,6 +71,7 @@ class MCPRuntime:
                 store=store,
                 backends=backends,
                 notifier=notifier,
+                worker_count=effective_tuning.worker_count,
                 policy=effective_tuning.worker_policy,
                 retry_delay=effective_tuning.retry_delay,
             )

@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from nexus_mcp.mcp.runtime import MCPRuntime
+from nexus_mcp.mcp.runtime import MCPRuntime, runtime_provider
 from nexus_mcp.server import batch_prompt, prompt
 from tests.fakes import FakeRunner
 from tests.fixtures import CODEX_NDJSON_RESPONSE, create_mock_process, strip_runner_header
@@ -142,6 +142,60 @@ async def test_batch_max_concurrency_two_overlaps_provider_execution(
 
 
 @pytest.mark.e2e
+async def test_concurrent_singleton_calls_share_fixed_runtime_capacity(
+    monkeypatch, fake_runner_registry, fast_job_runtime
+):
+    """Two singleton calls on one installed runtime can enter providers concurrently."""
+    del fast_job_runtime
+    original_run = FakeRunner.run
+    active = 0
+    maximum_active = 0
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def barrier_run(self, request, emitter=None, progress=None):
+        nonlocal active, maximum_active
+        active += 1
+        maximum_active = max(maximum_active, active)
+        if active == 2:
+            both_started.set()
+        try:
+            await release.wait()
+            return await original_run(self, request, emitter=emitter, progress=progress)
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(FakeRunner, "run", barrier_run)
+    async with (
+        MCPRuntime.open(runtime_provider.tuning) as runtime,
+        runtime_provider.install(runtime),
+    ):
+        calls = [
+            asyncio.create_task(
+                batch_prompt(
+                    tasks=[
+                        {
+                            "cli": fake_runner_registry,
+                            "prompt": prompt_text,
+                            "context": {"fake_output": f"{prompt_text} output"},
+                        }
+                    ],
+                    max_concurrency=1,
+                )
+            )
+            for prompt_text in ("first", "second")
+        ]
+        try:
+            await asyncio.wait_for(both_started.wait(), timeout=1.0)
+        finally:
+            release.set()
+            responses = await asyncio.gather(*calls)
+
+    assert maximum_active == 2
+    assert [response.succeeded for response in responses] == [1, 1]
+
+
+@pytest.mark.e2e
 async def test_batch_max_concurrency_one_serializes_provider_execution(
     monkeypatch, fake_runner_registry, fast_job_runtime
 ):
@@ -272,6 +326,27 @@ async def test_legacy_preferences_feed_job_configuration(mock_subprocess, fast_j
     assert explicit["approval_policy"] == "never"
     assert explicit["retry_policy"]["max_attempts"] == 1
     assert explicit["timeout_seconds"] == 33
+
+
+@pytest.mark.e2e
+async def test_inherited_yolo_remains_compatibility_only_for_opencode(
+    mock_subprocess, fast_job_mcp_client
+):
+    """An inherited yolo header does not request unsupported OpenCode sandbox policy."""
+    from tests.fixtures import OPENCODE_NDJSON_RESPONSE
+
+    mock_subprocess.return_value = create_mock_process(stdout=OPENCODE_NDJSON_RESPONSE)
+    await fast_job_mcp_client.call_tool("set_preferences", {"execution_mode": "yolo"})
+
+    result = await fast_job_mcp_client.call_tool(
+        "prompt", {"cli": "opencode", "prompt": "use inherited preference"}
+    )
+
+    assert result.is_error is False
+    assert result.data.startswith("[cli: opencode | model: default | mode: yolo]")
+    explicit = json.loads(str(_job_rows("requested_config_json")[0][0]))["explicit"]
+    assert explicit["sandbox"] is None
+    assert explicit["approval_policy"] is None
 
 
 @pytest.mark.e2e

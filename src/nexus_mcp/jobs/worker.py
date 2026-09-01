@@ -1,6 +1,7 @@
 """Durable generation-fenced job workers with safe retry and reconciliation."""
 
 import asyncio
+import logging
 import random
 from collections.abc import Callable
 from contextlib import suppress
@@ -56,6 +57,7 @@ __all__ = [
 type Clock = Callable[[], datetime]
 
 _JOB_ERROR_CODE_ADAPTER: TypeAdapter[JobErrorCode] = TypeAdapter(JobErrorCode)
+logger = logging.getLogger(__name__)
 
 
 class WorkerPolicy(BaseModel):
@@ -178,7 +180,13 @@ class JobWorker:
     async def run(self, stop: asyncio.Event) -> None:
         """Run an interruptible worker loop until pool shutdown is requested."""
         while not stop.is_set():
-            worked = await self.run_once()
+            try:
+                worked = await self.run_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Worker %s iteration failed", self.worker_id)
+                worked = False
             if worked:
                 continue
             with suppress(TimeoutError):
