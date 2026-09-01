@@ -1,4 +1,5 @@
 import math
+from pathlib import Path
 from typing import Annotated, Any, Literal, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
@@ -121,6 +122,10 @@ class PromptRequest(BaseModel):
     file_refs: list[str] = Field(
         default_factory=list,
         description="Optional file paths for agent context (appended to prompt)",
+    )
+    cwd: Path | None = Field(
+        default=None,
+        description="Canonical workspace used as the subprocess working directory",
     )
 
     @field_validator("file_refs")

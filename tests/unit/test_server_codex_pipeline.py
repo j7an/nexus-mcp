@@ -11,6 +11,7 @@ import json
 import pytest
 from fastmcp.exceptions import ToolError
 
+from nexus_mcp.cli_detector import CLIInfo
 from nexus_mcp.server import prompt
 from tests.fixtures import CODEX_NDJSON_RESPONSE, create_mock_process, strip_runner_header
 
@@ -23,6 +24,16 @@ def _codex_ndjson(text: str) -> str:
             "item": {"type": "agent_message", "text": text},
         }
     )
+
+
+@pytest.fixture(autouse=True)
+def _legacy_backend_available(monkeypatch):
+    """Keep job-worker availability independent of host Codex installation."""
+    monkeypatch.setattr(
+        "nexus_mcp.legacy.runner_backend.detect_cli",
+        lambda _backend: CLIInfo(found=True, path="/test/codex"),
+    )
+    monkeypatch.setattr("nexus_mcp.legacy.runner_backend.get_cli_version", lambda _backend: "test")
 
 
 # ---------------------------------------------------------------------------
@@ -87,8 +98,9 @@ class TestPromptCodexPipeline:
 
         assert strip_runner_header(result) == "pong"
 
-    async def test_429_retries_then_succeeds(self, mock_subprocess, fast_retry_sleep):
+    async def test_429_retries_then_succeeds(self, mock_subprocess, fast_job_runtime):
         """HTTP 429 in stderr triggers retry; second attempt succeeds."""
+        del fast_job_runtime
         error_stderr = json.dumps({"error": {"code": 429, "message": "rate limited"}})
         mock_subprocess.side_effect = [
             create_mock_process(stdout="", stderr=error_stderr, returncode=1),

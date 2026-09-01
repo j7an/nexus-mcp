@@ -162,7 +162,7 @@ class AbstractRunner(RetryMixin, ABC):
         await progress(2, 5, "Executing subprocess")
         effective_timeout = request.timeout if request.timeout is not None else self.timeout
         await emit("info", f"Running {self.AGENT_NAME} with timeout={effective_timeout}s")
-        result = await run_subprocess(command, timeout=effective_timeout)
+        result = await run_subprocess(command, timeout=effective_timeout, cwd=request.cwd)
 
         # Step 3: Error check with recovery attempt
         if result.returncode != 0:

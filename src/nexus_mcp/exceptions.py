@@ -8,6 +8,7 @@ __all__ = [
     "NexusMCPError",
     "SubprocessError",
     "SubprocessTimeoutError",
+    "SubprocessTreeTerminationError",
     "RetryableError",
     "ParseError",
     "CLINotFoundError",
@@ -152,6 +153,10 @@ class SubprocessTimeoutError(SubprocessError):
             message, stderr=stderr, command=command, returncode=returncode, stdout=stdout
         )
         self.timeout = timeout
+
+
+class SubprocessTreeTerminationError(SubprocessError):
+    """The owned subprocess tree could not be proven stopped after interruption."""
 
 
 class RetryableError(SubprocessError):

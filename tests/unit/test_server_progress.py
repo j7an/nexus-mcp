@@ -1,18 +1,36 @@
 # tests/unit/test_server_progress.py
-"""Tests for server-side progress emitter factories."""
+"""Tests for compatibility progress forwarding from durable job events."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastmcp import Context
 
+from nexus_mcp.cli_detector import CLIInfo
+from nexus_mcp.core import (
+    JobEvent,
+    JobResultEnvelope,
+    SucceededJobResultResponse,
+    TurnResult,
+)
 from nexus_mcp.emitters import make_progress_emitter
+from nexus_mcp.jobs import AgentJobService
 from nexus_mcp.server import (
     batch_prompt,
     prompt,
 )
 from nexus_mcp.types import AgentTask
-from tests.fixtures import CODEX_NDJSON_RESPONSE, create_mock_process
+from tests.fixtures import CODEX_NDJSON_RESPONSE, create_mock_process, make_job_handle
+
+
+@pytest.fixture(autouse=True)
+def _legacy_backend_available(monkeypatch):
+    """Keep durable legacy-backend availability independent of host CLI installation."""
+    monkeypatch.setattr(
+        "nexus_mcp.legacy.runner_backend.detect_cli",
+        lambda _backend: CLIInfo(found=True, path="/test/cli"),
+    )
+    monkeypatch.setattr("nexus_mcp.legacy.runner_backend.get_cli_version", lambda _backend: "test")
 
 
 class TestMakeProgressEmitter:
@@ -75,8 +93,9 @@ class TestBatchPromptProgressWiring:
     """Verify batch_prompt passes progress emitters to runners."""
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_single_task_uses_unwrapped_emitter(self, mock_exec, ctx):
+    async def test_single_task_uses_unwrapped_emitter(self, mock_exec, ctx, fast_job_runtime):
         """Single task via batch_prompt should use unwrapped progress emitter."""
+        del fast_job_runtime
         mock_exec.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE, returncode=0)
         task = AgentTask(cli="codex", prompt="test", execution_mode="default")
 
@@ -93,8 +112,9 @@ class TestBatchPromptProgressWiring:
         assert "Task '" not in first_call.kwargs["message"]
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_multi_task_uses_wrapped_emitter(self, mock_exec, ctx):
+    async def test_multi_task_uses_wrapped_emitter(self, mock_exec, ctx, fast_job_runtime):
         """Multi-task batch should use wrapped progress emitter with task prefix."""
+        del fast_job_runtime
         mock_exec.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE, returncode=0)
         tasks = [
             AgentTask(cli="codex", prompt="task1", label="first", execution_mode="default"),
@@ -116,8 +136,9 @@ class TestPromptProgressWiring:
     """Verify prompt() passes progress through via batch_prompt."""
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_prompt_reports_progress(self, mock_exec, ctx):
+    async def test_prompt_reports_progress(self, mock_exec, ctx, fast_job_runtime):
         """prompt() should report runner-level progress (unwrapped)."""
+        del fast_job_runtime
         mock_exec.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE, returncode=0)
 
         await prompt(cli="codex", prompt="test", ctx=ctx)
@@ -127,3 +148,70 @@ class TestPromptProgressWiring:
         # Should NOT have task wrapper prefix
         first_msg = ctx.report_progress.call_args_list[0].kwargs["message"]
         assert "Task '" not in first_msg
+
+
+class TestDurableEventBridge:
+    """Verify normalized journal events map to FastMCP context exactly once."""
+
+    async def test_forwards_progress_log_and_nonterminal_message(
+        self, monkeypatch, ctx, fake_runner_registry
+    ):
+        async def start(**kwargs):
+            return make_job_handle(job_id="job-events", operation=kwargs["operation"])
+
+        async def result(**_kwargs):
+            return SucceededJobResultResponse(
+                job_id="job-events",
+                result=JobResultEnvelope(
+                    job_id="job-events", payload=TurnResult(message="terminal output")
+                ),
+            )
+
+        async def events():
+            yield JobEvent(
+                job_id="job-events",
+                sequence=1,
+                type="progress",
+                payload={"progress": 2, "total": 5, "message": "Executing"},
+            )
+            yield JobEvent(
+                job_id="job-events",
+                sequence=2,
+                type="log",
+                payload={"level": "warning", "message": "provider warning"},
+            )
+            yield JobEvent(
+                job_id="job-events",
+                sequence=3,
+                type="message",
+                payload={"text": "compatibility notification"},
+            )
+            yield JobEvent(
+                job_id="job-events",
+                sequence=4,
+                type="message",
+                payload={"text": "terminal output", "final": True},
+            )
+            yield JobEvent(job_id="job-events", sequence=5, type="job_completed")
+
+        start_mock = AsyncMock(side_effect=start)
+        result_mock = AsyncMock(side_effect=result)
+        subscribe_mock = Mock(return_value=events())
+        monkeypatch.setattr(AgentJobService, "start", start_mock)
+        monkeypatch.setattr(AgentJobService, "result", result_mock)
+        monkeypatch.setattr(AgentJobService, "subscribe_events", subscribe_mock)
+
+        response = await batch_prompt(
+            tasks=[AgentTask(cli=fake_runner_registry, prompt="test")], ctx=ctx
+        )
+
+        assert response.results[0].output is not None
+        ctx.report_progress.assert_awaited_once_with(progress=2.0, total=5.0, message="Executing")
+        ctx.warning.assert_awaited_once_with("provider warning")
+        info_messages = [call.args[0] for call in ctx.info.await_args_list]
+        assert info_messages.count("compatibility notification") == 1
+        assert "terminal output" not in info_messages
+        subscribe_mock.assert_called_once()
+        subscribe_kwargs = subscribe_mock.call_args.kwargs
+        assert subscribe_kwargs["job_id"] == "job-events"
+        assert subscribe_kwargs["after_sequence"] == 0

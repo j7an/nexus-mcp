@@ -1,0 +1,200 @@
+# src/nexus_mcp/mcp/resources.py
+"""MCP resource definitions for nexus-mcp.
+
+Exposes read-only resources for runner metadata, configuration, and session
+preferences. All resources return JSON strings with application/json MIME type.
+
+Resources:
+- nexus://runners: All registered CLI runners with full details
+- nexus://runners/{cli}: Single runner by name (URI template)
+- nexus://config: Resolved operational config defaults
+- nexus://preferences: Session preferences with config fallback
+"""
+
+import json
+import logging
+
+from fastmcp import Context, FastMCP
+from fastmcp.exceptions import ResourceError
+
+from nexus_mcp.cli_detector import detect_cli, get_cli_version
+from nexus_mcp.config import _get_merged_defaults, get_runner_defaults, get_runner_models
+from nexus_mcp.mcp.preference_store import load_model_tiers
+from nexus_mcp.mcp.preferences import _get_session_preferences
+from nexus_mcp.runners.factory import RunnerFactory
+from nexus_mcp.tiers import get_model_tier
+
+logger = logging.getLogger(__name__)
+
+_RESOURCE_ANNOTATIONS = {"readOnlyHint": True, "idempotentHint": True}
+
+
+def _build_runner_info(
+    cli_name: str,
+    saved_tiers: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """Build runner metadata dict for a single CLI.
+
+    Aggregates data from RunnerFactory, cli_detector, and config modules.
+    Models are enriched with tier classification (saved or heuristic).
+    """
+    cli_info = detect_cli(cli_name)
+    defaults = get_runner_defaults(cli_name)
+    runner_cls = RunnerFactory.get_runner_class(cli_name)
+    models = get_runner_models(cli_name)
+    version = get_cli_version(cli_name) if cli_info.found else None
+
+    enriched_models: list[dict[str, str]] = []
+    unclassified: list[str] = []
+    for model in models:
+        if saved_tiers and model in saved_tiers:
+            tier = saved_tiers[model]
+        else:
+            tier = get_model_tier(model)
+            unclassified.append(model)
+        enriched_models.append({"name": model, "tier": tier})
+
+    return {
+        "name": cli_name,
+        "installed": cli_info.found,
+        "path": cli_info.path,
+        "version": version,
+        "models": enriched_models,
+        "default_model": defaults.model,
+        "supported_modes": list(runner_cls._SUPPORTED_MODES),
+        "default_timeout": defaults.timeout,
+        "unclassified_models": unclassified,
+    }
+
+
+async def _load_saved_tiers(ctx: Context | None) -> dict[str, str] | None:
+    """Load saved model tiers from context, returning None on failure or missing context."""
+    if ctx is None:
+        return None
+    try:
+        return await load_model_tiers(ctx)
+    except Exception:
+        logger.debug("Failed to load saved model tiers, using heuristics only")
+        return None
+
+
+async def get_all_runners(ctx: Context | None = None) -> str:
+    """Return all registered CLI runners with full details.
+
+    Resource URI: nexus://runners
+    """
+    saved_tiers = await _load_saved_tiers(ctx)
+    runners = [_build_runner_info(name, saved_tiers) for name in RunnerFactory.list_clis()]
+    return json.dumps({"runners": runners})
+
+
+async def get_runner(cli: str, ctx: Context | None = None) -> str:
+    """Return details for a single CLI runner.
+
+    Resource URI: nexus://runners/{cli}
+
+    Raises:
+        ResourceError: If the CLI name is not in RunnerFactory._REGISTRY.
+    """
+    if cli not in RunnerFactory._REGISTRY:
+        raise ResourceError(f"Unknown CLI runner: {cli!r}")
+    saved_tiers = await _load_saved_tiers(ctx)
+    return json.dumps(_build_runner_info(cli, saved_tiers))
+
+
+async def get_config() -> str:
+    """Return resolved operational config defaults.
+
+    Resource URI: nexus://config
+
+    Returns the fully merged defaults (hardcoded + env var overrides).
+    Excludes execution_mode and model (exposed via nexus://preferences).
+    """
+    defaults = _get_merged_defaults()
+    return json.dumps(
+        {
+            "timeout": defaults.timeout,
+            "output_limit": defaults.output_limit,
+            "max_retries": defaults.max_retries,
+            "retry_base_delay": defaults.retry_base_delay,
+            "retry_max_delay": defaults.retry_max_delay,
+            "tool_timeout": defaults.tool_timeout,
+            "cli_detection_timeout": defaults.cli_detection_timeout,
+        }
+    )
+
+
+async def get_preferences_resource(ctx: Context | None = None) -> str:
+    """Return current session preferences with config fallback.
+
+    Resource URI: nexus://preferences
+
+    If ctx is available and session preferences can be read, returns them
+    with source='session'. Otherwise falls back to resolved config defaults
+    with source='defaults'.
+    """
+    if ctx is not None:
+        try:
+            prefs = await _get_session_preferences(ctx)
+            return json.dumps({"source": "session", "preferences": prefs.model_dump()})
+        except Exception:
+            logger.debug("Session preferences unavailable, falling back to config defaults")
+    else:
+        logger.debug("No context provided, falling back to config defaults")
+
+    defaults = _get_merged_defaults()
+    fallback = {
+        "execution_mode": defaults.execution_mode,
+        "model": defaults.model,
+        "max_retries": defaults.max_retries,
+        "output_limit": defaults.output_limit,
+        "timeout": defaults.timeout,
+        "retry_base_delay": defaults.retry_base_delay,
+        "retry_max_delay": defaults.retry_max_delay,
+        "elicit": None,
+        "confirm_yolo": None,
+        "confirm_vague_prompt": None,
+        "confirm_high_retries": None,
+        "confirm_large_batch": None,
+    }
+    return json.dumps({"source": "defaults", "preferences": fallback})
+
+
+async def get_tiers_resource(ctx: Context | None = None) -> str:
+    """Return saved model tier classifications.
+
+    Resource URI: nexus://tiers
+
+    Returns all persisted tier classifications as a JSON object.
+    Returns an empty dict if no tiers have been saved yet.
+    """
+    if ctx is None:
+        return json.dumps({})
+    try:
+        result = await load_model_tiers(ctx)
+        return json.dumps(result or {})
+    except Exception:
+        logger.debug("Failed to load model tiers")
+        return json.dumps({})
+
+
+def register_resources(mcp: FastMCP) -> None:
+    """Register all MCP resources on the server.
+
+    Called from server.py after tool registration.
+    """
+    mcp.resource(
+        "nexus://runners", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS
+    )(get_all_runners)
+    mcp.resource(
+        "nexus://runners/{cli}", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS
+    )(get_runner)
+    mcp.resource("nexus://config", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS)(
+        get_config
+    )
+    mcp.resource(
+        "nexus://preferences", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS
+    )(get_preferences_resource)
+    mcp.resource("nexus://tiers", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS)(
+        get_tiers_resource
+    )

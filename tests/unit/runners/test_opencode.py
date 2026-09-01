@@ -11,7 +11,6 @@ Tests verify:
 - error handling: _recover_from_error, _try_extract_error, retry integration
 """
 
-import asyncio
 import json
 from unittest.mock import patch
 
@@ -24,6 +23,7 @@ from tests.fixtures import (
     OPENCODE_JSON_RESPONSE,
     OPENCODE_NDJSON_RESPONSE,
     OPENCODE_NOISY_STDOUT,
+    assert_owned_subprocess_call,
     create_mock_process,
     make_prompt_request,
     opencode_error_json,
@@ -719,15 +719,13 @@ class TestOpenCodeRunnerIntegration:
 
         response = await runner.run(request)
 
-        mock_exec.assert_awaited_once_with(
+        assert_owned_subprocess_call(
+            mock_exec,
             "opencode",
             "run",
             "test prompt",
             "--format",
             "json",
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
         )
         assert response.cli == "opencode"
         assert response.output == "test output"

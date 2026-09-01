@@ -1,24 +1,36 @@
 # tests/unit/test_server.py
 """Tests for the FastMCP server and tool functions.
 
-Mocking strategy: Mock at the RunnerFactory/runner boundary, NOT subprocess level.
-Server tests should be decoupled from runner internals.
+Compatibility-tool tests patch the durable job-service boundary. Runner and subprocess behavior is
+covered by the pipeline suites, so these tests describe only the MCP adapter contract.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastmcp.exceptions import ToolError
 
 from nexus_mcp.config import get_tool_timeout
-from nexus_mcp.emitters import make_mcp_emitter
-from nexus_mcp.exceptions import (
-    ParseError,
-    SubprocessError,
-    UnsupportedAgentError,
+from nexus_mcp.core import (
+    ExecutionConfigValues,
+    FailedJobResultResponse,
+    JobError,
+    JobEvent,
+    JobResultEnvelope,
+    RetryPolicy,
+    SucceededJobResultResponse,
+    TurnOperation,
+    TurnResult,
+    WorkspaceSelector,
 )
+from nexus_mcp.emitters import make_mcp_emitter
+from nexus_mcp.exceptions import UnsupportedAgentError
+from nexus_mcp.jobs import AgentJobService
 from nexus_mcp.labels import assign_labels
+from nexus_mcp.mcp.runtime import runtime_provider
+from nexus_mcp.mcp.server import mcp as implementation_mcp
 from nexus_mcp.server import (
     _inject_cli_enum,
     batch_prompt,
@@ -29,57 +41,136 @@ from nexus_mcp.server import (
 from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY, AgentTask, MultiPromptResponse
 from tests.fixtures import (
     REPRESENTATIVE_CLI,
-    make_agent_response,
     make_agent_task,
+    make_job_handle,
     strip_runner_header,
 )
 
 
-def _setup_mock_runner(mock_factory, *, output: str = "test output", side_effect=None) -> AsyncMock:
-    """Configure mock_factory.create() to return a runner with preset run() behavior.
+def test_root_server_mcp_is_implementation_instance() -> None:
+    """The legacy server import exposes the owning FastMCP instance."""
+    assert mcp is implementation_mcp
 
-    Args:
-        mock_factory: The patched RunnerFactory mock.
-        output: The output string for run.return_value (used when side_effect is None).
-        side_effect: If set, assigned to run.side_effect instead of return_value.
 
-    Returns:
-        The configured AsyncMock runner (for further assertion access).
-    """
-    mock_runner = AsyncMock()
-    if side_effect is not None:
-        mock_runner.run.side_effect = side_effect
-    else:
-        mock_runner.run.return_value = make_agent_response(output=output)
-    mock_factory.create.return_value = mock_runner
-    return mock_runner
+def test_root_server_set_preferences_is_implementation_function() -> None:
+    """The legacy server module preserves the set_preferences import."""
+    from nexus_mcp.mcp.preferences import set_preferences as implementation_set_preferences
+    from nexus_mcp.server import set_preferences as compatibility_set_preferences
+
+    assert compatibility_set_preferences is implementation_set_preferences
+
+
+def test_root_server_clear_preferences_is_implementation_function() -> None:
+    """The legacy server module preserves the clear_preferences import."""
+    from nexus_mcp.mcp.preferences import clear_preferences as implementation_clear_preferences
+    from nexus_mcp.server import clear_preferences as compatibility_clear_preferences
+
+    assert compatibility_clear_preferences is implementation_clear_preferences
+
+
+class _JobServiceBoundary:
+    """Deterministic durable-service boundary for compatibility adapter tests."""
+
+    def __init__(
+        self,
+        *,
+        outputs: dict[str, str] | None = None,
+        failures: dict[str, JobError] | None = None,
+    ) -> None:
+        self.outputs = outputs or {}
+        self.failures = failures or {}
+        self.operations: dict[str, TurnOperation] = {}
+        self.start = AsyncMock(side_effect=self._start)
+        self.result = AsyncMock(side_effect=self._result)
+        self.subscribe_events = Mock(side_effect=self._subscribe_events)
+        self.active_subscriptions = 0
+        self.max_active_subscriptions = 0
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(AgentJobService, "start", self.start)
+        monkeypatch.setattr(AgentJobService, "result", self.result)
+        monkeypatch.setattr(AgentJobService, "subscribe_events", self.subscribe_events)
+
+    async def _start(self, **kwargs):
+        operation = kwargs["operation"]
+        job_id = f"job-{len(self.operations) + 1}"
+        self.operations[job_id] = operation
+        return make_job_handle(
+            job_id=job_id,
+            session_id=f"session-{len(self.operations)}",
+            operation=operation,
+        )
+
+    def _subscribe_events(self, **kwargs):
+        job_id = kwargs["job_id"]
+
+        async def events():
+            self.active_subscriptions += 1
+            self.max_active_subscriptions = max(
+                self.max_active_subscriptions, self.active_subscriptions
+            )
+            try:
+                await asyncio.sleep(0)
+                terminal = (
+                    "job_failed"
+                    if self.operations[job_id].prompt in self.failures
+                    else "job_completed"
+                )
+                yield JobEvent(job_id=job_id, sequence=1, type=terminal)
+            finally:
+                self.active_subscriptions -= 1
+
+        return events()
+
+    async def _result(self, **kwargs):
+        job_id = kwargs["job_id"]
+        prompt_text = self.operations[job_id].prompt
+        if error := self.failures.get(prompt_text):
+            return FailedJobResultResponse(job_id=job_id, error=error)
+        return SucceededJobResultResponse(
+            job_id=job_id,
+            result=JobResultEnvelope(
+                job_id=job_id,
+                payload=TurnResult(message=self.outputs.get(prompt_text, f"result-{prompt_text}")),
+            ),
+        )
+
+
+@pytest.fixture
+def job_service_boundary(monkeypatch) -> _JobServiceBoundary:
+    boundary = _JobServiceBoundary()
+    boundary.install(monkeypatch)
+    return boundary
 
 
 class TestPrompt:
     """Tests for the prompt tool function."""
 
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_prompt_returns_response(self, mock_factory):
-        """prompt dispatches to runner via batch_prompt and returns output text."""
-        mock_runner = _setup_mock_runner(mock_factory, output="Agent response")
+    async def test_prompt_submits_turn_and_returns_compatibility_output(
+        self, job_service_boundary, fake_runner_registry
+    ):
+        """prompt submits one cwd-scoped turn and preserves its legacy response header."""
+        job_service_boundary.outputs["Test prompt"] = "Agent response"
 
         result = await prompt(
             cli=REPRESENTATIVE_CLI,
             prompt="Test prompt",
         )
 
+        assert result == "[cli: fake | model: default | mode: default]\n\nAgent response"
         assert strip_runner_header(result) == "Agent response"
-        mock_factory.create.assert_called_once_with(REPRESENTATIVE_CLI)
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.prompt == "Test prompt"
-        assert call_args.context == {}
-        assert call_args.execution_mode == "default"
-        assert call_args.model is None
+        call = job_service_boundary.start.await_args.kwargs
+        assert call["workspace"] == WorkspaceSelector(path=Path.cwd())
+        assert call["backend_id"] == REPRESENTATIVE_CLI
+        assert call["operation"] == TurnOperation(prompt="Test prompt")
+        assert call["explicit_config"] == ExecutionConfigValues()
+        job_service_boundary.subscribe_events.assert_called_once()
+        job_service_boundary.result.assert_awaited_once()
 
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_prompt_passes_execution_mode(self, mock_factory):
-        """execution_mode is passed through to the PromptRequest."""
-        mock_runner = _setup_mock_runner(mock_factory, output="Done")
+    async def test_prompt_maps_yolo_to_truthful_job_policy(
+        self, job_service_boundary, fake_runner_registry
+    ):
+        """execution_mode=yolo admits danger_full_access plus never approval."""
 
         await prompt(
             cli=REPRESENTATIVE_CLI,
@@ -87,116 +178,128 @@ class TestPrompt:
             execution_mode="yolo",
         )
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.execution_mode == "yolo"
+        config = job_service_boundary.start.await_args.kwargs["explicit_config"]
+        assert config.sandbox == "danger_full_access"
+        assert config.approval_policy == "never"
+        assert config.sandbox != "workspace_write"
 
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_prompt_passes_model(self, mock_factory):
-        """model parameter is passed through to the PromptRequest."""
-        mock_runner = _setup_mock_runner(mock_factory, output="Done")
+    @pytest.mark.parametrize("cli", ["opencode", "opencode_server"])
+    async def test_prompt_keeps_unsupported_yolo_as_compatibility_default(
+        self, cli, job_service_boundary
+    ):
+        """Registered backends without full access omit both typed policy fields."""
+        result = await prompt(cli=cli, prompt="Compatibility task", execution_mode="yolo")
+
+        config = job_service_boundary.start.await_args.kwargs["explicit_config"]
+        assert config.sandbox is None
+        assert config.approval_policy is None
+        assert result.startswith(f"[cli: {cli} | model: default | mode: yolo]")
+
+    async def test_prompt_uses_registered_backend_descriptor_for_yolo_capability(
+        self, job_service_boundary, fake_runner_registry
+    ):
+        """Compatibility policy follows the admitted runtime descriptor, not runner metadata."""
+        async with runtime_provider.borrow() as runtime:
+            backend = runtime.backends.get(REPRESENTATIVE_CLI)
+            backend.descriptor = backend.descriptor.model_copy(
+                update={
+                    "capabilities": backend.descriptor.capabilities.model_copy(
+                        update={"sandbox_modes": frozenset()}
+                    )
+                }
+            )
+
+            await prompt(
+                cli=REPRESENTATIVE_CLI,
+                prompt="Runtime descriptor task",
+                execution_mode="yolo",
+            )
+
+        config = job_service_boundary.start.await_args.kwargs["explicit_config"]
+        assert config.sandbox is None
+        assert config.approval_policy is None
+
+    async def test_prompt_maps_model_context_and_retry_values(
+        self, job_service_boundary, fake_runner_registry
+    ):
+        """Legacy prompt fields become a typed operation and explicit job configuration."""
 
         await prompt(
             cli=REPRESENTATIVE_CLI,
             prompt="Test prompt",
             model="representative-model",
-        )
-
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.model == "representative-model"
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_prompt_passes_context(self, mock_factory):
-        """context is passed through to the PromptRequest."""
-        mock_runner = _setup_mock_runner(mock_factory, output="Done")
-
-        await prompt(
-            cli=REPRESENTATIVE_CLI,
-            prompt="Test prompt",
             context={"key": "value"},
-        )
-
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.context == {"key": "value"}
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_prompt_handles_unsupported_agent(self, mock_factory):
-        """ToolError raised when factory cannot create runner for unknown agent."""
-        mock_factory.create.side_effect = UnsupportedAgentError("unknown_agent")
-
-        with pytest.raises(ToolError, match="unknown_agent"):
-            await prompt(
-                cli="unknown_agent",
-                prompt="Test prompt",
-            )
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_prompt_handles_subprocess_error(self, mock_factory):
-        """ToolError raised when runner.run() fails."""
-        _setup_mock_runner(
-            mock_factory,
-            side_effect=SubprocessError("CLI command failed", stderr="error output", returncode=1),
-        )
-
-        with pytest.raises(ToolError, match="CLI command failed"):
-            await prompt(
-                cli=REPRESENTATIVE_CLI,
-                prompt="Test prompt",
-            )
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_prompt_passes_max_retries(self, mock_factory):
-        """max_retries parameter is passed through to the PromptRequest."""
-        mock_runner = _setup_mock_runner(mock_factory, output="Done")
-
-        await prompt(
-            cli=REPRESENTATIVE_CLI,
-            prompt="Test prompt",
             max_retries=7,
+            output_limit=4096,
+            timeout=25,
+            retry_base_delay=0.25,
+            retry_max_delay=2.0,
         )
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.max_retries == 7
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_prompt_max_retries_defaults_to_none(self, mock_factory):
-        """max_retries defaults to None when not specified in prompt()."""
-        mock_runner = _setup_mock_runner(mock_factory, output="Done")
-
-        await prompt(
-            cli=REPRESENTATIVE_CLI,
-            prompt="Test prompt",
+        call = job_service_boundary.start.await_args.kwargs
+        assert call["operation"] == TurnOperation(prompt="Test prompt", context={"key": "value"})
+        config = call["explicit_config"]
+        assert config.model == "representative-model"
+        assert config.output_limit_bytes == 4096
+        assert config.timeout_seconds == 25
+        assert config.retry_policy == RetryPolicy(
+            max_attempts=7,
+            base_delay_seconds=0.25,
+            max_delay_seconds=2.0,
         )
 
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.max_retries is None
+    async def test_prompt_formats_live_admission_exception_type(
+        self, job_service_boundary, fake_runner_registry
+    ):
+        """An exception before a job handle keeps its live Python class name."""
+        job_service_boundary.start.side_effect = UnsupportedAgentError("unknown_agent")
 
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_ctx_forwarded_to_batch_prompt(self, mock_factory, ctx):
-        """ctx passed to prompt() is forwarded through to batch_prompt()."""
-        _setup_mock_runner(mock_factory, output="Done")
-
-        await prompt(
-            cli=REPRESENTATIVE_CLI,
-            prompt="Test prompt",
-            ctx=ctx,
-        )
-
-        # batch_prompt calls ctx.info() twice — once at start, once at completion
-        assert ctx.info.await_count == 2
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_prompt_raises_tool_error_with_type_prefix(self, mock_factory):
-        """ToolError message includes [ErrorType] prefix when error_type is set."""
-        _setup_mock_runner(
-            mock_factory,
-            side_effect=ParseError("Invalid runner output"),
-        )
-
-        with pytest.raises(ToolError, match=r"\[ParseError\].*Invalid runner output"):
+        with pytest.raises(ToolError, match=r"\[UnsupportedAgentError\].*unknown_agent"):
             await prompt(
                 cli=REPRESENTATIVE_CLI,
                 prompt="Test prompt",
             )
+
+    async def test_prompt_formats_durable_failure_type_and_domain_message(
+        self, monkeypatch, fake_runner_registry
+    ):
+        """A failed job uses bounded legacy type detail and its stable domain message."""
+        failure = JobError(
+            code="structured_output_invalid",
+            message="Legacy backend fake returned an invalid response",
+            details={"legacy_exception_type": "ParseError"},
+        )
+        boundary = _JobServiceBoundary(failures={"Test prompt": failure})
+        boundary.install(monkeypatch)
+
+        with pytest.raises(
+            ToolError,
+            match=r"\[ParseError\] Legacy backend fake returned an invalid response",
+        ):
+            await prompt(
+                cli=REPRESENTATIVE_CLI,
+                prompt="Test prompt",
+            )
+
+    async def test_prompt_ignores_invalid_legacy_exception_type(
+        self, monkeypatch, fake_runner_registry
+    ):
+        """Malformed failure details never invent a compatibility exception class."""
+        failure = JobError(
+            code="provider_failed",
+            message="Legacy backend fake process failed",
+            details={"legacy_exception_type": "not a valid type!"},
+        )
+        boundary = _JobServiceBoundary(failures={"Test prompt": failure})
+        boundary.install(monkeypatch)
+
+        with pytest.raises(ToolError) as raised:
+            await prompt(
+                cli=REPRESENTATIVE_CLI,
+                prompt="Test prompt",
+            )
+
+        assert str(raised.value) == "Legacy backend fake process failed"
 
 
 class TestToolTimeoutRegistration:
@@ -284,129 +387,92 @@ class TestAssignLabels:
 class TestBatchPrompt:
     """Tests for the batch_prompt tool function."""
 
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_all_success(self, mock_factory):
-        """All tasks succeed → succeeded=2, failed=0."""
-        _setup_mock_runner(mock_factory, output="ok")
+    async def test_successes_are_independent_jobs_in_input_order(
+        self, job_service_boundary, fake_runner_registry
+    ):
+        """Each batch entry gets its own session/job while result order stays stable."""
+        tasks = [make_agent_task(prompt=f"p{i}") for i in range(3)]
 
-        tasks = [make_agent_task(), make_agent_task(prompt="Second")]
         result = await batch_prompt(tasks=tasks)
 
-        assert result.succeeded == 2
+        assert isinstance(result, MultiPromptResponse)
+        assert result.succeeded == 3
         assert result.failed == 0
-        assert result.total == 2
+        assert [strip_runner_header(item.output or "") for item in result.results] == [
+            "result-p0",
+            "result-p1",
+            "result-p2",
+        ]
+        assert job_service_boundary.start.await_count == 3
+        assert len(job_service_boundary.operations) == 3
+        prompts = {
+            call.kwargs["operation"].prompt for call in job_service_boundary.start.await_args_list
+        }
+        assert prompts == {
+            "p0",
+            "p1",
+            "p2",
+        }
 
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_partial_failure(self, mock_factory):
-        """One task ok, one errors → succeeded=1, failed=1, good result preserved."""
+    async def test_partial_durable_failure_preserves_good_result_and_type(
+        self, monkeypatch, fake_runner_registry
+    ):
+        """One failed durable result does not discard a sibling success."""
+        boundary = _JobServiceBoundary(
+            outputs={"ok": "good output"},
+            failures={
+                "bad": JobError(
+                    code="structured_output_invalid",
+                    message="Legacy backend fake returned an invalid response",
+                    details={"legacy_exception_type": "ParseError"},
+                )
+            },
+        )
+        boundary.install(monkeypatch)
 
-        async def run_side_effect(request, **kwargs):
-            if request.prompt == "ok":
-                return make_agent_response(output="good output")
-            raise RuntimeError("agent exploded")
-
-        _setup_mock_runner(mock_factory, side_effect=run_side_effect)
-
-        tasks = [make_agent_task(prompt="ok"), make_agent_task(prompt="bad")]
-        result = await batch_prompt(tasks=tasks)
+        result = await batch_prompt(
+            tasks=[make_agent_task(prompt="ok"), make_agent_task(prompt="bad")]
+        )
 
         assert result.succeeded == 1
         assert result.failed == 1
-        ok_result = next(
-            r for r in result.results if strip_runner_header(r.output or "") == "good output"
+        assert strip_runner_header(result.results[0].output or "") == "good output"
+        assert result.results[1].error == "Legacy backend fake returned an invalid response"
+        assert result.results[1].error_type == "ParseError"
+
+    async def test_max_concurrency_limits_active_job_waiters(
+        self, job_service_boundary, fake_runner_registry
+    ):
+        """The adapter semaphore bounds independently durable job waiters."""
+        await batch_prompt(
+            tasks=[make_agent_task(prompt=f"p{i}") for i in range(5)],
+            max_concurrency=2,
         )
-        assert ok_result is not None
 
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_all_failures(self, mock_factory):
-        """All tasks error → succeeded=0, failed=N."""
-        _setup_mock_runner(mock_factory, side_effect=RuntimeError("always fails"))
+        assert job_service_boundary.max_active_subscriptions == 2
 
-        tasks = [make_agent_task() for _ in range(3)]
-        result = await batch_prompt(tasks=tasks)
-
-        assert result.succeeded == 0
-        assert result.failed == 3
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_concurrency_limit(self, mock_factory):
-        """Max concurrent invocations does not exceed max_concurrency=2."""
-        max_concurrent = 0
-        current = 0
-
-        async def slow_run(request, **kwargs):
-            nonlocal max_concurrent, current
-            current += 1
-            max_concurrent = max(max_concurrent, current)
-            await asyncio.sleep(0)
-            current -= 1
-            return make_agent_response()
-
-        _setup_mock_runner(mock_factory, side_effect=slow_run)
-
-        tasks = [make_agent_task() for _ in range(5)]
-        await batch_prompt(tasks=tasks, max_concurrency=2)
-
-        assert max_concurrent <= 2
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_result_order_matches_input(self, mock_factory):
-        """Results are in the same order as the input tasks."""
-        call_order: list[str] = []
-
-        async def ordered_run(request, **kwargs):
-            call_order.append(request.prompt)
-            return make_agent_response(output=f"result-{request.prompt}")
-
-        _setup_mock_runner(mock_factory, side_effect=ordered_run)
-
-        tasks = [make_agent_task(prompt=f"p{i}") for i in range(3)]
-        result = await batch_prompt(tasks=tasks)
-
-        outputs = [strip_runner_header(r.output or "") for r in result.results]
-        assert outputs == ["result-p0", "result-p1", "result-p2"]
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_returns_multi_prompt_response(self, mock_factory):
-        """Output is a MultiPromptResponse Pydantic model with a 'results' attribute."""
-        _setup_mock_runner(mock_factory)
-
-        result = await batch_prompt(tasks=[make_agent_task()])
-
-        assert isinstance(result, MultiPromptResponse)
-        assert hasattr(result, "results")
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_labels_auto_assigned(self, mock_factory):
+    async def test_labels_auto_assigned(self, job_service_boundary, fake_runner_registry):
         """Unlabeled tasks receive unique auto-assigned labels."""
-        _setup_mock_runner(mock_factory)
+        result = await batch_prompt(
+            tasks=[
+                make_agent_task(cli=REPRESENTATIVE_CLI),
+                make_agent_task(cli=REPRESENTATIVE_CLI),
+            ]
+        )
 
-        tasks = [
-            make_agent_task(cli=REPRESENTATIVE_CLI),
-            make_agent_task(cli=REPRESENTATIVE_CLI),
-        ]
-        result = await batch_prompt(tasks=tasks)
+        assert [item.label for item in result.results] == ["fake", "fake-2"]
 
-        labels = [r.label for r in result.results]
-        assert len(set(labels)) == 2  # all unique
+    async def test_empty_task_list(self, job_service_boundary, monkeypatch):
+        """An empty task list returns immediately without borrowing a job runtime."""
+        borrow = Mock(side_effect=AssertionError("empty batch must not borrow a runtime"))
+        monkeypatch.setattr(runtime_provider, "borrow", borrow)
 
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_empty_task_list(self, mock_factory):
-        """An empty task list returns total=0 and empty results."""
         result = await batch_prompt(tasks=[])
 
         assert result.total == 0
         assert result.results == []
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_unexpected_exception_captured(self, mock_factory):
-        """RuntimeError from runner is captured as task error, not propagated."""
-        _setup_mock_runner(mock_factory, side_effect=RuntimeError("unexpected boom"))
-
-        result = await batch_prompt(tasks=[make_agent_task()])
-
-        assert result.failed == 1
-        assert "unexpected boom" in result.results[0].error
+        job_service_boundary.start.assert_not_awaited()
+        borrow.assert_not_called()
 
     def test_default_concurrency_is_three(self):
         """DEFAULT_MAX_CONCURRENCY constant equals 3."""
@@ -422,145 +488,35 @@ class TestBatchPrompt:
         with pytest.raises(ValueError, match="max_concurrency must be >= 1"):
             await batch_prompt(tasks=[make_agent_task()], max_concurrency=-1)
 
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_single_task_no_suffix(self, mock_factory):
-        """A single task's label is the agent name without any suffix."""
-        _setup_mock_runner(mock_factory)
+    async def test_one_call_above_runtime_maximum_fails_before_job_admission(
+        self, job_service_boundary, fake_runner_registry
+    ):
+        """One call demanding nine workers cannot admit any durable job."""
+        tasks = [make_agent_task(prompt=f"p{index}") for index in range(9)]
 
+        with pytest.raises(ValueError, match="configured maximum 8"):
+            await batch_prompt(tasks=tasks, max_concurrency=9)
+
+        job_service_boundary.start.assert_not_awaited()
+
+    async def test_single_task_no_suffix(self, job_service_boundary, fake_runner_registry):
+        """A single task's label is the agent name without any suffix."""
         result = await batch_prompt(tasks=[make_agent_task(cli=REPRESENTATIVE_CLI)])
 
         assert result.results[0].label == REPRESENTATIVE_CLI
 
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_ctx_info_called_on_start_and_complete(self, mock_factory, ctx):
+    async def test_ctx_info_called_on_start_and_complete(
+        self, job_service_boundary, fake_runner_registry, ctx
+    ):
         """ctx.info() is awaited exactly twice: once at start, once at completion."""
-        _setup_mock_runner(mock_factory)
-
         await batch_prompt(tasks=[make_agent_task()], ctx=ctx)
 
         assert ctx.info.await_count == 2
 
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_ctx_none_does_not_raise(self, mock_factory):
+    async def test_ctx_none_does_not_raise(self, job_service_boundary, fake_runner_registry):
         """Default ctx=None completes without error (documents the None contract)."""
-        _setup_mock_runner(mock_factory)
-
-        # Should not raise even though ctx is None (the default)
         result = await batch_prompt(tasks=[make_agent_task()])
         assert isinstance(result, MultiPromptResponse)
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_batch_prompt_passes_max_retries_to_request(self, mock_factory):
-        """AgentTask.max_retries is threaded through to PromptRequest."""
-        mock_runner = _setup_mock_runner(mock_factory)
-
-        tasks = [make_agent_task(max_retries=5)]
-        await batch_prompt(tasks=tasks)
-
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.max_retries == 5
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_batch_prompt_max_retries_none_by_default(self, mock_factory):
-        """When AgentTask.max_retries is None, PromptRequest.max_retries is also None."""
-        mock_runner = _setup_mock_runner(mock_factory)
-
-        tasks = [make_agent_task()]  # max_retries not specified → None
-        await batch_prompt(tasks=tasks)
-
-        call_args = mock_runner.run.call_args.args[0]
-        assert call_args.max_retries is None
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_batch_prompt_preserves_error_type(self, mock_factory):
-        """error_type is set to the exception class name when runner raises."""
-        _setup_mock_runner(
-            mock_factory,
-            side_effect=ParseError("Invalid runner output"),
-        )
-
-        result = await batch_prompt(tasks=[make_agent_task()])
-
-        assert result.failed == 1
-        assert result.results[0].error_type == "ParseError"
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_batch_prompt_error_type_none_on_success(self, mock_factory):
-        """error_type is None for successful tasks."""
-        _setup_mock_runner(mock_factory, output="ok")
-
-        result = await batch_prompt(tasks=[make_agent_task()])
-
-        assert result.succeeded == 1
-        assert result.results[0].error_type is None
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_batch_prompt_logs_exception(self, mock_factory, caplog):
-        """logger.exception() is called when a task raises, capturing the traceback."""
-        import logging
-
-        _setup_mock_runner(
-            mock_factory,
-            side_effect=ParseError("Invalid runner output"),
-        )
-
-        with caplog.at_level(logging.ERROR, logger="nexus_mcp.server"):
-            await batch_prompt(tasks=[make_agent_task()])
-
-        assert len(caplog.records) == 1
-        assert caplog.records[0].exc_info is not None
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_report_progress_comes_from_runner(self, mock_factory, ctx):
-        """Progress comes from the runner via the injected emitter, not batch counter.
-
-        When the runner is fully mocked (doesn't call the progress emitter),
-        no ctx.report_progress calls are made — this verifies the old finally-block
-        counter is gone and progress is now runner-driven.
-        """
-        _setup_mock_runner(mock_factory)
-
-        tasks = [make_agent_task() for _ in range(4)]
-        await batch_prompt(tasks=tasks, ctx=ctx)
-
-        # Mocked runner doesn't call the progress emitter → 0 progress calls
-        assert ctx.report_progress.await_count == 0
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_report_progress_total_set_correctly(self, mock_factory, ctx):
-        """For N tasks, all ctx.report_progress calls pass total=N (batch-wrapped)."""
-        _setup_mock_runner(mock_factory)
-
-        tasks = [make_agent_task() for _ in range(3)]
-        await batch_prompt(tasks=tasks, ctx=ctx)
-
-        # Mocked runner doesn't call the progress emitter — no calls to verify
-        for call in ctx.report_progress.call_args_list:
-            assert call.kwargs["total"] == 3
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_ctx_none_skips_progress_reporting(self, mock_factory):
-        """batch_prompt(ctx=None) completes without error — no report_progress calls."""
-        _setup_mock_runner(mock_factory)
-
-        # Must not raise AttributeError on None.report_progress
-        result = await batch_prompt(tasks=[make_agent_task()])
-        assert isinstance(result, MultiPromptResponse)
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_no_progress_reported_on_failure_when_runner_mocked(self, mock_factory, ctx):
-        """Progress is runner-driven; a mocked runner that raises produces no progress calls.
-
-        Previously the finally block always reported progress, even on error.
-        Now progress comes from the runner's emitter calls, so a fully-mocked
-        runner that raises does not trigger any ctx.report_progress calls.
-        """
-        _setup_mock_runner(mock_factory, side_effect=RuntimeError("boom"))
-
-        await batch_prompt(tasks=[make_agent_task()], ctx=ctx)
-
-        # No progress reported because the mocked runner never called the emitter
-        assert ctx.report_progress.await_count == 0
 
 
 class TestServerInstructions:
@@ -677,62 +633,6 @@ class TestDynamicCliEnum:
         assert "nexus-mcp" in mcp.instructions
 
 
-class TestEmitterWiring:
-    """Emitter is created and passed to runner in _run_single."""
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_emitter_passed_to_runner_when_ctx_provided(self, mock_factory, ctx):
-        """runner.run() receives an emitter keyword arg when ctx is provided."""
-        mock_runner = _setup_mock_runner(mock_factory, output="Done")
-
-        await batch_prompt(tasks=[make_agent_task()], ctx=ctx)
-
-        call_kwargs = mock_runner.run.call_args.kwargs
-        assert "emitter" in call_kwargs
-        assert call_kwargs["emitter"] is not None
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_no_emitter_when_ctx_is_none(self, mock_factory):
-        """runner.run() receives no emitter when ctx is None."""
-        mock_runner = _setup_mock_runner(mock_factory, output="Done")
-
-        await batch_prompt(tasks=[make_agent_task()])
-
-        call_kwargs = mock_runner.run.call_args.kwargs
-        assert call_kwargs.get("emitter") is None
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_task_failure_emits_error_with_ctx(self, mock_factory, ctx):
-        """Task failure emits error via emitter when ctx is provided."""
-        _setup_mock_runner(
-            mock_factory,
-            side_effect=ParseError("bad json"),
-        )
-
-        result = await batch_prompt(tasks=[make_agent_task()], ctx=ctx)
-
-        assert result.failed == 1
-        ctx.error.assert_awaited_once()
-        error_msg = ctx.error.call_args[0][0]
-        assert "failed" in error_msg.lower()
-
-    @patch("nexus_mcp.server.RunnerFactory")
-    async def test_task_failure_falls_back_to_logger_without_ctx(self, mock_factory, caplog):
-        """Task failure uses logger.exception when ctx is None."""
-        import logging
-
-        _setup_mock_runner(
-            mock_factory,
-            side_effect=ParseError("bad json"),
-        )
-
-        with caplog.at_level(logging.ERROR, logger="nexus_mcp.server"):
-            await batch_prompt(tasks=[make_agent_task()])
-
-        assert len(caplog.records) == 1
-        assert caplog.records[0].exc_info is not None
-
-
 class TestMakeMcpEmitter:
     """make_mcp_emitter creates a dual-output emitter."""
 
@@ -740,7 +640,7 @@ class TestMakeMcpEmitter:
         """Info level calls ctx.info() and logger.info()."""
         emitter = make_mcp_emitter(ctx)
 
-        with patch("nexus_mcp.emitters.logger") as mock_logger:
+        with patch("nexus_mcp.mcp.emitters.logger") as mock_logger:
             await emitter("info", "test message")
 
         ctx.info.assert_awaited_once_with("test message")
@@ -750,7 +650,7 @@ class TestMakeMcpEmitter:
         """Warning level calls ctx.warning() and logger.warning()."""
         emitter = make_mcp_emitter(ctx)
 
-        with patch("nexus_mcp.emitters.logger") as mock_logger:
+        with patch("nexus_mcp.mcp.emitters.logger") as mock_logger:
             await emitter("warning", "retry warning")
 
         ctx.warning.assert_awaited_once_with("retry warning")
@@ -760,7 +660,7 @@ class TestMakeMcpEmitter:
         """Error level calls ctx.error() and logger.error(exc_info=True)."""
         emitter = make_mcp_emitter(ctx)
 
-        with patch("nexus_mcp.emitters.logger") as mock_logger:
+        with patch("nexus_mcp.mcp.emitters.logger") as mock_logger:
             await emitter("error", "task failed")
 
         ctx.error.assert_awaited_once_with("task failed")
@@ -770,7 +670,7 @@ class TestMakeMcpEmitter:
         """Debug level calls ctx.debug() and logger.debug()."""
         emitter = make_mcp_emitter(ctx)
 
-        with patch("nexus_mcp.emitters.logger") as mock_logger:
+        with patch("nexus_mcp.mcp.emitters.logger") as mock_logger:
             await emitter("debug", "debug message")
 
         ctx.debug.assert_awaited_once_with("debug message")
@@ -778,7 +678,10 @@ class TestMakeMcpEmitter:
 
 
 class TestPromptElicitation:
-    async def test_prompt_accepts_elicit_parameter(self, fake_runner_registry, ctx):
+    async def test_prompt_accepts_elicit_parameter(
+        self, fake_runner_registry, ctx, job_service_boundary
+    ):
+        job_service_boundary.outputs["Hello world test prompt"] = "fake output"
         result = await prompt(
             cli=fake_runner_registry, prompt="Hello world test prompt", elicit=False, ctx=ctx
         )

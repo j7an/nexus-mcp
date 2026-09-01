@@ -72,7 +72,7 @@ class TestGetRunner:
 
         from nexus_mcp.cli_detector import CLIInfo
 
-        with patch("nexus_mcp.resources.detect_cli", return_value=CLIInfo(found=False)):
+        with patch("nexus_mcp.mcp.resources.detect_cli", return_value=CLIInfo(found=False)):
             result = json.loads(await get_runner("codex"))
         assert result["installed"] is False
         assert result["path"] is None
@@ -114,7 +114,7 @@ class TestRunnerModelTierEnrichment:
             assert "tier" in model
 
     @patch(
-        "nexus_mcp.resources.get_runner_models",
+        "nexus_mcp.mcp.resources.get_runner_models",
         return_value=["gpt-5.4-mini", "gpt-5.4-pro"],
     )
     async def test_saved_tiers_override_heuristic(self, _mock_models, mock_cli_detection):
@@ -133,7 +133,7 @@ class TestRunnerModelTierEnrichment:
         assert mini_saved["tier"] == "thorough"
 
     @patch(
-        "nexus_mcp.resources.get_runner_models",
+        "nexus_mcp.mcp.resources.get_runner_models",
         return_value=["gpt-5.4-mini", "gpt-5.4-pro"],
     )
     async def test_saved_tier_model_not_in_unclassified(self, _mock_models, mock_cli_detection):
@@ -145,7 +145,7 @@ class TestRunnerModelTierEnrichment:
         for name in saved:
             assert name not in info["unclassified_models"]
 
-    @patch("nexus_mcp.resources.load_model_tiers", side_effect=RuntimeError("store broken"))
+    @patch("nexus_mcp.mcp.resources.load_model_tiers", side_effect=RuntimeError("store broken"))
     async def test_store_failure_falls_back_to_heuristics(self, mock_load, mock_cli_detection, ctx):
         """When load_model_tiers raises, resource still returns with heuristic tiers."""
         result = json.loads(await get_all_runners(ctx=ctx))
@@ -155,10 +155,10 @@ class TestRunnerModelTierEnrichment:
                 assert "tier" in model
 
     @patch(
-        "nexus_mcp.resources.get_runner_models",
+        "nexus_mcp.mcp.resources.get_runner_models",
         return_value=["gpt-5.4-mini", "gpt-5.4-pro"],
     )
-    @patch("nexus_mcp.resources.load_model_tiers")
+    @patch("nexus_mcp.mcp.resources.load_model_tiers")
     async def test_get_all_runners_with_ctx_loads_saved_tiers(
         self, mock_load, _mock_models, mock_cli_detection, ctx
     ):
@@ -171,10 +171,10 @@ class TestRunnerModelTierEnrichment:
         assert mini["tier"] == "thorough"
 
     @patch(
-        "nexus_mcp.resources.get_runner_models",
+        "nexus_mcp.mcp.resources.get_runner_models",
         return_value=["gpt-5.4-mini", "gpt-5.4-pro"],
     )
-    @patch("nexus_mcp.resources.load_model_tiers")
+    @patch("nexus_mcp.mcp.resources.load_model_tiers")
     async def test_get_runner_with_ctx_loads_saved_tiers(
         self, mock_load, _mock_models, mock_cli_detection, ctx
     ):
@@ -221,7 +221,7 @@ class TestGetConfig:
 class TestGetPreferencesResource:
     """Tests for the nexus://preferences resource."""
 
-    @patch("nexus_mcp.preferences.load_preferences")
+    @patch("nexus_mcp.mcp.preferences.load_preferences")
     async def test_session_preferences_returned(self, mock_load, ctx):
         """When session has preferences, returns them with source='session'."""
         mock_load.return_value = {"execution_mode": "yolo", "model": "gpt-5.4-pro"}
@@ -230,7 +230,7 @@ class TestGetPreferencesResource:
         assert result["preferences"]["execution_mode"] == "yolo"
         assert result["preferences"]["model"] == "gpt-5.4-pro"
 
-    @patch("nexus_mcp.preferences.load_preferences", return_value=None)
+    @patch("nexus_mcp.mcp.preferences.load_preferences", return_value=None)
     async def test_empty_session_returns_session_source(self, _mock_load, ctx):
         """When session exists but no prefs set, returns empty prefs with source='session'."""
         result = json.loads(await get_preferences_resource(ctx=ctx))
@@ -245,7 +245,7 @@ class TestGetPreferencesResource:
         assert result["preferences"]["timeout"] is not None
         assert result["preferences"]["max_retries"] is not None
 
-    @patch("nexus_mcp.preferences.load_preferences", side_effect=RuntimeError("store broken"))
+    @patch("nexus_mcp.mcp.preferences.load_preferences", side_effect=RuntimeError("store broken"))
     async def test_fallback_on_session_error(self, _mock_load, ctx):
         """When _get_session_preferences raises, falls back to config defaults."""
         result = json.loads(await get_preferences_resource(ctx=ctx))

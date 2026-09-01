@@ -1,11 +1,29 @@
 # tests/fixtures.py
 import asyncio
 import json
+import os
+import subprocess as stdlib_subprocess
+import tempfile
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 from nexus_mcp.cli_detector import CLIInfo
+from nexus_mcp.core.capabilities import BackendCapabilities, BackendDescriptor
+from nexus_mcp.core.interaction import PendingInput, PermissionRequest
+from nexus_mcp.core.models import (
+    AccessContext,
+    AgentJob,
+    AgentSession,
+    ConfigLayerSnapshot,
+    ExecutionConfigValues,
+    JobHandle,
+    RequestedExecutionConfig,
+    Workspace,
+)
+from nexus_mcp.core.operations import TurnOperation
+from nexus_mcp.core.results import JobError, TurnResult
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.types import AgentResponse, AgentTask, PromptRequest, SessionPreferences
 
@@ -14,6 +32,146 @@ from nexus_mcp.types import AgentResponse, AgentTask, PromptRequest, SessionPref
 # ---------------------------------------------------------------------------
 
 REPRESENTATIVE_CLI = "fake"
+
+
+def assert_owned_subprocess_call(mock_exec: AsyncMock, *command: str) -> None:
+    """Assert one subprocess call preserves arguments and owns its OS process tree."""
+    call = mock_exec.await_args
+    assert call.args == command
+    assert call.kwargs["stdin"] is asyncio.subprocess.DEVNULL
+    assert call.kwargs["stdout"] is asyncio.subprocess.PIPE
+    assert call.kwargs["stderr"] is asyncio.subprocess.PIPE
+    if os.name == "posix":
+        assert call.kwargs["start_new_session"] is True
+    elif os.name == "nt":
+        create_group = getattr(stdlib_subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        assert int(call.kwargs["creationflags"]) & create_group
+
+
+def make_access_context(**overrides: Any) -> AccessContext:
+    """Create a stable trusted local caller identity for core tests."""
+    defaults = {"principal_id": "local:501", "authentication_kind": "local"}
+    return AccessContext(**(defaults | overrides))
+
+
+def make_backend_descriptor(**overrides: Any) -> BackendDescriptor:
+    """Create a fully capable backend descriptor for application-service tests."""
+    defaults: dict[str, Any] = {
+        "backend_id": "codex",
+        "display_name": "Codex",
+        "capabilities": BackendCapabilities(
+            operations=frozenset({"turn", "fork", "review", "diagnostics"}),
+            cancellation=True,
+            session_continuation=True,
+            session_fork=True,
+            input_required=True,
+            sandbox_modes=frozenset({"read_only", "workspace_write", "danger_full_access"}),
+            review_targets=frozenset({"working_tree", "branch", "commit", "pull_request"}),
+            review_deliveries=frozenset({"inline", "detached"}),
+        ),
+    }
+    values = defaults | overrides
+    capabilities = values["capabilities"]
+    if not isinstance(capabilities, BackendCapabilities):
+        values["capabilities"] = BackendCapabilities(**capabilities)
+    return BackendDescriptor(**values)
+
+
+def make_workspace(**overrides: Any) -> Workspace:
+    """Create a stable canonical workspace for core tests."""
+    defaults = {
+        "workspace_id": "ws-test",
+        "canonical_path": Path(tempfile.gettempdir()) / "nexus-workspace",
+    }
+    return Workspace(**(defaults | overrides))
+
+
+def make_agent_session(**overrides: Any) -> AgentSession:
+    """Create a stable durable session for core tests."""
+    defaults = {
+        "session_id": "session-test",
+        "workspace_id": "ws-test",
+        "backend_id": "codex",
+        "owner_id": "local:501",
+    }
+    return AgentSession(**(defaults | overrides))
+
+
+def make_execution_config_values(**overrides: Any) -> ExecutionConfigValues:
+    """Create a partial execution configuration with stable representative values."""
+    return ExecutionConfigValues(**overrides)
+
+
+def make_requested_config(**overrides: Any) -> RequestedExecutionConfig:
+    """Create a requested configuration and normalize mapping layers into snapshots."""
+    defaults: dict[str, Any] = {"explicit": ExecutionConfigValues()}
+    values = defaults | overrides
+    explicit = values["explicit"]
+    if not isinstance(explicit, ExecutionConfigValues):
+        values["explicit"] = ExecutionConfigValues(**explicit)
+
+    for layer_name in ("workspace", "user", "environment"):
+        layer = values.get(layer_name)
+        if layer is None or isinstance(layer, ConfigLayerSnapshot):
+            continue
+        values[layer_name] = ConfigLayerSnapshot(
+            values=ExecutionConfigValues(**layer),
+            source=layer_name,
+            source_hash="0" * 64,
+        )
+    return RequestedExecutionConfig(**values)
+
+
+def make_agent_job(**overrides: Any) -> AgentJob:
+    """Create a stable durable job with a typed turn operation."""
+    defaults = {
+        "job_id": "job-test",
+        "workspace_id": "ws-test",
+        "backend_id": "codex",
+        "owner_id": "local:501",
+        "session_id": "session-test",
+        "operation": TurnOperation(prompt="Inspect the workspace"),
+        "requested_config": RequestedExecutionConfig(),
+        "request_hash": "0" * 64,
+    }
+    return AgentJob(**(defaults | overrides))
+
+
+def make_job_handle(**overrides: Any) -> JobHandle:
+    """Create a stable public handle for an admitted turn operation."""
+    defaults = {
+        "job_id": "job-test",
+        "session_id": "session-test",
+        "operation": TurnOperation(prompt="Inspect the workspace"),
+    }
+    return JobHandle(**(defaults | overrides))
+
+
+def make_turn_result(**overrides: Any) -> TurnResult:
+    """Create a stable normalized turn result."""
+    return TurnResult(**({"message": "Inspection complete"} | overrides))
+
+
+def make_job_error(**overrides: Any) -> JobError:
+    """Create a stable normalized provider failure."""
+    defaults = {"code": "provider_failed", "message": "Provider execution failed"}
+    return JobError(**(defaults | overrides))
+
+
+def make_pending_permission(**overrides: Any) -> PendingInput:
+    """Create a stable pending permission request."""
+    values = dict(overrides)
+    requested = values.pop("requested", ["network:api.example.com"])
+    request = values.pop(
+        "request",
+        PermissionRequest(prompt="Allow requested access?", requested=requested),
+    )
+    defaults = {
+        "input_id": "input-test",
+        "job_id": "job-test",
+        "request": request,
+    }
+    return PendingInput(**(defaults | values))
 
 
 CODEX_NDJSON_RESPONSE = "\n".join(
@@ -171,8 +329,8 @@ def cli_detection_mocks():
     with (
         patch("nexus_mcp.runners.base.detect_cli") as mock_detect,
         patch("nexus_mcp.runners.base.get_cli_version", return_value="1.0.0"),
-        patch("nexus_mcp.resources.detect_cli") as mock_res_detect,
-        patch("nexus_mcp.resources.get_cli_version", return_value="1.0.0"),
+        patch("nexus_mcp.mcp.resources.detect_cli") as mock_res_detect,
+        patch("nexus_mcp.mcp.resources.get_cli_version", return_value="1.0.0"),
     ):
         mock_detect.return_value = CLIInfo(found=True, path="/usr/bin/fake")
         mock_res_detect.return_value = CLIInfo(found=True, path="/usr/bin/fake")

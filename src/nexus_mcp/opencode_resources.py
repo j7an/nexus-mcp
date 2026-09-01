@@ -1,307 +1,41 @@
-"""MCP resources for OpenCode server integration.
+"""Compatibility imports for OpenCode MCP resources."""
 
-Exposes read-only resources for OpenCode server status, providers,
-auth methods, and configuration. These replace the former read-only
-tools following the 'tools mutate, resources read' pattern.
+from nexus_mcp.mcp.opencode_resources import (
+    _MESSAGE_ID_PATTERN,  # noqa: F401 - compatibility import
+    _SESSION_ID_PATTERN,  # noqa: F401 - compatibility import
+    get_opencode_config,
+    get_opencode_permissions,
+    get_opencode_providers,
+    get_opencode_providers_auth,
+    get_opencode_questions,
+    get_opencode_sessions,
+    get_opencode_sessions_status,
+    get_opencode_status,
+    get_session_children,
+    get_session_diff,
+    get_session_message,
+    get_session_messages,
+    get_session_todo,
+    is_opencode_server_configured,
+    register_opencode_data_resources,
+    register_opencode_status_resource,
+)
 
-Resources:
-- nexus://opencode: Integration status + tool group overview (always registered)
-- nexus://opencode/providers: Provider list (conditional on server availability)
-- nexus://opencode/providers/auth: Auth methods (conditional)
-- nexus://opencode/config: Server configuration (conditional)
-"""
-
-import json
-import logging
-import os
-import re
-
-from fastmcp import FastMCP
-from fastmcp.exceptions import ResourceError
-
-from nexus_mcp.config_resolver import get_opencode_server_url
-from nexus_mcp.http_client import get_http_client
-
-logger = logging.getLogger(__name__)
-
-_RESOURCE_ANNOTATIONS = {"readOnlyHint": True, "idempotentHint": True}
-
-_TOOL_GROUPS_HEALTHY = [
-    {
-        "tag": "configuration",
-        "description": "Provider setup, config management",
-        "tool_count": 4,
-        "enabled": True,
-    },
-    {
-        "tag": "workspace",
-        "description": "File search, git status, project info",
-        "tool_count": 11,
-        "enabled": True,
-    },
-    {
-        "tag": "monitoring",
-        "description": "Server health, LSP/MCP status",
-        "tool_count": 4,
-        "enabled": True,
-    },
-    {
-        "tag": "session",
-        "description": "Session lifecycle, permissions, questions",
-        "tool_count": 13,
-        "enabled": True,
-    },
+__all__ = [
+    "get_opencode_config",
+    "get_opencode_permissions",
+    "get_opencode_providers",
+    "get_opencode_providers_auth",
+    "get_opencode_questions",
+    "get_opencode_sessions",
+    "get_opencode_sessions_status",
+    "get_opencode_status",
+    "get_session_children",
+    "get_session_diff",
+    "get_session_message",
+    "get_session_messages",
+    "get_session_todo",
+    "is_opencode_server_configured",
+    "register_opencode_data_resources",
+    "register_opencode_status_resource",
 ]
-
-_RESOURCE_GROUPS_HEALTHY = [
-    {
-        "category": "providers",
-        "description": "Provider list, auth methods, config",
-        "resource_count": 3,
-    },
-    {
-        "category": "session",
-        "description": "Session data, messages, todos, diffs",
-        "resource_count": 9,
-    },
-]
-
-_COMPOUND_TOOLS = ["opencode_investigate", "opencode_session_review"]
-
-# ID validation patterns for URI template resources
-_SESSION_ID_PATTERN = re.compile(r"^ses[a-zA-Z0-9_-]+$")
-_MESSAGE_ID_PATTERN = re.compile(r"^msg[a-zA-Z0-9_-]+$")
-
-
-def is_opencode_server_configured() -> bool:
-    """Check if the OpenCode server is configured via env vars."""
-    return os.environ.get("NEXUS_OPENCODE_SERVER_PASSWORD") is not None
-
-
-async def get_opencode_status() -> str:
-    """Return OpenCode server integration status.
-
-    Resource URI: nexus://opencode
-
-    Always registered — reports configured=false when server is not set up,
-    so client agents can understand why OpenCode tools are absent.
-    """
-    if not is_opencode_server_configured():
-        return json.dumps(
-            {
-                "server": {"configured": False, "healthy": False, "url": None},
-                "tool_groups": [],
-                "compound_tools": [],
-                "resource_groups": [],
-            }
-        )
-
-    url = get_opencode_server_url()
-    client = get_http_client()
-    try:
-        healthy = await client.health_check()
-    except Exception:
-        logger.debug("Health check failed unexpectedly", exc_info=True)
-        healthy = False
-
-    return json.dumps(
-        {
-            "server": {"configured": True, "healthy": healthy, "url": url},
-            "tool_groups": _TOOL_GROUPS_HEALTHY if healthy else [],
-            "compound_tools": _COMPOUND_TOOLS if healthy else [],
-            "resource_groups": _RESOURCE_GROUPS_HEALTHY if healthy else [],
-        }
-    )
-
-
-async def get_opencode_providers() -> str:
-    """Return provider list from OpenCode server.
-
-    Resource URI: nexus://opencode/providers
-    """
-    data = await get_http_client().get("/provider")
-    return json.dumps(data, indent=2)
-
-
-async def get_opencode_providers_auth() -> str:
-    """Return auth methods from OpenCode server.
-
-    Resource URI: nexus://opencode/providers/auth
-    """
-    data = await get_http_client().get("/provider/auth")
-    return json.dumps(data, indent=2)
-
-
-async def get_opencode_config() -> str:
-    """Return configuration from OpenCode server.
-
-    Resource URI: nexus://opencode/config
-    """
-    data = await get_http_client().get("/config")
-    return json.dumps(data, indent=2)
-
-
-async def get_opencode_sessions() -> str:
-    """Return list of all sessions from OpenCode server.
-
-    Resource URI: nexus://opencode/sessions
-    """
-    data = await get_http_client().get("/session")
-    return json.dumps(data, indent=2)
-
-
-async def get_opencode_sessions_status() -> str:
-    """Return status of all sessions from OpenCode server.
-
-    Resource URI: nexus://opencode/sessions/status
-    """
-    data = await get_http_client().get("/session/status")
-    return json.dumps(data, indent=2)
-
-
-async def get_opencode_permissions() -> str:
-    """Return pending permission requests from OpenCode server.
-
-    Resource URI: nexus://opencode/permissions
-    """
-    data = await get_http_client().get("/permission")
-    return json.dumps(data, indent=2)
-
-
-async def get_opencode_questions() -> str:
-    """Return pending question requests from OpenCode server.
-
-    Resource URI: nexus://opencode/questions
-    """
-    data = await get_http_client().get("/question")
-    return json.dumps(data, indent=2)
-
-
-async def get_session_todo(session_id: str) -> str:
-    """Return todo list for a session.
-
-    Resource URI: nexus://opencode/session/{session_id}/todo
-    """
-    if not _SESSION_ID_PATTERN.fullmatch(session_id):
-        raise ResourceError(f"Invalid session_id: {session_id!r}")
-    data = await get_http_client().get(f"/session/{session_id}/todo")
-    return json.dumps(data, indent=2)
-
-
-async def get_session_messages(session_id: str) -> str:
-    """Return message history for a session.
-
-    Resource URI: nexus://opencode/session/{session_id}/messages
-    """
-    if not _SESSION_ID_PATTERN.fullmatch(session_id):
-        raise ResourceError(f"Invalid session_id: {session_id!r}")
-    data = await get_http_client().get(f"/session/{session_id}/message")
-    return json.dumps(data, indent=2)
-
-
-async def get_session_children(session_id: str) -> str:
-    """Return child sessions for a session.
-
-    Resource URI: nexus://opencode/session/{session_id}/children
-    """
-    if not _SESSION_ID_PATTERN.fullmatch(session_id):
-        raise ResourceError(f"Invalid session_id: {session_id!r}")
-    data = await get_http_client().get(f"/session/{session_id}/children")
-    return json.dumps(data, indent=2)
-
-
-async def get_session_diff(session_id: str) -> str:
-    """Return file diff for a session.
-
-    Resource URI: nexus://opencode/session/{session_id}/diff
-    """
-    if not _SESSION_ID_PATTERN.fullmatch(session_id):
-        raise ResourceError(f"Invalid session_id: {session_id!r}")
-    data = await get_http_client().get(f"/session/{session_id}/diff")
-    return json.dumps(data, indent=2)
-
-
-async def get_session_message(session_id: str, message_id: str) -> str:
-    """Return a single message from a session.
-
-    Resource URI: nexus://opencode/session/{session_id}/message/{message_id}
-    """
-    if not _SESSION_ID_PATTERN.fullmatch(session_id):
-        raise ResourceError(f"Invalid session_id: {session_id!r}")
-    if not _MESSAGE_ID_PATTERN.fullmatch(message_id):
-        raise ResourceError(f"Invalid message_id: {message_id!r}")
-    data = await get_http_client().get(f"/session/{session_id}/message/{message_id}")
-    return json.dumps(data, indent=2)
-
-
-def register_opencode_status_resource(mcp: FastMCP) -> None:
-    """Register the nexus://opencode status resource (always)."""
-    mcp.resource(
-        "nexus://opencode",
-        mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
-    )(get_opencode_status)
-
-
-def register_opencode_data_resources(mcp: FastMCP) -> None:
-    """Register OpenCode data resources (when server is configured + healthy)."""
-    mcp.resource(
-        "nexus://opencode/providers",
-        mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
-    )(get_opencode_providers)
-    mcp.resource(
-        "nexus://opencode/providers/auth",
-        mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
-    )(get_opencode_providers_auth)
-    mcp.resource(
-        "nexus://opencode/config",
-        mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
-    )(get_opencode_config)
-    mcp.resource(
-        "nexus://opencode/sessions",
-        mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
-    )(get_opencode_sessions)
-    mcp.resource(
-        "nexus://opencode/sessions/status",
-        mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
-    )(get_opencode_sessions_status)
-    mcp.resource(
-        "nexus://opencode/permissions",
-        mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
-    )(get_opencode_permissions)
-    mcp.resource(
-        "nexus://opencode/questions",
-        mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
-    )(get_opencode_questions)
-    mcp.resource(
-        "nexus://opencode/session/{session_id}/todo",
-        mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
-    )(get_session_todo)
-    mcp.resource(
-        "nexus://opencode/session/{session_id}/messages",
-        mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
-    )(get_session_messages)
-    mcp.resource(
-        "nexus://opencode/session/{session_id}/children",
-        mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
-    )(get_session_children)
-    mcp.resource(
-        "nexus://opencode/session/{session_id}/diff",
-        mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
-    )(get_session_diff)
-    mcp.resource(
-        "nexus://opencode/session/{session_id}/message/{message_id}",
-        mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
-    )(get_session_message)

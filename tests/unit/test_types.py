@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -19,6 +21,15 @@ def test_prompt_request_valid():
     assert req.cli == REPRESENTATIVE_CLI
     assert req.prompt == "Hello"
     assert req.context == {}
+
+
+def test_prompt_request_cwd_round_trips_through_json():
+    """The admitted canonical workspace survives the runner request boundary."""
+    request = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", cwd=Path("/tmp/workspace"))
+
+    decoded = PromptRequest.model_validate_json(request.model_dump_json())
+
+    assert decoded.cwd == Path("/tmp/workspace")
 
 
 def test_prompt_request_empty_prompt_fails():

@@ -14,6 +14,7 @@ import json
 import pytest
 from fastmcp.exceptions import ToolError
 
+from nexus_mcp.cli_detector import CLIInfo
 from nexus_mcp.server import batch_prompt, prompt
 from tests.fixtures import (
     CLAUDE_NOISY_STDOUT,
@@ -42,6 +43,16 @@ def _claude_json(text: str) -> str:
             }
         ]
     )
+
+
+@pytest.fixture(autouse=True)
+def _legacy_backend_available(monkeypatch):
+    """Keep job-worker availability independent of host Claude installation."""
+    monkeypatch.setattr(
+        "nexus_mcp.legacy.runner_backend.detect_cli",
+        lambda _backend: CLIInfo(found=True, path="/test/claude"),
+    )
+    monkeypatch.setattr("nexus_mcp.legacy.runner_backend.get_cli_version", lambda _backend: "test")
 
 
 # ---------------------------------------------------------------------------
@@ -105,8 +116,9 @@ class TestPromptClaudePipeline:
         with pytest.raises(ToolError, match=r"\[SubprocessError\]"):
             await prompt(cli="claude", prompt="test")
 
-    async def test_429_retry_then_success(self, mock_subprocess, fast_retry_sleep):
+    async def test_429_retry_then_success(self, mock_subprocess, fast_job_runtime):
         """HTTP 429 rate limit triggers retry; second attempt succeeds."""
+        del fast_job_runtime
         error_json = _claude_error_json(429, "Rate limited")
         mock_subprocess.side_effect = [
             create_mock_process(stderr=error_json, returncode=1),
@@ -136,8 +148,9 @@ class TestPromptClaudePipeline:
 
         assert strip_runner_header(result) == "test output"
 
-    async def test_exhausted_retries_503(self, mock_subprocess, fast_retry_sleep):
+    async def test_exhausted_retries_503(self, mock_subprocess, fast_job_runtime):
         """HTTP 503 that always fails → exhausts all retries → ToolError with [RetryableError]."""
+        del fast_job_runtime
         error_json = _claude_error_json(503, "Service unavailable")
         mock_subprocess.return_value = create_mock_process(stderr=error_json, returncode=1)
 

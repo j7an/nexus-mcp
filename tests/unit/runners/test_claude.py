@@ -12,7 +12,6 @@ Tests verify:
 - error handling: _recover_from_error, _try_extract_error
 """
 
-import asyncio
 import json
 from unittest.mock import patch
 
@@ -24,6 +23,7 @@ from nexus_mcp.runners.claude import ClaudeRunner
 from tests.fixtures import (
     CLAUDE_JSON_RESPONSE,
     CLAUDE_NOISY_STDOUT,
+    assert_owned_subprocess_call,
     claude_error_json,
     claude_json,
     create_mock_process,
@@ -928,7 +928,8 @@ class TestClaudeRunnerIntegration:
 
         response = await runner.run(request)
 
-        mock_exec.assert_awaited_once_with(
+        assert_owned_subprocess_call(
+            mock_exec,
             "claude",
             "-p",
             prompt,
@@ -936,9 +937,6 @@ class TestClaudeRunnerIntegration:
             "json",
             "--model",
             model,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
         )
         assert response.cli == "claude"
         assert response.output == "test output"
