@@ -436,12 +436,12 @@ async def test_create_round_trips_typed_job_and_session_snapshots(admission_stor
     assert session.access_policy == command.access_policy
 
 
-async def test_failed_create_job_leaves_no_partial_workspace(admission_store):
+async def test_failed_create_job_leaves_no_partial_workspace(admission_store, tmp_path: Path):
     """An admission failure rolls back every identity that would have accompanied the job."""
     command = make_create_job_command(
         workspace=Workspace(
             workspace_id="ws-rollback",
-            canonical_path=Path("/tmp/nexus-rollback"),
+            canonical_path=tmp_path / "nexus-rollback",
             created_at=NOW,
             updated_at=NOW,
         ),
@@ -455,11 +455,14 @@ async def test_failed_create_job_leaves_no_partial_workspace(admission_store):
         await admission_store.resolve_workspace(WorkspaceSelector(workspace_id="ws-rollback"))
 
 
-async def test_source_checkpoint_requires_existing_source_before_any_mutation(admission_store):
+async def test_source_checkpoint_requires_existing_source_before_any_mutation(
+    admission_store,
+    tmp_path: Path,
+):
     """A missing checkpoint source rolls back workspace, child session, job, event, and key."""
     workspace = Workspace(
         workspace_id="ws-missing-source",
-        canonical_path=Path("/tmp/nexus-missing-source"),
+        canonical_path=tmp_path / "nexus-missing-source",
         created_at=NOW,
         updated_at=NOW,
     )

@@ -366,7 +366,7 @@ def test_snapshot_captures_workspace_user_and_environment_layers(
     assert requested.workspace.source == str(workspace_path)
     assert requested.user is not None
     assert requested.user.values == ExecutionConfigValues(output_limit_bytes=4000)
-    assert requested.user.source_hash == hashlib.sha256(user_contents.encode()).hexdigest()
+    assert requested.user.source_hash == hashlib.sha256(user_path.read_bytes()).hexdigest()
     assert requested.environment is not None
     assert requested.environment.values == ExecutionConfigValues(model="environment-model")
     assert requested.environment.source == "environment"

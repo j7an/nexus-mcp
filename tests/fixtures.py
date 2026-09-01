@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import subprocess as stdlib_subprocess
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -78,7 +79,10 @@ def make_backend_descriptor(**overrides: Any) -> BackendDescriptor:
 
 def make_workspace(**overrides: Any) -> Workspace:
     """Create a stable canonical workspace for core tests."""
-    defaults = {"workspace_id": "ws-test", "canonical_path": Path("/tmp/nexus-workspace")}
+    defaults = {
+        "workspace_id": "ws-test",
+        "canonical_path": Path(tempfile.gettempdir()) / "nexus-workspace",
+    }
     return Workspace(**(defaults | overrides))
 
 

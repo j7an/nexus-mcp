@@ -53,7 +53,7 @@ def test_local_principal_uses_posix_user_id(monkeypatch):
     """POSIX callers are identified without accepting a tool-supplied principal."""
     from nexus_mcp.mcp import access
 
-    monkeypatch.setattr(access.os, "getuid", lambda: 712)
+    monkeypatch.setattr(access.os, "getuid", lambda: 712, raising=False)
 
     assert access.local_principal_id() == "local:712"
 

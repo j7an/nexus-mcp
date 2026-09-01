@@ -102,7 +102,7 @@ def direct_imports_of(
         ):
             continue
 
-        tree = ast.parse(path.read_text(), filename=str(relative_path))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(relative_path))
         for node in ast.walk(tree):
             if any(
                 imported == module_name or imported.startswith(f"{module_name}.")
@@ -189,7 +189,7 @@ def _legacy_command_violations(files: Iterable[Path]) -> list[str]:
             exact_files=LEGACY_COMMAND_ALLOWED_FILES,
         ):
             continue
-        tree = ast.parse(path.read_text(), filename=str(relative_path))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(relative_path))
         for value, line_number in _decoded_string_candidates(tree):
             if (command := _legacy_command(value)) is not None:
                 violations.add(f"{relative_path}:{line_number}: {command}")
@@ -221,7 +221,7 @@ def _forbidden_runtime_internal_violations(files: Iterable[Path]) -> list[str]:
     violations: set[str] = set()
     for path in files:
         relative_path = path.relative_to(PROJECT_ROOT)
-        tree = ast.parse(path.read_text(), filename=str(relative_path))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(relative_path))
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute) and node.attr in {
                 "_state_store",
@@ -248,7 +248,7 @@ def _forbidden_core_import_violations(files: Iterable[Path]) -> list[str]:
     violations: set[str] = set()
     for path in files:
         relative_path = path.relative_to(PROJECT_ROOT)
-        tree = ast.parse(path.read_text(), filename=str(relative_path))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(relative_path))
         for node in ast.walk(tree):
             for imported in _imported_modules(node):
                 if _is_provider_module(imported) or any(
@@ -558,7 +558,7 @@ def _provider_specific_core_exports(files: Iterable[Path]) -> list[str]:
     violations: set[str] = set()
     for path in files:
         relative_path = path.relative_to(PROJECT_ROOT)
-        tree = ast.parse(path.read_text(), filename=str(relative_path))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(relative_path))
         exports, dynamic_updates = _explicit_public_exports(tree)
         for export in exports:
             if any(marker in export.casefold() for marker in PROVIDER_SPECIFIC_EXPORT_MARKERS):

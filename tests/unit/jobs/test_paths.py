@@ -90,8 +90,8 @@ async def test_open_creates_private_database_files(tmp_path):
 
     await store.open()
     try:
-        assert stat.S_IMODE(database_path.parent.stat().st_mode) & 0o077 == 0
         if os.name == "posix":
+            assert stat.S_IMODE(database_path.parent.stat().st_mode) & 0o077 == 0
             sqlite_paths = (
                 store.path,
                 Path(f"{store.path}-wal"),

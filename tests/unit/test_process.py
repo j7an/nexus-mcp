@@ -4,7 +4,7 @@ import os
 import signal
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -28,7 +28,7 @@ async def test_run_subprocess_success(mock_exec):
 
 
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-async def test_run_subprocess_forwards_non_none_cwd_only(mock_exec):
+async def test_run_subprocess_forwards_non_none_cwd_only(mock_exec, tmp_path: Path):
     """Explicit workspaces reach subprocess creation without changing the default call shape."""
     mock_exec.return_value = create_mock_process(stdout="output", returncode=0)
 
@@ -45,9 +45,10 @@ async def test_run_subprocess_forwards_non_none_cwd_only(mock_exec):
     assert "cwd" not in call.kwargs
 
     mock_exec.reset_mock()
-    await run_subprocess(["pwd"], cwd=Path("/tmp/workspace"))
+    workspace_path = tmp_path / "workspace"
+    await run_subprocess(["pwd"], cwd=workspace_path)
     assert mock_exec.await_args.args == ("pwd",)
-    assert mock_exec.await_args.kwargs["cwd"] == Path("/tmp/workspace")
+    assert mock_exec.await_args.kwargs["cwd"] == workspace_path
 
 
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
@@ -115,8 +116,9 @@ async def test_run_subprocess_permission_denied(mock_exec):
         await run_subprocess(["/protected/binary"])
 
 
+@patch("nexus_mcp.process._terminate_process_tree", new_callable=AsyncMock, return_value=True)
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-async def test_run_subprocess_timeout(mock_exec):
+async def test_run_subprocess_timeout(mock_exec, _mock_terminate_process_tree):
     """Handle subprocess timeout."""
     # Create a mock process that never completes
     mock_process = create_mock_process(stdout="", delay=10)
@@ -146,6 +148,7 @@ async def test_run_subprocess_error_includes_command(mock_exec):
     assert exc_info.value.command == [REPRESENTATIVE_CLI, "-p", "test"]
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group behavior")
 @patch("nexus_mcp.process.os.killpg")
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
 async def test_timeout_kills_and_waits_for_owned_process_group(mock_exec, mock_killpg):
@@ -162,6 +165,7 @@ async def test_timeout_kills_and_waits_for_owned_process_group(mock_exec, mock_k
 
 
 @pytest.mark.parametrize("returncode", [None, 0])
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group behavior")
 @patch("nexus_mcp.process.os.killpg")
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
 async def test_external_cancellation_reaps_subprocess(
@@ -186,6 +190,7 @@ async def test_external_cancellation_reaps_subprocess(
     mock_process.wait.assert_awaited_once()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group behavior")
 @patch("nexus_mcp.process.os.killpg", side_effect=PermissionError("not owned"))
 @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
 async def test_unproven_tree_stoppage_raises_recoverable_process_error(mock_exec, _mock_killpg):
