@@ -16,7 +16,7 @@ from nexus_mcp.jobs.store import (
     TerminalOutcome,
 )
 from tests.fixtures import make_job_error, make_pending_permission, make_turn_result
-from tests.unit.jobs.test_store_contract import make_create_job_command, make_event
+from tests.unit.jobs._store_contract_support import make_create_job_command, make_event
 
 OLD = datetime(2025, 1, 1, tzinfo=UTC)
 NOW = datetime(2026, 8, 30, 20, 0, tzinfo=UTC)

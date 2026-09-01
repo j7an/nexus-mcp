@@ -1,11 +1,7 @@
 """Dedicated-thread SQLite lifecycle and schema foundation for durable jobs."""
 
 import asyncio
-import base64
-import binascii
-import json
 import os
-import re
 import sqlite3
 import time
 from collections.abc import Callable
@@ -14,21 +10,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import ValidationError
 
 from nexus_mcp.core import (
     TERMINAL_STATES,
     AgentJob,
-    AgentOperation,
     AgentSession,
     BackendEvent,
     CancelReceipt,
     IdempotencyConflictError,
     InputAlreadyResolvedError,
     InputNotFoundError,
-    InputRequest,
     InputResolutionReceipt,
-    InputResponse,
     JobAttempt,
     JobError,
     JobEvent,
@@ -37,10 +30,8 @@ from nexus_mcp.core import (
     JobPhase,
     JobResultEnvelope,
     JobState,
-    OperationResult,
     PendingInput,
     ProviderReference,
-    RequestedExecutionConfig,
     ResolvedExecutionConfig,
     SessionBusyError,
     SessionNotFoundError,
@@ -50,6 +41,33 @@ from nexus_mcp.core import (
     WorkspaceSelector,
     new_id,
     validate_job_transition,
+)
+from nexus_mcp.jobs._store_codec import (
+    _JSON_SCHEMA_VERSION,
+    InvalidCursorError,
+    StoreSchemaError,
+    _canonical_json,
+    _canonical_workspace_path,
+    _datetime_to_ms,
+    _decode_cursor,
+    _decode_model,
+    _decode_operation,
+    _encode_cursor,
+    _ms_to_datetime,
+    _normalize_datetime,
+)
+from nexus_mcp.jobs._store_rows import (
+    _decode_event_payload,
+    _decode_job_row,
+    _decode_pending_input_row,
+    _event_from_row,
+    _job_attempt_from_row,
+    _job_from_row,
+    _job_result_from_row,
+    _pending_input_from_row,
+    _provider_references_from_pairs,
+    _session_from_row,
+    _workspace_from_row,
 )
 from nexus_mcp.jobs.migrations import MIGRATIONS, Migration
 from nexus_mcp.jobs.paths import default_database_path
@@ -79,13 +97,6 @@ from nexus_mcp.jobs.store import (
 __all__ = ["InvalidCursorError", "SQLiteJobStore", "StoreSchemaError"]
 
 _ResultT = TypeVar("_ResultT")
-_JSON_SCHEMA_VERSION = 1
-_CURSOR_VERSION = 1
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
-_OPERATION_ADAPTER: TypeAdapter[AgentOperation] = TypeAdapter(AgentOperation)
-_INPUT_REQUEST_ADAPTER: TypeAdapter[InputRequest] = TypeAdapter(InputRequest)
-_INPUT_RESPONSE_ADAPTER: TypeAdapter[InputResponse] = TypeAdapter(InputResponse)
-_OPERATION_RESULT_ADAPTER: TypeAdapter[OperationResult] = TypeAdapter(OperationResult)
 _EVENT_WATERMARK_TYPE = "__pruned_event_watermark__"
 _JOB_SELECT = """
 SELECT j.*,
@@ -104,14 +115,6 @@ _CONNECTION_PRAGMAS = (
     "PRAGMA synchronous = FULL;",
     "PRAGMA busy_timeout = 5000;",
 )
-
-
-class StoreSchemaError(RuntimeError):
-    """Raised when persisted typed JSON uses an unsupported schema version."""
-
-
-class InvalidCursorError(ValueError):
-    """Raised when a stored-job keyset cursor is malformed or unsupported."""
 
 
 class _SQLiteWorker:
@@ -624,37 +627,6 @@ def _resolve_workspace_path(path: Path) -> str:
     if not resolved.is_dir():
         raise WorkspaceInvalidError(str(path), "workspace path is not a directory")
     return os.path.normcase(str(resolved))
-
-
-def _canonical_workspace_path(path: Path) -> str:
-    return os.path.normcase(str(path))
-
-
-def _datetime_to_ms(value: datetime) -> int:
-    normalized = value.astimezone(UTC)
-    delta = normalized - _EPOCH
-    return delta.days * 86_400_000 + delta.seconds * 1_000 + delta.microseconds // 1_000
-
-
-def _ms_to_datetime(value: int) -> datetime:
-    return datetime.fromtimestamp(value / 1_000, UTC)
-
-
-def _canonical_json(value: BaseModel | object) -> str:
-    payload = value.model_dump(mode="json") if isinstance(value, BaseModel) else value
-    return json.dumps(
-        payload,
-        ensure_ascii=False,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
-def _normalize_datetime(value: datetime) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError("must be a timezone-aware UTC datetime")
-    return value.astimezone(UTC)
 
 
 def _now_ms() -> int:
@@ -1350,7 +1322,7 @@ def _resolve_input_transaction(
         )
         if row is None:
             raise InputNotFoundError(command.job_id, command.input_id)
-        pending = _pending_input_from_row(connection, row)
+        pending = _hydrate_pending_input_row(connection, row)
         response = pending.validate_response(command.response)
         if pending.response is not None:
             if pending.response != response:
@@ -2009,7 +1981,7 @@ def _insert_job_event(
     )
     if event_row is None:
         raise StoreSchemaError("inserted job event is missing")
-    return _event_from_row(connection, event_row)
+    return _hydrate_event_row(connection, event_row)
 
 
 def _read_job_result(
@@ -2035,65 +2007,7 @@ def _read_job_result(
     )
     if row is None:
         return None
-    job_state = row["job_state"]
-    has_result = row["result_job_id"] is not None
-    if job_state not in TERMINAL_STATES:
-        if has_result:
-            raise StoreSchemaError("nonterminal job has a terminal result row")
-        return None
-    if not has_result:
-        raise StoreSchemaError("terminal job is missing its result row")
-
-    outcome_kind = row["outcome_kind"]
-    payload_json = row["payload_json"]
-    payload_version = row["payload_schema_version"]
-    error_json = row["error_json"]
-    error_version = row["error_schema_version"]
-    if outcome_kind == "failed":
-        if (
-            job_state != "failed"
-            or error_json is None
-            or error_version is None
-            or payload_json is not None
-            or payload_version is not None
-        ):
-            raise StoreSchemaError("failed job result row has an invalid state or shape")
-        return _decode_model(
-            error_json,
-            error_version,
-            "error_schema_version",
-            JobError,
-        )
-    if outcome_kind == "succeeded":
-        if (
-            job_state != "completed"
-            or payload_json is None
-            or payload_version is None
-            or error_json is not None
-            or error_version is not None
-        ):
-            raise StoreSchemaError("succeeded job result row has an invalid state or shape")
-        _require_json_version(payload_version, "payload_schema_version")
-        try:
-            payload = _OPERATION_RESULT_ADAPTER.validate_json(payload_json)
-        except (ValidationError, ValueError) as error:
-            raise StoreSchemaError("job result payload is invalid") from error
-        return JobResultEnvelope(
-            job_id=job_id,
-            payload=payload,
-            completed_at=_ms_to_datetime(row["created_at_ms"]),
-        )
-    if outcome_kind == "cancelled":
-        if (
-            job_state != "cancelled"
-            or payload_json is not None
-            or payload_version is not None
-            or error_json is not None
-            or error_version is not None
-        ):
-            raise StoreSchemaError("cancelled job result row has an invalid state or shape")
-        return None
-    raise StoreSchemaError(f"unknown job result outcome: {outcome_kind}")
+    return _job_result_from_row(job_id, row)
 
 
 def _read_job_attempts(
@@ -2105,36 +2019,7 @@ def _read_job_attempts(
         "SELECT * FROM job_attempts WHERE job_id = ? ORDER BY attempt_number",
         (job_id,),
     )
-    attempts: list[JobAttempt] = []
-    for row in rows:
-        error = None
-        if row["error_json"] is not None:
-            error = _decode_model(
-                row["error_json"],
-                row["error_schema_version"],
-                "error_schema_version",
-                JobError,
-            )
-        elif row["error_schema_version"] is not None:
-            raise StoreSchemaError("attempt error schema version has no payload")
-        attempts.append(
-            JobAttempt(
-                job_id=row["job_id"],
-                attempt_number=row["attempt_number"],
-                phase=cast("JobPhase", row["phase"]),
-                worker_id=row["owner_id"],
-                lease_generation=row["lease_generation"],
-                lease_expires_at=_optional_ms(row["lease_expires_at_ms"]),
-                heartbeat_at=_optional_ms(row["heartbeat_at_ms"]),
-                retry_classification=row["retry_classification"],
-                reconciliation_classification=row["reconciliation_classification"],
-                started_at=_ms_to_datetime(row["started_at_ms"]),
-                ended_at=_optional_ms(row["ended_at_ms"]),
-                error_code=None if error is None else error.code,
-                error_message=None if error is None else error.message,
-            )
-        )
-    return tuple(attempts)
+    return tuple(_job_attempt_from_row(row) for row in rows)
 
 
 def _read_pending_inputs(
@@ -2153,48 +2038,20 @@ def _read_pending_inputs(
         """,
         (job_id,),
     )
-    return tuple(_pending_input_from_row(connection, row) for row in rows)
+    return tuple(_hydrate_pending_input_row(connection, row) for row in rows)
 
 
-def _pending_input_from_row(
+def _hydrate_pending_input_row(
     connection: sqlite3.Connection,
     row: dict[str, Any],
 ) -> PendingInput:
-    _require_json_version(row["request_schema_version"], "request_schema_version")
-    try:
-        request = _INPUT_REQUEST_ADAPTER.validate_json(row["request_json"])
-    except (ValidationError, ValueError) as error:
-        raise StoreSchemaError("pending input request is invalid") from error
-    if request.kind != row["kind"]:
-        raise StoreSchemaError("pending input kind does not match its request")
-    response = None
-    if row["response_json"] is not None:
-        _require_json_version(row["response_schema_version"], "response_schema_version")
-        try:
-            response = _INPUT_RESPONSE_ADAPTER.validate_json(row["response_json"])
-        except (ValidationError, ValueError) as error:
-            raise StoreSchemaError("pending input response is invalid") from error
-    elif row["response_schema_version"] is not None:
-        raise StoreSchemaError("pending input response schema version has no payload")
-    if (row["status"] == "pending") != (response is None):
-        raise StoreSchemaError("pending input status does not match its response")
+    decoded = _decode_pending_input_row(row)
     provider_reference = _read_scoped_provider_reference(
         connection,
         row["provider_reference_id"],
         row["job_id"],
     )
-    try:
-        return PendingInput(
-            input_id=row["input_id"],
-            job_id=row["job_id"],
-            request=request,
-            provider_reference=provider_reference,
-            created_at=_ms_to_datetime(row["created_at_ms"]),
-            resolved_at=_optional_ms(row["resolved_at_ms"]),
-            response=response,
-        )
-    except ValidationError as error:
-        raise StoreSchemaError("pending input row is invalid") from error
+    return _pending_input_from_row(row, provider_reference, _decoded=decoded)
 
 
 def _read_scoped_provider_reference(
@@ -2232,14 +2089,7 @@ def _read_workspace(
     row = _fetch_one_mapping(connection, statements[column], (identity,))
     if row is None:
         return None
-    return Workspace(
-        workspace_id=row["workspace_id"],
-        canonical_path=Path(row["canonical_path"]),
-        display_name=row["display_name"],
-        config_reference=row["config_ref"],
-        created_at=_ms_to_datetime(row["created_at_ms"]),
-        updated_at=_ms_to_datetime(row["updated_at_ms"]),
-    )
+    return _workspace_from_row(row)
 
 
 def _resolve_or_create_workspace_transaction(
@@ -2605,21 +2455,12 @@ def _read_session(
     )
     if row is None:
         return None
-    return AgentSession(
-        session_id=row["session_id"],
-        workspace_id=row["workspace_id"],
-        backend_id=row["backend_id"],
-        owner_id=row["owner_id"],
-        access_policy=row["access_policy"],
-        parent_session_id=row["parent_session_id"],
-        provider_references=_read_provider_references(
-            connection,
-            "session_id",
-            session_id,
-        ),
-        created_at=_ms_to_datetime(row["created_at_ms"]),
-        updated_at=_ms_to_datetime(row["updated_at_ms"]),
+    provider_references = _read_provider_references(
+        connection,
+        "session_id",
+        session_id,
     )
+    return _session_from_row(row, provider_references)
 
 
 def _read_provider_references(
@@ -2637,15 +2478,8 @@ def _read_provider_references(
             WHERE job_id = ? ORDER BY created_at_ms, provider_reference_id
         """,
     }
-    references: list[ProviderReference] = []
-    seen: set[tuple[str, str]] = set()
-    for kind, value in connection.execute(statements[column], (identity,)).fetchall():
-        identity_pair = (kind, value)
-        if identity_pair in seen:
-            continue
-        seen.add(identity_pair)
-        references.append(ProviderReference(kind=kind, value=value))
-    return tuple(references)
+    pairs = connection.execute(statements[column], (identity,)).fetchall()
+    return _provider_references_from_pairs(pairs)
 
 
 def _read_job(connection: sqlite3.Connection, job_id: str) -> AgentJob | None:
@@ -2654,32 +2488,11 @@ def _read_job(connection: sqlite3.Connection, job_id: str) -> AgentJob | None:
         f"{_JOB_SELECT} WHERE j.job_id = ?",
         (job_id,),
     )
-    return None if row is None else _job_from_row(connection, row)
+    return None if row is None else _hydrate_job_row(connection, row)
 
 
-def _job_from_row(connection: sqlite3.Connection, row: dict[str, Any]) -> AgentJob:
-    operation = _decode_operation(
-        row["operation_json"],
-        row["operation_schema_version"],
-        row["operation_kind"],
-    )
-    requested_config = _decode_model(
-        row["requested_config_json"],
-        row["requested_config_schema_version"],
-        "requested_config_schema_version",
-        RequestedExecutionConfig,
-    )
-    resolved_config = None
-    if row["resolved_config_json"] is not None:
-        resolved_config = _decode_model(
-            row["resolved_config_json"],
-            row["resolved_config_schema_version"],
-            "resolved_config_schema_version",
-            ResolvedExecutionConfig,
-        )
-    elif row["resolved_config_schema_version"] is not None:
-        raise StoreSchemaError("resolved_config_schema_version has no typed payload")
-
+def _hydrate_job_row(connection: sqlite3.Connection, row: dict[str, Any]) -> AgentJob:
+    decoded = _decode_job_row(row)
     source_checkpoint = tuple(
         ProviderReference(kind=kind, value=value)
         for kind, value in connection.execute(
@@ -2691,74 +2504,7 @@ def _job_from_row(connection: sqlite3.Connection, row: dict[str, Any]) -> AgentJ
             (row["job_id"],),
         ).fetchall()
     )
-    lease_generation = row["lease_generation"] or None
-    return AgentJob(
-        job_id=row["job_id"],
-        workspace_id=row["workspace_id"],
-        backend_id=row["backend_id"],
-        owner_id=row["owner_id"],
-        operation=operation,
-        requested_config=requested_config,
-        request_hash=row["request_hash"],
-        access_policy=row["access_policy"],
-        session_id=row["session_id"],
-        idempotency_key=row["idempotency_key"],
-        source_checkpoint=source_checkpoint,
-        state=row["state"],
-        resolved_config=resolved_config,
-        cancel_requested_at=_optional_ms(row["cancel_requested_at_ms"]),
-        lease_owner_id=row["lease_owner"],
-        lease_generation=lease_generation,
-        lease_expires_at=_optional_ms(row["lease_expires_at_ms"]),
-        retry_at=_optional_ms(row["retry_at_ms"]),
-        created_at=_ms_to_datetime(row["created_at_ms"]),
-        updated_at=_ms_to_datetime(row["updated_at_ms"]),
-        completed_at=_optional_ms(row["terminal_at_ms"]),
-    )
-
-
-def _optional_ms(value: int | None) -> datetime | None:
-    return None if value is None else _ms_to_datetime(value)
-
-
-def _decode_operation(payload: str, version: int, expected_kind: str) -> AgentOperation:
-    _require_json_version(version, "operation_schema_version")
-    try:
-        operation = _OPERATION_ADAPTER.validate_json(payload)
-    except (ValidationError, ValueError) as error:
-        raise StoreSchemaError("operation_json is not a valid typed operation") from error
-    if operation.kind != expected_kind:
-        raise StoreSchemaError("operation_kind does not match operation_json")
-    return operation
-
-
-def _decode_model[ModelT: BaseModel](
-    payload: str,
-    version: int | None,
-    version_column: str,
-    model: type[ModelT],
-) -> ModelT:
-    _require_json_version(version, version_column)
-    try:
-        return model.model_validate_json(payload)
-    except (ValidationError, ValueError) as error:
-        raise StoreSchemaError(f"{version_column} payload is invalid") from error
-
-
-def _decode_json_object(payload: str, version: int, version_column: str) -> dict[str, Any]:
-    _require_json_version(version, version_column)
-    try:
-        decoded = json.loads(payload)
-    except (json.JSONDecodeError, TypeError) as error:
-        raise StoreSchemaError(f"{version_column} payload is invalid JSON") from error
-    if not isinstance(decoded, dict):
-        raise StoreSchemaError(f"{version_column} payload is not an object")
-    return decoded
-
-
-def _require_json_version(version: int | None, column: str) -> None:
-    if version != _JSON_SCHEMA_VERSION:
-        raise StoreSchemaError(f"unsupported {column}: {version}")
+    return _job_from_row(row, source_checkpoint, _decoded=decoded)
 
 
 def _job_handle(job: AgentJob) -> JobHandle:
@@ -2803,51 +2549,12 @@ def _list_jobs(
         tuple(parameters),
     )
     page_rows = rows[: query.limit]
-    jobs = tuple(_job_from_row(connection, row) for row in page_rows)
+    jobs = tuple(_hydrate_job_row(connection, row) for row in page_rows)
     next_cursor = None
     if len(rows) > query.limit:
         final = page_rows[-1]
         next_cursor = _encode_cursor(final["created_at_ms"], final["job_id"])
     return StoredJobPage(jobs=jobs, next_cursor=next_cursor)
-
-
-def _encode_cursor(created_at_ms: int, job_id: str) -> str:
-    payload = _canonical_json(
-        {"v": _CURSOR_VERSION, "created_at_ms": created_at_ms, "job_id": job_id}
-    ).encode("utf-8")
-    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
-
-
-def _decode_cursor(cursor: str) -> tuple[int, str]:
-    if re.fullmatch(r"[A-Za-z0-9_-]+", cursor) is None:
-        raise InvalidCursorError("invalid stored-job cursor")
-    try:
-        padding = "=" * (-len(cursor) % 4)
-        raw = base64.b64decode(
-            (cursor + padding).encode("ascii"),
-            altchars=b"-_",
-            validate=True,
-        )
-        payload = json.loads(raw.decode("utf-8"))
-        if not isinstance(payload, dict) or set(payload) != {"v", "created_at_ms", "job_id"}:
-            raise ValueError
-        if type(payload["v"]) is not int or payload["v"] != _CURSOR_VERSION:
-            raise ValueError
-        if type(payload["created_at_ms"]) is not int:
-            raise ValueError
-        if not isinstance(payload["job_id"], str) or not payload["job_id"]:
-            raise ValueError
-    except (
-        binascii.Error,
-        json.JSONDecodeError,
-        KeyError,
-        TypeError,
-        UnicodeDecodeError,
-        UnicodeEncodeError,
-        ValueError,
-    ) as error:
-        raise InvalidCursorError("invalid stored-job cursor") from error
-    return payload["created_at_ms"], payload["job_id"]
 
 
 def _read_events(
@@ -2870,7 +2577,7 @@ def _read_events(
         (job_id, after_sequence, _EVENT_WATERMARK_TYPE, limit + 1),
     )
     page_rows = rows[:limit]
-    events = tuple(_event_from_row(connection, row) for row in page_rows)
+    events = tuple(_hydrate_event_row(connection, row) for row in page_rows)
     latest_sequence = int(
         connection.execute(
             "SELECT coalesce(max(sequence), 0) FROM job_events WHERE job_id = ?",
@@ -2885,27 +2592,10 @@ def _read_events(
     )
 
 
-def _event_from_row(connection: sqlite3.Connection, row: dict[str, Any]) -> JobEvent:
-    payload = _decode_json_object(
-        row["payload_json"],
-        row["payload_schema_version"],
-        "payload_schema_version",
-    )
+def _hydrate_event_row(connection: sqlite3.Connection, row: dict[str, Any]) -> JobEvent:
+    payload = _decode_event_payload(row)
     provider_reference = _read_event_provider_reference(connection, row)
-    try:
-        return JobEvent(
-            job_id=row["job_id"],
-            sequence=row["sequence"],
-            type=row["event_type"],
-            payload=payload,
-            payload_schema_version=row["payload_schema_version"],
-            occurred_at=_ms_to_datetime(row["created_at_ms"]),
-            attempt_number=row["attempt_number"],
-            provider_event_type=row["provider_event_type"],
-            provider_reference=provider_reference,
-        )
-    except ValidationError as error:
-        raise StoreSchemaError("job event row is invalid") from error
+    return _event_from_row(row, provider_reference, _payload=payload)
 
 
 def _read_event_provider_reference(
