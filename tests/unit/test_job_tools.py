@@ -49,6 +49,17 @@ def _fast_tuning():
     )
 
 
+@pytest.mark.parametrize(("worker_count", "max_worker_count"), [(0, 8), (9, 8), (1, 0)])
+def test_runtime_tuning_rejects_worker_counts_outside_configured_bounds(
+    worker_count, max_worker_count
+):
+    """Runtime tuning requires a positive initial count no larger than its maximum."""
+    from nexus_mcp.mcp.runtime import RuntimeTuning
+
+    with pytest.raises(ValueError, match="1 <= worker_count <= max_worker_count"):
+        RuntimeTuning(worker_count=worker_count, max_worker_count=max_worker_count)
+
+
 def test_local_principal_uses_posix_user_id(monkeypatch):
     """POSIX callers are identified without accepting a tool-supplied principal."""
     from nexus_mcp.mcp import access
@@ -345,11 +356,22 @@ async def test_mcp_runtime_injects_tuning_and_closes_in_reverse(monkeypatch):
             lifecycle.append("service.construct")
 
     class FakeWorkers:
-        def __init__(self, *, store, backends, notifier, worker_count, policy, retry_delay):
+        def __init__(
+            self,
+            *,
+            store,
+            backends,
+            notifier,
+            worker_count,
+            max_worker_count,
+            policy,
+            retry_delay,
+        ):
             assert isinstance(store, FakeStore)
             assert isinstance(backends, FakeBackendManager)
             assert isinstance(notifier, FakeNotifier)
             assert worker_count == tuning.worker_count
+            assert max_worker_count == tuning.max_worker_count
             assert policy is tuning.worker_policy
             assert retry_delay is tuning.retry_delay
             lifecycle.append("workers.construct")

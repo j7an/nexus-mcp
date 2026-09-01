@@ -563,7 +563,8 @@ async def batch_prompt(
 
     Args:
         tasks: List of AgentTask objects, each with cli, prompt, and optional fields.
-        max_concurrency: Max parallel runner invocations (default: 3).
+        max_concurrency: Max parallel runner invocations for this call (default: 3). The
+            process worker maximum is 8; one call whose effective demand exceeds 8 is rejected.
         ctx: MCP context (auto-injected by FastMCP). None when called directly in tests.
 
     Returns:
@@ -606,6 +607,8 @@ async def batch_prompt(
             await ctx.info("Batch complete: 0/0 succeeded")
         return response
 
+    effective_demand = min(max_concurrency, len(labelled))
+
     async def _run_single(runtime: MCPRuntime, idx: int, task: AgentTask) -> AgentTaskResult:
         async with semaphore:
             return await _run_compatibility_task(
@@ -616,7 +619,10 @@ async def batch_prompt(
                 task_count=1 if is_single_task else len(labelled),
             )
 
-    async with runtime_provider.borrow() as runtime:
+    async with (
+        runtime_provider.borrow() as runtime,
+        runtime.workers.reserve_capacity(effective_demand),
+    ):
         results = await asyncio.gather(
             *[_run_single(runtime, i, task) for i, task in enumerate(labelled)]
         )

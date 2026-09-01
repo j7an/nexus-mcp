@@ -488,6 +488,17 @@ class TestBatchPrompt:
         with pytest.raises(ValueError, match="max_concurrency must be >= 1"):
             await batch_prompt(tasks=[make_agent_task()], max_concurrency=-1)
 
+    async def test_one_call_above_runtime_maximum_fails_before_job_admission(
+        self, job_service_boundary, fake_runner_registry
+    ):
+        """One call demanding nine workers cannot admit any durable job."""
+        tasks = [make_agent_task(prompt=f"p{index}") for index in range(9)]
+
+        with pytest.raises(ValueError, match="configured maximum 8"):
+            await batch_prompt(tasks=tasks, max_concurrency=9)
+
+        job_service_boundary.start.assert_not_awaited()
+
     async def test_single_task_no_suffix(self, job_service_boundary, fake_runner_registry):
         """A single task's label is the agent name without any suffix."""
         result = await batch_prompt(tasks=[make_agent_task(cli=REPRESENTATIVE_CLI)])

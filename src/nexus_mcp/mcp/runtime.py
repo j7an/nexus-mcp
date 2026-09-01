@@ -25,7 +25,15 @@ from nexus_mcp.jobs.sqlite_store import SQLiteJobStore
 from nexus_mcp.legacy import legacy_backends
 from nexus_mcp.types import DEFAULT_MAX_CONCURRENCY
 
-__all__ = ["MCPRuntime", "RuntimeProvider", "RuntimeTuning", "runtime_provider"]
+__all__ = [
+    "DEFAULT_MAX_WORKER_COUNT",
+    "MCPRuntime",
+    "RuntimeProvider",
+    "RuntimeTuning",
+    "runtime_provider",
+]
+
+DEFAULT_MAX_WORKER_COUNT = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,9 +41,14 @@ class RuntimeTuning:
     """Explicit runtime timing dependencies, with production-safe defaults."""
 
     worker_count: int = DEFAULT_MAX_CONCURRENCY
+    max_worker_count: int = DEFAULT_MAX_WORKER_COUNT
     worker_policy: WorkerPolicy = field(default_factory=WorkerPolicy)
     event_polling_policy: EventPollingPolicy = field(default_factory=EventPollingPolicy)
     retry_delay: RetryDelay = field(default_factory=ExponentialRetryDelay)
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.worker_count <= self.max_worker_count:
+            raise ValueError("RuntimeTuning requires 1 <= worker_count <= max_worker_count")
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +85,7 @@ class MCPRuntime:
                 backends=backends,
                 notifier=notifier,
                 worker_count=effective_tuning.worker_count,
+                max_worker_count=effective_tuning.max_worker_count,
                 policy=effective_tuning.worker_policy,
                 retry_delay=effective_tuning.retry_delay,
             )

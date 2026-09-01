@@ -3,8 +3,8 @@
 import asyncio
 import logging
 import random
-from collections.abc import Callable
-from contextlib import suppress
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
@@ -759,6 +759,7 @@ class WorkerPool:
         backends: BackendManager,
         notifier: EventNotifier,
         worker_count: int = 1,
+        max_worker_count: int | None = None,
         worker_id_prefix: str = "nexus-worker",
         policy: WorkerPolicy | None = None,
         retry_delay: RetryDelay | None = None,
@@ -767,6 +768,13 @@ class WorkerPool:
     ) -> None:
         if worker_count < 1:
             raise ValueError("worker_count must be positive")
+        if max_worker_count is not None and max_worker_count < 1:
+            raise ValueError("max_worker_count must be positive")
+        if max_worker_count is not None and worker_count > max_worker_count:
+            raise ValueError(
+                f"requested worker capacity {worker_count} exceeds configured maximum "
+                f"{max_worker_count}"
+            )
         self._stop = asyncio.Event()
         self._worker_id_prefix = worker_id_prefix
         self._store = store
@@ -776,6 +784,8 @@ class WorkerPool:
         self._retry_delay = retry_delay
         self._clock = clock
         self._output_chunk_bytes = output_chunk_bytes
+        self._max_worker_count = max_worker_count
+        self._reserved_capacity = 0
         self._resize_lock = asyncio.Lock()
         self._workers = tuple(self._new_worker(index) for index in range(worker_count))
         self._tasks: tuple[asyncio.Task[None], ...] = ()
@@ -794,18 +804,30 @@ class WorkerPool:
 
     async def ensure_capacity(self, worker_count: int) -> None:
         """Grow a running pool to at least ``worker_count`` provider workers."""
-        if worker_count < 1:
-            raise ValueError("worker_count must be positive")
+        self._validate_capacity(worker_count)
         async with self._resize_lock:
-            current = len(self._workers)
-            if worker_count <= current:
-                return
-            additions = tuple(self._new_worker(index) for index in range(current, worker_count))
-            self._workers += additions
-            if self.running:
-                self._tasks += tuple(
-                    asyncio.create_task(worker.run(self._stop)) for worker in additions
-                )
+            self._grow_capacity(worker_count)
+
+    @asynccontextmanager
+    async def reserve_capacity(self, worker_count: int) -> AsyncIterator[None]:
+        """Reserve one call's demand while bounded aggregate capacity stays active."""
+        self._validate_capacity(worker_count)
+        reserved = False
+        try:
+            async with self._resize_lock:
+                self._reserved_capacity += worker_count
+                reserved = True
+                target = self._reserved_capacity
+                if self._max_worker_count is not None:
+                    target = min(target, self._max_worker_count)
+                self._grow_capacity(target)
+            yield
+        finally:
+            if reserved:
+                # The locked reservation path has no suspension after reading this value,
+                # so a synchronous decrement is both atomic to the event loop and immune
+                # to cancellation during context cleanup.
+                self._reserved_capacity -= worker_count
 
     async def stop(self) -> None:
         """Signal and await every loop without waiting for an idle poll deadline."""
@@ -840,6 +862,28 @@ class WorkerPool:
             clock=self._clock,
             output_chunk_bytes=self._output_chunk_bytes,
         )
+
+    def _validate_capacity(self, worker_count: int) -> None:
+        if worker_count < 1:
+            raise ValueError("worker_count must be positive")
+        if self._max_worker_count is not None and worker_count > self._max_worker_count:
+            raise ValueError(
+                f"requested worker capacity {worker_count} exceeds configured maximum "
+                f"{self._max_worker_count}"
+            )
+
+    def _grow_capacity(self, worker_count: int) -> None:
+        if self._max_worker_count is not None:
+            worker_count = min(worker_count, self._max_worker_count)
+        current = len(self._workers)
+        if worker_count <= current:
+            return
+        additions = tuple(self._new_worker(index) for index in range(current, worker_count))
+        self._workers += additions
+        if self.running:
+            self._tasks += tuple(
+                asyncio.create_task(worker.run(self._stop)) for worker in additions
+            )
 
 
 def _retry_after_seconds(error: JobError) -> float | None:

@@ -535,6 +535,57 @@ async def test_worker_pool_runs_until_idle_and_stops_interruptible_loops():
     assert pool.running is False
 
 
+class CapacityGateBackend(ScriptedBackend):
+    """Backend that exposes how many bounded pool workers can execute providers."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.active = 0
+        self.maximum_active = 0
+        self.eight_started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def execute(self, operation: AgentOperation, context: BackendExecutionContext):
+        self.execute_calls.append((operation, context))
+        self.active += 1
+        self.maximum_active = max(self.maximum_active, self.active)
+        if self.active == 8:
+            self.eight_started.set()
+        try:
+            await self.release.wait()
+            return make_turn_result()
+        finally:
+            self.active -= 1
+
+
+async def test_bounded_worker_pool_refuses_capacity_above_configured_maximum():
+    """Direct growth cannot create a ninth worker in an eight-worker pool."""
+    store = InMemoryJobStore()
+    notifier = EventNotifier()
+    backend = CapacityGateBackend()
+    for index in range(9):
+        await admit(store, session_id=f"capacity-session-{index}")
+    pool = WorkerPool(
+        store=store,
+        backends=BackendManager([backend]),
+        notifier=notifier,
+        worker_count=3,
+        max_worker_count=8,
+        policy=WorkerPolicy(idle_poll_seconds=0.001),
+    )
+    await pool.ensure_capacity(8)
+    await pool.start()
+    try:
+        await asyncio.wait_for(backend.eight_started.wait(), timeout=1.0)
+        with pytest.raises(ValueError, match="configured maximum 8"):
+            await pool.ensure_capacity(9)
+        await asyncio.sleep(0)
+        assert backend.maximum_active == 8
+    finally:
+        backend.release.set()
+        await pool.stop()
+
+
 class OneShotTerminalizationErrorStore(InMemoryJobStore):
     """Store that injects one escaped SQLite failure after provider execution."""
 

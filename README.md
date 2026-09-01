@@ -330,6 +330,9 @@ control tools to follow the normalized job independently of an MCP request lifet
 
 The compatibility `prompt` and `batch_prompt` tools retain their background-task behavior. They
 return FastMCP task IDs so clients can poll without holding a long-running MCP request open.
+Per-call concurrency defaults to 3. The shared process runtime starts with 3 workers and grows to
+a high-water maximum of 8; one call whose effective demand exceeds 8 is rejected explicitly,
+while concurrent calls share the process ceiling and may queue.
 
 | Tool | Task? | Description |
 |------|-------|-------------|
@@ -349,7 +352,7 @@ return FastMCP task IDs so clients can poll without holding a long-running MCP r
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `tasks` | Yes | — | List of task objects (see below) |
-| `max_concurrency` | No | `3` | Max parallel agent invocations |
+| `max_concurrency` | No | `3` | Max parallel agent invocations for this call; effective demand above the process worker maximum of 8 is rejected |
 | `elicit` | No | pref or `true` | Enable/disable interactive elicitation for this call |
 
 **Task object fields:**

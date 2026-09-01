@@ -142,23 +142,63 @@ async def test_batch_max_concurrency_two_overlaps_provider_execution(
 
 
 @pytest.mark.e2e
-async def test_concurrent_singleton_calls_share_fixed_runtime_capacity(
+async def test_batch_max_concurrency_six_grows_runtime_capacity(
     monkeypatch, fake_runner_registry, fast_job_runtime
 ):
-    """Two singleton calls on one installed runtime can enter providers concurrently."""
+    """Six admitted compatibility jobs reach their providers concurrently."""
     del fast_job_runtime
     original_run = FakeRunner.run
     active = 0
     maximum_active = 0
-    both_started = asyncio.Event()
+    all_started = asyncio.Event()
     release = asyncio.Event()
 
     async def barrier_run(self, request, emitter=None, progress=None):
         nonlocal active, maximum_active
         active += 1
         maximum_active = max(maximum_active, active)
-        if active == 2:
-            both_started.set()
+        if active == 6:
+            all_started.set()
+        try:
+            await release.wait()
+            return await original_run(self, request, emitter=emitter, progress=progress)
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(FakeRunner, "run", barrier_run)
+    batch = asyncio.create_task(
+        batch_prompt(
+            tasks=[{"cli": fake_runner_registry, "prompt": f"task-{index}"} for index in range(6)],
+            max_concurrency=6,
+        )
+    )
+    try:
+        await asyncio.wait_for(all_started.wait(), timeout=1.0)
+    finally:
+        release.set()
+        await batch
+
+    assert maximum_active == 6
+
+
+@pytest.mark.e2e
+async def test_concurrent_singleton_calls_aggregate_runtime_capacity(
+    monkeypatch, fake_runner_registry, fast_job_runtime
+):
+    """Four singleton calls on one installed runtime can enter providers concurrently."""
+    del fast_job_runtime
+    original_run = FakeRunner.run
+    active = 0
+    maximum_active = 0
+    all_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def barrier_run(self, request, emitter=None, progress=None):
+        nonlocal active, maximum_active
+        active += 1
+        maximum_active = max(maximum_active, active)
+        if active == 4:
+            all_started.set()
         try:
             await release.wait()
             return await original_run(self, request, emitter=emitter, progress=progress)
@@ -183,16 +223,16 @@ async def test_concurrent_singleton_calls_share_fixed_runtime_capacity(
                     max_concurrency=1,
                 )
             )
-            for prompt_text in ("first", "second")
+            for prompt_text in ("first", "second", "third", "fourth")
         ]
         try:
-            await asyncio.wait_for(both_started.wait(), timeout=1.0)
+            await asyncio.wait_for(all_started.wait(), timeout=1.0)
         finally:
             release.set()
             responses = await asyncio.gather(*calls)
 
-    assert maximum_active == 2
-    assert [response.succeeded for response in responses] == [1, 1]
+    assert maximum_active == 4
+    assert [response.succeeded for response in responses] == [1, 1, 1, 1]
 
 
 @pytest.mark.e2e
