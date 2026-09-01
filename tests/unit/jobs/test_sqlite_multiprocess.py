@@ -9,7 +9,7 @@ from typing import Any
 
 from nexus_mcp.core import BackendEvent, StaleLeaseError
 from nexus_mcp.jobs.sqlite_store import SQLiteJobStore
-from tests.unit.jobs.test_store_contract import make_create_job_command
+from tests.unit.jobs._store_contract_support import make_create_job_command
 
 OLD = datetime(2025, 1, 1, tzinfo=UTC)
 LEASE_UNTIL = datetime(2099, 1, 1, tzinfo=UTC)

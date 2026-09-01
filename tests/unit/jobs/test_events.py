@@ -10,7 +10,7 @@ import pytest
 from nexus_mcp.jobs.events import EventNotifier, EventPollingPolicy, JobEventSubscription
 from nexus_mcp.jobs.sqlite_store import SQLiteJobStore
 from nexus_mcp.jobs.store import ClaimedJob, JobStore
-from tests.unit.jobs.test_store_contract import (
+from tests.unit.jobs._store_contract_support import (
     make_cancel_job_command,
     make_create_job_command,
     make_event,

@@ -20,7 +20,7 @@ from nexus_mcp.core import (
 )
 from nexus_mcp.jobs.sqlite_store import InvalidCursorError, SQLiteJobStore, StoreSchemaError
 from nexus_mcp.jobs.store import JobAccessFilter, JobQuery
-from tests.unit.jobs.test_store_contract import (
+from tests.unit.jobs._store_contract_support import (
     NOW,
     make_cancel_job_command,
     make_create_job_command,
