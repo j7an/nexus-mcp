@@ -37,9 +37,14 @@ jobs:
         run: uv run pytest -m "not integration" --cov=nexus_mcp --cov-report=term-missing --cov-report=xml -v
       - name: Check diff coverage
         if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
-        env:
-          BASE_REF: ${{ github.base_ref }}
-        run: uv run diff-cover coverage.xml --fail-under=90 --compare-branch="origin/${BASE_REF}"
+        uses: j7an/shared-workflows/actions/coverage@0779707159acf1eb829779ec466823c1bef854c5 # v4.7.0
+        with:
+          report-path: coverage.xml
+          diff-cover-path: ${{ github.workspace }}/.venv/bin/diff-cover
+          base-sha: ${{ github.event.pull_request.base.sha }}
+          minimum: "90"
+          source-paths: src/nexus_mcp/
+          exclude-paths: src/nexus_mcp/__main__.py
 
   lint:
     runs-on: ubuntu-latest
