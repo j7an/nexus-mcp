@@ -13,6 +13,10 @@ from nexus_mcp.server import batch_prompt, prompt
 from tests.fakes import FakeRunner
 from tests.fixtures import CODEX_NDJSON_RESPONSE, create_mock_process, strip_runner_header
 
+# Hang guard for provider-start barriers, not a latency assertion. Windows runners have
+# needed more than 1s here; concurrency is proven by the barriers themselves.
+_START_TIMEOUT = 10.0
+
 
 def _job_rows(*columns: str) -> list[tuple[object, ...]]:
     database_path = os.environ["NEXUS_DB_PATH"]
@@ -133,7 +137,7 @@ async def test_batch_max_concurrency_two_overlaps_provider_execution(
         )
     )
     try:
-        await asyncio.wait_for(both_started.wait(), timeout=1.0)
+        await asyncio.wait_for(both_started.wait(), timeout=_START_TIMEOUT)
     finally:
         release.set()
         await batch
@@ -173,7 +177,7 @@ async def test_batch_max_concurrency_six_grows_runtime_capacity(
         )
     )
     try:
-        await asyncio.wait_for(all_started.wait(), timeout=1.0)
+        await asyncio.wait_for(all_started.wait(), timeout=_START_TIMEOUT)
     finally:
         release.set()
         await batch
@@ -226,7 +230,7 @@ async def test_concurrent_singleton_calls_aggregate_runtime_capacity(
             for prompt_text in ("first", "second", "third", "fourth")
         ]
         try:
-            await asyncio.wait_for(all_started.wait(), timeout=1.0)
+            await asyncio.wait_for(all_started.wait(), timeout=_START_TIMEOUT)
         finally:
             release.set()
             responses = await asyncio.gather(*calls)
@@ -271,7 +275,7 @@ async def test_batch_max_concurrency_one_serializes_provider_execution(
             max_concurrency=1,
         )
     )
-    await asyncio.wait_for(first_started.wait(), timeout=1.0)
+    await asyncio.wait_for(first_started.wait(), timeout=_START_TIMEOUT)
     await asyncio.sleep(0)
     assert calls == 1
     release_first.set()
