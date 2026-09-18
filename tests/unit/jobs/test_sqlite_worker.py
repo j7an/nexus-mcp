@@ -5,6 +5,7 @@ import threading
 
 import pytest
 
+from nexus_mcp.jobs import sqlite_store
 from nexus_mcp.jobs.sqlite_store import _SQLiteWorker
 
 
@@ -103,3 +104,32 @@ async def test_worker_close_is_idempotent_and_final(tmp_path):
 
     with pytest.raises(RuntimeError, match="closed"):
         await worker._call(lambda connection: connection.execute("SELECT 1").fetchone())
+
+
+def test_pragma_non_busy_error_raises_without_retry(tmp_path):
+    """Only SQLITE_BUSY is retried; any other SQLite error propagates at once."""
+    connection = sqlite3.connect(tmp_path / "error.sqlite3")
+    try:
+        with pytest.raises(sqlite3.OperationalError) as raised:
+            sqlite_store._execute_pragma(connection, "NOT A PRAGMA;")
+    finally:
+        connection.close()
+
+    assert raised.value.sqlite_errorcode != sqlite3.SQLITE_BUSY
+
+
+def test_pragma_busy_retry_gives_up_at_deadline(tmp_path, monkeypatch):
+    """A lock that outlives the deadline surfaces SQLITE_BUSY instead of spinning."""
+    database_path = tmp_path / "busy.sqlite3"
+    monkeypatch.setattr(sqlite_store, "_PRAGMA_BUSY_DEADLINE_SECONDS", 0.0)
+    holder = sqlite3.connect(database_path, isolation_level=None)
+    waiter = sqlite3.connect(database_path, isolation_level=None, timeout=0)
+    try:
+        holder.execute("BEGIN EXCLUSIVE")
+        with pytest.raises(sqlite3.OperationalError) as raised:
+            sqlite_store._execute_pragma(waiter, "PRAGMA journal_mode = WAL;")
+    finally:
+        waiter.close()
+        holder.close()
+
+    assert raised.value.sqlite_errorcode == sqlite3.SQLITE_BUSY

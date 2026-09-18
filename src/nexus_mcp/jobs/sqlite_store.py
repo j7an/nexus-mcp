@@ -115,6 +115,26 @@ _CONNECTION_PRAGMAS = (
     "PRAGMA synchronous = FULL;",
     "PRAGMA busy_timeout = 5000;",
 )
+_PRAGMA_BUSY_DEADLINE_SECONDS = 5.0
+_PRAGMA_BUSY_RETRY_SECONDS = 0.01
+
+
+def _execute_pragma(connection: sqlite3.Connection, pragma: str) -> None:
+    """Execute a connection pragma, retrying SQLITE_BUSY until a bounded deadline.
+
+    Concurrent first opens of a fresh file race to switch it to WAL. SQLite can report
+    SQLITE_BUSY for that switch without consulting the busy handler, so busy_timeout
+    does not cover it.
+    """
+    deadline = time.monotonic() + _PRAGMA_BUSY_DEADLINE_SECONDS
+    while True:
+        try:
+            connection.execute(pragma)
+            return
+        except sqlite3.OperationalError as error:
+            if error.sqlite_errorcode != sqlite3.SQLITE_BUSY or time.monotonic() >= deadline:
+                raise
+        time.sleep(_PRAGMA_BUSY_RETRY_SECONDS)
 
 
 class _SQLiteWorker:
@@ -166,7 +186,7 @@ class _SQLiteWorker:
         )
         try:
             for pragma in _CONNECTION_PRAGMAS:
-                connection.execute(pragma)
+                _execute_pragma(connection, pragma)
         except BaseException:
             connection.close()
             raise

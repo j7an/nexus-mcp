@@ -2,10 +2,13 @@
 
 import asyncio
 import sqlite3
+import threading
+from contextlib import closing
 from pathlib import Path
 
 import pytest
 
+from nexus_mcp.jobs import sqlite_store
 from nexus_mcp.jobs.migrations import MIGRATIONS
 from nexus_mcp.jobs.sqlite_store import SQLiteJobStore
 
@@ -609,22 +612,33 @@ async def test_newer_schema_fails_closed(tmp_path):
     await store.close()
 
 
-async def test_concurrent_open_converges_on_one_schema(tmp_path):
-    """Two independent worker connections serialize initial migration safely."""
+@pytest.mark.parametrize("round_number", range(10))
+async def test_concurrent_open_converges_on_one_schema(tmp_path, monkeypatch, round_number):
+    """Independent worker connections racing on a fresh file serialize setup safely."""
+    del round_number  # Each round races on a fresh file; one round alone often wins the race.
     database_path = tmp_path / "concurrent.sqlite3"
-    first = SQLiteJobStore(database_path)
-    second = SQLiteJobStore(database_path)
+    store_count = 4
+    real_connect = sqlite3.connect
+    connected = threading.Barrier(store_count)
 
-    await asyncio.gather(first.open(), second.open())
+    def aligned_connect(*args, **kwargs):
+        # Line the workers up right before their connection pragmas so they race.
+        connection = real_connect(*args, **kwargs)
+        connected.wait(timeout=5)
+        return connection
+
+    monkeypatch.setattr(sqlite_store.sqlite3, "connect", aligned_connect)
+    stores = [SQLiteJobStore(database_path) for _ in range(store_count)]
+
     try:
-        first_connection_id = await first._worker._call(id)
-        second_connection_id = await second._worker._call(id)
-        with sqlite3.connect(database_path) as connection:
+        await asyncio.gather(*(store.open() for store in stores))
+        connection_ids = {await store._worker._call(id) for store in stores}
+        with closing(real_connect(database_path)) as connection:
             rows = connection.execute(
                 "SELECT migration_id, checksum FROM schema_migrations"
             ).fetchall()
     finally:
-        await asyncio.gather(first.close(), second.close())
+        await asyncio.gather(*(store.close() for store in stores))
 
-    assert first_connection_id != second_connection_id
+    assert len(connection_ids) == store_count
     assert rows == [(MIGRATIONS[0].migration_id, MIGRATIONS[0].checksum)]
