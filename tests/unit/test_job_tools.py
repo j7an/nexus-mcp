@@ -12,9 +12,9 @@ import pytest
 from fastmcp.exceptions import ToolError
 
 from nexus_mcp.core import UnsupportedCapabilityError, WorkspaceSelector
-from nexus_mcp.jobs import EventPollingPolicy, WorkerPolicy
 from nexus_mcp.mcp.server import mcp
 from nexus_mcp.runners.factory import RunnerFactory
+from tests.fixtures import make_fast_runtime_tuning
 
 REQUIRED_AGENT_TOOLS = {
     "agent_start",
@@ -29,24 +29,6 @@ REQUIRED_AGENT_TOOLS = {
     "agent_list",
     "agent_backends",
 }
-
-
-def _fast_tuning():
-    from nexus_mcp.mcp.runtime import RuntimeTuning
-
-    return RuntimeTuning(
-        worker_policy=WorkerPolicy(
-            lease_seconds=1.0,
-            heartbeat_seconds=0.2,
-            idle_poll_seconds=0.001,
-            reconciliation_timeout_seconds=1.0,
-        ),
-        event_polling_policy=EventPollingPolicy(
-            minimum_seconds=0.001,
-            maximum_seconds=0.005,
-        ),
-        retry_delay=lambda _attempt, _retry_after, _policy: 0.0,
-    )
 
 
 @pytest.mark.parametrize(("worker_count", "max_worker_count"), [(0, 8), (9, 8), (1, 0)])
@@ -257,7 +239,7 @@ async def test_runtime_provider_blocks_install_and_override_during_temporary_clo
     assert install_entered.is_set() is False
     with (
         pytest.raises(RuntimeError, match="runtime is closing"),
-        provider.override_tuning(_fast_tuning()),
+        provider.override_tuning(make_fast_runtime_tuning()),
     ):
         pass
     assert provider.tuning is original_tuning
@@ -273,7 +255,7 @@ async def test_override_tuning_drives_fallback_and_restores(monkeypatch):
 
     provider = runtime.RuntimeProvider()
     original = provider.tuning
-    override = _fast_tuning()
+    override = make_fast_runtime_tuning()
     observed = []
 
     @asynccontextmanager
@@ -300,7 +282,7 @@ async def test_override_tuning_rejects_an_installed_runtime():
 
     async with provider.install(object()):
         with pytest.raises(RuntimeError, match="runtime is installed"):
-            with provider.override_tuning(_fast_tuning()):
+            with provider.override_tuning(make_fast_runtime_tuning()):
                 pass
 
 
@@ -308,7 +290,7 @@ async def test_mcp_runtime_injects_tuning_and_closes_in_reverse(monkeypatch):
     """Runtime dependencies start in order and always unwind worker/backend/store."""
     from nexus_mcp.mcp import runtime
 
-    tuning = _fast_tuning()
+    tuning = make_fast_runtime_tuning()
     lifecycle: list[str] = []
     fake_legacy_backends = (object(),)
 
@@ -432,7 +414,7 @@ async def test_mcp_runtime_runs_real_workers_and_closes_store(fake_runner_regist
     from nexus_mcp.mcp.runtime import MCPRuntime
 
     del fake_runner_registry
-    tuning = _fast_tuning()
+    tuning = make_fast_runtime_tuning()
     async with MCPRuntime.open(tuning) as opened:
         assert opened.workers.running is True
         store = opened.store
