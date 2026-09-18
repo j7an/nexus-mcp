@@ -22,3 +22,15 @@ def test_testpypi_verifier_disables_setup_uv_cache() -> None:
     assert "uses: astral-sh/setup-uv@" in setup_step
     assert "with:" in setup_step
     assert "enable-cache: false" in setup_step
+
+
+def test_mcp_publisher_download_is_pinned_and_checksum_verified() -> None:
+    workflow = _workflow_text()
+
+    step_start = workflow.index("      - name: Install mcp-publisher")
+    next_step = workflow.index("\n      - name:", step_start + 1)
+    install_step = workflow[step_start:next_step]
+
+    assert "releases/latest" not in install_step
+    assert "releases/download/" in install_step
+    assert "sha256sum --check" in install_step
