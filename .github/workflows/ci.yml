@@ -37,7 +37,7 @@ jobs:
         run: uv run pytest -m "not integration" --cov=nexus_mcp --cov-report=term-missing --cov-report=xml -v
       - name: Check diff coverage
         if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
-        uses: j7an/shared-workflows/actions/coverage@0779707159acf1eb829779ec466823c1bef854c5 # v4.7.0
+        uses: j7an/shared-workflows/actions/coverage@72948aa22854e8ae24a8e86ee72eb72ec954b71d # v4.7.3
         with:
           report-path: coverage.xml
           diff-cover-path: ${{ github.workspace }}/.venv/bin/diff-cover
