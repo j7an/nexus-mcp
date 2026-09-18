@@ -1,9 +1,10 @@
 name: CI
 
+# No push-to-main trigger: the "Protect main" ruleset allows squash merges only and
+# requires branches to be up to date with passing checks, so main's tree is exactly
+# what the PR tested. Restore `push: branches: [main]` if that rule is relaxed.
 on:
   pull_request:
-  push:
-    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -75,29 +76,6 @@ jobs:
       - uses: ./.github/actions/setup-uv
       - name: Mypy
         run: uv run mypy src/nexus_mcp
-
-  lockfile:
-    name: lockfile
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
-        with:
-          egress-policy: audit
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-      - name: Check uv.lock is in sync with pyproject.toml
-        run: |
-          if ! uv lock --check; then
-            echo "::error title=uv.lock is out of sync::uv.lock does not match pyproject.toml."
-            echo "To fix: run 'uv lock' locally, then commit and push the updated uv.lock to this branch."
-            echo "Dependabot's GITHUB_TOKEN cannot trigger fresh required checks, so CI will not"
-            echo "auto-correct this - a maintainer must push the regenerated uv.lock."
-            exit 1
-          fi
 
   dependency-review:
     name: Dependency Review

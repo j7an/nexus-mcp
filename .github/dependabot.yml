@@ -2,7 +2,11 @@ version: 2
 updates:
   # GitHub Actions (SHA-pinned, updated by Dependabot)
   - package-ecosystem: "github-actions"
-    directory: "/"
+    # "/" alone scans only .github/workflows and a root action.yml; list the
+    # local composite actions explicitly so their pins get updated too.
+    directories:
+      - "/"
+      - "/.github/actions/*"
     rebase-strategy: "disabled"
     cooldown:
       default-days: 5
