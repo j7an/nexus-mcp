@@ -510,3 +510,27 @@ def make_session_preferences(**overrides: Any) -> SessionPreferences:
         "confirm_large_batch": None,
     }
     return SessionPreferences(**(defaults | overrides))
+
+
+def make_fast_runtime_tuning():
+    """Return short-poll, zero-retry-delay runtime tuning for durable-job tests.
+
+    The lease must outlast claim-queue wait + heartbeat + renewal-queue wait on the
+    store's single SQLite thread; 1.0 s expired on slow Windows runners.
+    """
+    from nexus_mcp.jobs import EventPollingPolicy, WorkerPolicy
+    from nexus_mcp.mcp.runtime import RuntimeTuning
+
+    return RuntimeTuning(
+        worker_policy=WorkerPolicy(
+            lease_seconds=10.0,
+            heartbeat_seconds=0.2,
+            idle_poll_seconds=0.001,
+            reconciliation_timeout_seconds=1.0,
+        ),
+        event_polling_policy=EventPollingPolicy(
+            minimum_seconds=0.001,
+            maximum_seconds=0.005,
+        ),
+        retry_delay=lambda _attempt, _retry_after, _policy: 0.0,
+    )

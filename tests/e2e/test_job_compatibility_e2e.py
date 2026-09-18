@@ -4,10 +4,12 @@ import asyncio
 import json
 import os
 import sqlite3
+import time
 from contextlib import asynccontextmanager
 
 import pytest
 
+from nexus_mcp.jobs import sqlite_store
 from nexus_mcp.mcp.runtime import MCPRuntime, runtime_provider
 from nexus_mcp.server import batch_prompt, prompt
 from tests.fakes import FakeRunner
@@ -418,3 +420,30 @@ async def test_direct_prompt_opens_and_closes_one_temporary_runtime(
 
     assert strip_runner_header(result) == "direct output"
     assert lifecycle == ["open", "close"]
+
+
+@pytest.mark.e2e
+async def test_fast_tuning_survives_slow_sqlite_operations(
+    monkeypatch, fake_runner_registry, fast_job_runtime
+):
+    """Fast test tuning keeps leases alive when every store operation is slow.
+
+    All store calls share one SQLite thread, and lease deadlines are computed before a
+    write queues. Slow runner disks once let claim + heartbeat + renewal outlast a 1 s
+    lease, so jobs were reconciled and failed.
+    """
+    del fast_job_runtime
+    original_invoke = sqlite_store._SQLiteWorker._invoke_in_worker
+
+    def slow_invoke(self, operation):
+        time.sleep(0.02)
+        return original_invoke(self, operation)
+
+    monkeypatch.setattr(sqlite_store._SQLiteWorker, "_invoke_in_worker", slow_invoke)
+
+    result = await batch_prompt(
+        tasks=[{"cli": fake_runner_registry, "prompt": f"task-{index}"} for index in range(6)],
+        max_concurrency=6,
+    )
+
+    assert [task.error for task in result.results] == [None] * 6

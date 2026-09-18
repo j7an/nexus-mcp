@@ -14,7 +14,7 @@ from mcp.types import ErrorData
 
 from nexus_mcp.runners.factory import RunnerFactory
 from tests.fakes import FakeRunner
-from tests.fixtures import cli_detection_mocks
+from tests.fixtures import cli_detection_mocks, make_fast_runtime_tuning
 
 
 @pytest.fixture(autouse=True)
@@ -26,23 +26,9 @@ def _isolate_nexus_job_database(monkeypatch, tmp_path):
 @pytest.fixture
 def fast_job_runtime():
     """Use real-yielding short polls and zero retry delay for durable-job tests."""
-    from nexus_mcp.jobs import EventPollingPolicy, WorkerPolicy
-    from nexus_mcp.mcp.runtime import RuntimeTuning, runtime_provider
+    from nexus_mcp.mcp.runtime import runtime_provider
 
-    tuning = RuntimeTuning(
-        worker_policy=WorkerPolicy(
-            lease_seconds=1.0,
-            heartbeat_seconds=0.2,
-            idle_poll_seconds=0.001,
-            reconciliation_timeout_seconds=1.0,
-        ),
-        event_polling_policy=EventPollingPolicy(
-            minimum_seconds=0.001,
-            maximum_seconds=0.005,
-        ),
-        retry_delay=lambda _attempt, _retry_after, _policy: 0.0,
-    )
-    with runtime_provider.override_tuning(tuning):
+    with runtime_provider.override_tuning(make_fast_runtime_tuning()):
         yield
 
 
