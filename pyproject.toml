@@ -36,8 +36,9 @@ classifiers = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "fastmcp[tasks]>=3.4.7,<4.0",
+    "fastmcp[tasks]>=4.0.5,<4.1",
     "httpx>=0.28.1,<0.29",
+    "httpx-sse>=0.4.3,<0.5",
     "pydantic>=2.12.5,<3.0",
 ]
 
@@ -158,3 +159,10 @@ exclude_also = [
 
 [tool.uv]
 exclude-newer = "5 days"
+
+# Temporary exception for the matched FastMCP 4.0.5 release artifacts.
+# Remove after 2026-09-22, when the five-day cutoff includes this release.
+[tool.uv.exclude-newer-package]
+fastmcp = "2026-09-18T00:00:00Z"
+fastmcp-slim = "2026-09-18T00:00:00Z"
+fastmcp-tasks = "2026-09-18T00:00:00Z"

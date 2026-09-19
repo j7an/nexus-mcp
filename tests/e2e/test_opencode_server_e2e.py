@@ -134,14 +134,11 @@ class TestOpenCodeServerE2E:
 
         mock_source = _mock_sse_source("e2e response")
 
-        try:
-            with patch("nexus_mcp.http_client.aconnect_sse", return_value=mock_source):
-                async with Client(mcp) as client:
-                    result = await client.call_tool(
-                        "prompt",
-                        {"cli": "opencode_server", "prompt": "test prompt", "elicit": False},
-                    )
-            assert result.is_error is False
-            assert "e2e response" in result.data
-        finally:
-            mcp._lifespan_result_set = False
+        with patch("nexus_mcp.http_client.aconnect_sse", return_value=mock_source):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "prompt",
+                    {"cli": "opencode_server", "prompt": "test prompt", "elicit": False},
+                )
+        assert result.is_error is False
+        assert "e2e response" in result.data

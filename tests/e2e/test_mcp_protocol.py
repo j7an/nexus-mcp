@@ -8,12 +8,16 @@ Tests the full MCP stack that unit/pipeline tests miss:
 - task=True background task lifecycle (Docket memory://)
 - Schema validation at the protocol boundary
 
-Mock boundary: asyncio.create_subprocess_exec only.
+Mock boundary: asyncio.create_subprocess_exec. The Windows timeout test also
+simulates OS tree termination for its synthetic process ID.
 All layers above run for real, including JSON-RPC dispatch.
 """
 
+import os
+
 import pytest
 from fastmcp.exceptions import ToolError
+from fastmcp_tasks import call_tool_task
 
 from nexus_mcp.server import mcp
 from tests.fixtures import (
@@ -62,7 +66,7 @@ class TestToolDiscovery:
         """prompt tool schema requires 'prompt'; 'cli' is optional (elicitation)."""
         tools = await mcp_client.list_tools()
         prompt_tool = next(t for t in tools if t.name == "prompt")
-        schema = prompt_tool.inputSchema
+        schema = prompt_tool.input_schema
         assert schema is not None
         required = schema.get("required", [])
         assert "prompt" in required
@@ -74,7 +78,7 @@ class TestToolDiscovery:
         """batch_prompt tool schema requires 'tasks' as an array parameter."""
         tools = await mcp_client.list_tools()
         batch_tool = next(t for t in tools if t.name == "batch_prompt")
-        schema = batch_tool.inputSchema
+        schema = batch_tool.input_schema
         assert schema is not None
         assert "tasks" in schema.get("required", [])
         assert schema["properties"]["tasks"]["type"] == "array"
@@ -101,30 +105,30 @@ class TestToolAnnotations:
         for name in ("prompt", "batch_prompt"):
             tool = next(t for t in tools if t.name == name)
             assert tool.annotations is not None, f"{name} missing annotations"
-            assert tool.annotations.readOnlyHint is False
-            assert tool.annotations.destructiveHint is True
-            assert tool.annotations.idempotentHint is False
-            assert tool.annotations.openWorldHint is True
+            assert tool.annotations.read_only_hint is False
+            assert tool.annotations.destructive_hint is True
+            assert tool.annotations.idempotent_hint is False
+            assert tool.annotations.open_world_hint is True
 
     async def test_set_preferences_is_idempotent_non_destructive(self, mcp_client):
         """set_preferences merges state (non-destructive) and is idempotent."""
         tools = await mcp_client.list_tools()
         tool = next(t for t in tools if t.name == "set_preferences")
         assert tool.annotations is not None
-        assert tool.annotations.readOnlyHint is False
-        assert tool.annotations.destructiveHint is False
-        assert tool.annotations.idempotentHint is True
-        assert tool.annotations.openWorldHint is False
+        assert tool.annotations.read_only_hint is False
+        assert tool.annotations.destructive_hint is False
+        assert tool.annotations.idempotent_hint is True
+        assert tool.annotations.open_world_hint is False
 
     async def test_clear_preferences_is_destructive_and_idempotent(self, mcp_client):
         """clear_preferences erases all state (destructive) but clearing twice is the same."""
         tools = await mcp_client.list_tools()
         tool = next(t for t in tools if t.name == "clear_preferences")
         assert tool.annotations is not None
-        assert tool.annotations.readOnlyHint is False
-        assert tool.annotations.destructiveHint is True
-        assert tool.annotations.idempotentHint is True
-        assert tool.annotations.openWorldHint is False
+        assert tool.annotations.read_only_hint is False
+        assert tool.annotations.destructive_hint is True
+        assert tool.annotations.idempotent_hint is True
+        assert tool.annotations.open_world_hint is False
 
     async def test_core_tools_have_titles(self, mcp_client):
         """Core tools have human-readable titles set via annotations."""
@@ -207,22 +211,36 @@ class TestPromptProtocol:
         assert strip_runner_header(result.data) == "hello from e2e"
         assert mock_subprocess.await_count == 0
 
+    @pytest.mark.parametrize("protocol_mode", ["auto"], indirect=True)
     async def test_task_true_lifecycle(self, mock_subprocess, job_mcp_client, fake_runner_registry):
-        """task=True returns a ToolTask; awaiting it resolves to the final output."""
-        task = await job_mcp_client.call_tool(
+        """A task handle resolves to the final output."""
+        task = await call_tool_task(
+            job_mcp_client,
             "prompt",
             {
                 "cli": fake_runner_registry,
                 "prompt": "background task",
                 "context": {"fake_output": "task result"},
             },
-            task=True,
         )
-        result = await task
+        result = await task.result()
 
         assert result.is_error is False
         assert strip_runner_header(result.data) == "task result"
         assert mock_subprocess.await_count == 0
+
+    @pytest.mark.parametrize("protocol_mode", ["auto"], indirect=True)
+    async def test_same_tool_sync_and_task_paths_agree(self, job_mcp_client, fake_runner_registry):
+        args = {
+            "cli": fake_runner_registry,
+            "prompt": "parity",
+            "context": {"fake_output": "same"},
+        }
+        sync_result = await job_mcp_client.call_tool("prompt", args)
+        task = await call_tool_task(job_mcp_client, "prompt", args)
+        task_result = await task.result()
+        assert strip_runner_header(sync_result.data) == "same"
+        assert strip_runner_header(task_result.data) == "same"
 
     async def test_model_parameter_reaches_subprocess(self, mock_subprocess, mcp_client):
         """model parameter survives JSON-RPC round-trip and appears in subprocess args."""
@@ -397,14 +415,15 @@ class TestBatchPromptProtocol:
         labels = {r.label for r in result.data.results}
         assert labels == {"my-task-a", "my-task-b"}
 
+    @pytest.mark.parametrize("protocol_mode", ["auto"], indirect=True)
     async def test_task_true_docket_coercion(self, job_mcp_client, fake_runner_registry):
         """batch_prompt with task=True handles dict→AgentTask coercion after Docket."""
-        task = await job_mcp_client.call_tool(
+        task = await call_tool_task(
+            job_mcp_client,
             "batch_prompt",
             {"tasks": [{"cli": fake_runner_registry, "prompt": "docket test"}]},
-            task=True,
         )
-        result = await task
+        result = await task.result()
 
         assert result.is_error is False
         assert result.data.succeeded == 1
@@ -451,6 +470,8 @@ class TestToolTimeout:
     + server rebuild.
     """
 
+    # FunctionTool.timeout applies to legacy foreground calls; modern calls use task workers.
+    @pytest.mark.parametrize("protocol_mode", ["legacy"], indirect=True)
     async def test_hung_tool_times_out(self, mock_subprocess, mcp_client, monkeypatch):
         """A hung subprocess is cancelled by the tool-level anyio.fail_after().
 
@@ -464,6 +485,26 @@ class TestToolTimeout:
         mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE, delay=5.0)
         with pytest.raises(ToolError, match="timed out after 0\\.5s"):
             await mcp_client.call_tool("prompt", {"cli": "codex", "prompt": "test"})
+
+    @pytest.mark.parametrize("protocol_mode", ["auto"], indirect=True)
+    async def test_task_worker_timeout_cleans_up_slow_subprocess(
+        self, mock_subprocess, mcp_client, monkeypatch
+    ):
+        """A modern task call fails on timeout and requests process cleanup."""
+        process = create_mock_process(stdout=CODEX_NDJSON_RESPONSE, delay=5.0)
+        mock_subprocess.return_value = process
+        if os.name == "nt":
+            # The mock PID is synthetic; taskkill cannot prove it stopped on Windows.
+            monkeypatch.setattr(
+                "nexus_mcp.process._terminate_windows_tree", lambda pid: pid == process.pid
+            )
+
+        with pytest.raises(ToolError, match="timed out"):
+            await mcp_client.call_tool("prompt", {"cli": "codex", "prompt": "test", "timeout": 1})
+
+        assert mock_subprocess.await_count == 1
+        process.communicate.assert_awaited_once()
+        process.wait.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

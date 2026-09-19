@@ -309,10 +309,10 @@ def _annotations(
 ) -> ToolAnnotations:
     return ToolAnnotations(
         title=title,
-        readOnlyHint=read_only,
-        destructiveHint=destructive,
-        idempotentHint=idempotent,
-        openWorldHint=open_world,
+        read_only_hint=read_only,
+        destructive_hint=destructive,
+        idempotent_hint=idempotent,
+        open_world_hint=open_world,
     )
 
 

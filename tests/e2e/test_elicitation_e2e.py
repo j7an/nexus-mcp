@@ -13,22 +13,7 @@ All layers above run for real, including JSON-RPC dispatch.
 import pytest
 from fastmcp.exceptions import ToolError
 
-from nexus_mcp.elicitation import ElicitationGuard
 from tests.fixtures import strip_runner_header
-
-
-@pytest.fixture(autouse=True)
-def _reset_elicitation_cache():
-    """Reset ElicitationGuard class-level cache before and after each test.
-
-    The _elicitation_available cache persists across tests within the same
-    process. Without this reset, a test that triggers McpError (elicitation
-    unavailable) would pollute subsequent tests that expect elicitation to
-    be uncached.
-    """
-    ElicitationGuard._elicitation_available = None
-    yield
-    ElicitationGuard._elicitation_available = None
 
 
 @pytest.mark.e2e

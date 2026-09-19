@@ -16,6 +16,9 @@ from tests.fixtures import CODEX_NDJSON_RESPONSE, create_mock_process
 
 
 @pytest.mark.e2e
+# Legacy foreground calls deliver progress notifications to progress_handler. Modern workers
+# expose progress through tasks/get status_message instead.
+@pytest.mark.parametrize("protocol_mode", ["legacy"], indirect=True)
 class TestSinglePromptProgress:
     """Verify single prompt reports runner-level progress."""
 
@@ -34,6 +37,7 @@ class TestSinglePromptProgress:
 
 
 @pytest.mark.e2e
+@pytest.mark.parametrize("protocol_mode", ["legacy"], indirect=True)
 class TestBatchPromptProgress:
     """Verify batch prompt reports hierarchical progress."""
 

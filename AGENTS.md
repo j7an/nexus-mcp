@@ -4,7 +4,7 @@
 
 Nexus MCP is a Python 3.12+ MCP server that enables AI models to invoke agent
 runners and integrations (Claude Code, Codex, OpenCode, OpenCode server) as tools.
-Built with FastMCP 3.1+.
+Built with FastMCP 4.0+.
 
 OpenCode Gemini-family model names are OpenCode provider/model configuration, not
 support for a separate command-line runner.

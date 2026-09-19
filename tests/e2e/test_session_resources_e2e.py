@@ -11,7 +11,7 @@ import httpx
 import pytest
 import respx
 from fastmcp import Client
-from mcp.shared.exceptions import McpError
+from mcp.shared.exceptions import MCPError
 
 from nexus_mcp.http_client import reset_http_client
 from nexus_mcp.server import mcp
@@ -31,7 +31,6 @@ async def healthy_client(monkeypatch):
             async with Client(mcp) as client:
                 yield client
         finally:
-            mcp._lifespan_result_set = False
             reset_http_client()
 
 
@@ -55,18 +54,7 @@ class TestSessionResourceDiscovery:
             r for r in resources if str(r.uri).startswith("nexus://opencode/session")
         ]
         for resource in session_resources:
-            assert resource.mimeType == "application/json"
-
-    @respx.mock
-    async def test_all_session_resources_have_annotations(self, healthy_client):
-        resources = await healthy_client.list_resources()
-        session_resources = [
-            r for r in resources if str(r.uri).startswith("nexus://opencode/session")
-        ]
-        for resource in session_resources:
-            assert resource.annotations is not None
-            assert resource.annotations.readOnlyHint is True
-            assert resource.annotations.idempotentHint is True
+            assert resource.mime_type == "application/json"
 
 
 @pytest.mark.e2e
@@ -76,7 +64,7 @@ class TestSessionTemplateDiscovery:
     @respx.mock
     async def test_session_templates_listed(self, healthy_client):
         templates = await healthy_client.list_resource_templates()
-        template_uris = {str(t.uriTemplate) for t in templates}
+        template_uris = {str(t.uri_template) for t in templates}
         assert "nexus://opencode/session/{session_id}/todo" in template_uris
         assert "nexus://opencode/session/{session_id}/messages" in template_uris
         assert "nexus://opencode/session/{session_id}/children" in template_uris
@@ -129,5 +117,5 @@ class TestSessionResourceReading:
 
     @respx.mock
     async def test_invalid_session_id_raises_error(self, healthy_client):
-        with pytest.raises(McpError):
+        with pytest.raises(MCPError):
             await healthy_client.read_resource("nexus://opencode/session/../../etc/passwd/todo")

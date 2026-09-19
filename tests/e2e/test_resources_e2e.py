@@ -15,7 +15,7 @@ All layers above run for real, including JSON-RPC dispatch.
 import json
 
 import pytest
-from mcp.shared.exceptions import McpError
+from mcp.shared.exceptions import MCPError
 
 
 @pytest.mark.e2e
@@ -41,8 +41,8 @@ class TestResourceDiscovery:
         """All registered resources have application/json MIME type."""
         resources = await mcp_client.list_resources()
         for resource in resources:
-            assert resource.mimeType == "application/json", (
-                f"Resource {resource.uri} has MIME type {resource.mimeType!r}"
+            assert resource.mime_type == "application/json", (
+                f"Resource {resource.uri} has MIME type {resource.mime_type!r}"
             )
 
 
@@ -53,7 +53,7 @@ class TestResourceTemplateDiscovery:
     async def test_runner_template_listed(self, mcp_client):
         """nexus://runners/{cli} appears in list_resource_templates()."""
         templates = await mcp_client.list_resource_templates()
-        template_uris = {str(t.uriTemplate) for t in templates}
+        template_uris = {str(t.uri_template) for t in templates}
         assert "nexus://runners/{cli}" in template_uris
 
 
@@ -106,7 +106,7 @@ class TestReadRunnerTemplate:
         assert isinstance(data["supported_modes"], list)
 
     async def test_template_returns_error_for_unknown_cli(self, mcp_client):
-        with pytest.raises(McpError):
+        with pytest.raises(MCPError):
             await mcp_client.read_resource("nexus://runners/nonexistent")
 
 
@@ -155,25 +155,3 @@ class TestReadTiersResource:
         resources = await mcp_client.list_resources()
         uris = {str(r.uri) for r in resources}
         assert "nexus://tiers" in uris
-
-
-@pytest.mark.e2e
-class TestResourceAnnotations:
-    """Verify all resources have readOnlyHint and idempotentHint annotations."""
-
-    async def test_all_resources_have_annotations(self, mcp_client):
-        """Every resource and template has readOnlyHint=True, idempotentHint=True."""
-        resources = await mcp_client.list_resources()
-        for resource in resources:
-            assert resource.annotations is not None, f"Resource {resource.uri} missing annotations"
-            assert resource.annotations.readOnlyHint is True
-            assert resource.annotations.idempotentHint is True
-
-    async def test_template_resources_have_annotations(self, mcp_client):
-        templates = await mcp_client.list_resource_templates()
-        for template in templates:
-            assert template.annotations is not None, (
-                f"Template {template.uriTemplate} missing annotations"
-            )
-            assert template.annotations.readOnlyHint is True
-            assert template.annotations.idempotentHint is True

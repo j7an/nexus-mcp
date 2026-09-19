@@ -29,11 +29,10 @@ async def _surface() -> tuple[set[str], set[str], set[str]]:
             tools = {tool.name for tool in await client.list_tools()}
             resources = {str(resource.uri) for resource in await client.list_resources()}
             templates = {
-                template.uriTemplate for template in await client.list_resource_templates()
+                template.uri_template for template in await client.list_resource_templates()
             }
             return tools, resources, templates
     finally:
-        mcp._lifespan_result_set = False
         reset_http_client()
 
 
@@ -97,5 +96,21 @@ async def test_opencode_data_resource_errors_clearly_when_unconfigured(monkeypat
             with pytest.raises(Exception, match="OpenCode server not configured"):
                 await client.read_resource("nexus://opencode/providers")
     finally:
-        mcp._lifespan_result_set = False
         reset_http_client()
+
+
+@pytest.mark.e2e
+async def test_tool_annotations_survive_with_camelcase_compat_disabled():
+    reset_http_client()
+    try:
+        async with Client(mcp) as client:
+            tools = {tool.name: tool for tool in await client.list_tools()}
+    finally:
+        reset_http_client()
+
+    prompt_tool = tools["prompt"]
+    assert prompt_tool.annotations is not None
+    assert prompt_tool.annotations.destructive_hint is True
+    assert prompt_tool.annotations.read_only_hint is False
+    assert tools["agent_status"].annotations is not None
+    assert tools["agent_status"].annotations.read_only_hint is True

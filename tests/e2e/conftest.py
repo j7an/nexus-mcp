@@ -33,18 +33,20 @@ def _auto_mock_cli_detection(mock_cli_detection, monkeypatch):
     yield mock_cli_detection
 
 
+@pytest.fixture(params=["auto", "legacy"])
+def protocol_mode(request) -> str:
+    """Exercise shared clients with modern and legacy protocol negotiation."""
+    return request.param
+
+
 @pytest.fixture
-async def mcp_client(request):
+async def mcp_client(request, protocol_mode):
     """In-process MCP client using FastMCPTransport (no network).
 
     Provides a connected Client instance backed by the real FastMCP server.
     All JSON-RPC serialization, FastMCP DI injection of Progress/Context,
     and tool dispatch happen for real.
 
-    Note: FastMCP's _lifespan_result_set flag is reset on teardown to prevent
-    state pollution across tests. This flag can remain True if the lifespan
-    exits via CancelledError (a FastMCP limitation), causing subsequent
-    Client(mcp) connections to skip Docket initialization.
     """
     needs_fake_backend = (
         "fake_runner_registry" in request.fixturenames
@@ -55,19 +57,15 @@ async def mcp_client(request):
         RunnerFactory.clear_cache()
         RunnerFactory._REGISTRY[FakeRunner.AGENT_NAME] = FakeRunner
     try:
-        async with Client(mcp) as client:
+        async with Client(mcp, mode=protocol_mode) as client:
             yield client
     finally:
-        # WORKAROUND: FastMCP _lifespan_result_set stays True after CancelledError,
-        # causing subsequent Client(mcp) connections to skip Docket initialization.
-        # Remove when upstream fixes lifespan state cleanup on CancelledError.
-        mcp._lifespan_result_set = False
         RunnerFactory._REGISTRY = original_registry
         RunnerFactory.clear_cache()
 
 
 @pytest.fixture
-async def job_mcp_client(fake_runner_registry, fast_job_runtime, monkeypatch):
+async def job_mcp_client(fake_runner_registry, fast_job_runtime, monkeypatch, protocol_mode):
     """Connected client whose lifespan sees the registered fake legacy runner."""
     from nexus_mcp.legacy import runner_backend
 
@@ -88,11 +86,8 @@ async def job_mcp_client(fake_runner_registry, fast_job_runtime, monkeypatch):
         lambda backend: "test" if backend == fake_runner_registry else original_version(backend),
     )
     del fast_job_runtime
-    try:
-        async with Client(mcp) as client:
-            yield client
-    finally:
-        mcp._lifespan_result_set = False
+    async with Client(mcp, mode=protocol_mode) as client:
+        yield client
 
 
 @pytest.fixture
@@ -103,7 +98,7 @@ def fast_job_mcp_client(fast_job_runtime, mcp_client):
 
 
 @pytest.fixture
-async def progress_mcp_client(fast_job_runtime):
+async def progress_mcp_client(fast_job_runtime, protocol_mode):
     """Connected client that records compatibility progress notifications."""
     del fast_job_runtime
     progress_events: list[tuple[float, float | None, str | None]] = []
@@ -111,8 +106,5 @@ async def progress_mcp_client(fast_job_runtime):
     async def record_progress(progress: float, total: float | None, message: str | None) -> None:
         progress_events.append((progress, total, message))
 
-    try:
-        async with Client(mcp, progress_handler=record_progress) as client:
-            yield client, progress_events
-    finally:
-        mcp._lifespan_result_set = False
+    async with Client(mcp, mode=protocol_mode, progress_handler=record_progress) as client:
+        yield client, progress_events

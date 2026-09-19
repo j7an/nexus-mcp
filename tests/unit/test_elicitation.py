@@ -10,8 +10,7 @@ from fastmcp.server.elicitation import (
     CancelledElicitation,
     DeclinedElicitation,
 )
-from mcp.shared.exceptions import McpError
-from mcp.types import ErrorData
+from mcp.shared.exceptions import MCPError
 
 from nexus_mcp.elicitation import ElicitationGuard
 from nexus_mcp.types import AgentTask, SessionPreferences
@@ -26,6 +25,8 @@ from tests.fixtures import REPRESENTATIVE_CLI
 def mock_ctx() -> AsyncMock:
     ctx = AsyncMock(spec=Context)
     ctx.elicit = AsyncMock()
+    ctx.is_background_task = False
+    ctx.request_context.protocol_version = "2025-11-25"
     return ctx
 
 
@@ -34,18 +35,43 @@ def installed_clis() -> list[str]:
     return [REPRESENTATIVE_CLI, "codex", "claude"]
 
 
+class TestProtocolEra:
+    async def test_modern_connection_skips_elicitation(self, mock_ctx: AsyncMock) -> None:
+        mock_ctx.request_context.protocol_version = "2026-07-28"
+        result = await ElicitationGuard(mock_ctx, ["codex"])._try_elicit("q", response_type=str)
+        assert result is None
+        mock_ctx.elicit.assert_not_awaited()
+
+    async def test_background_task_skips_elicitation_without_request_context(
+        self, mock_ctx: AsyncMock
+    ) -> None:
+        mock_ctx.is_background_task = True
+        mock_ctx.request_context = None
+        result = await ElicitationGuard(mock_ctx, ["codex"])._try_elicit("q", response_type=str)
+        assert result is None
+        mock_ctx.elicit.assert_not_awaited()
+
+    async def test_unsupported_client_does_not_disable_legacy_client(
+        self, mock_ctx: AsyncMock
+    ) -> None:
+        mock_ctx.elicit.side_effect = MCPError(code=-32600, message="not supported")
+        assert await ElicitationGuard(mock_ctx, ["codex"])._try_elicit("q", str) is None
+
+        other = AsyncMock(spec=Context)
+        other.is_background_task = False
+        other.request_context.protocol_version = "2025-11-25"
+        other.elicit.return_value = AcceptedElicitation(data="answer")
+        result = await ElicitationGuard(other, ["codex"])._try_elicit("q", str)
+        assert isinstance(result, AcceptedElicitation)
+        assert result.data == "answer"
+
+
 # ---------------------------------------------------------------------------
 # Task 3: TestShortCircuit
 # ---------------------------------------------------------------------------
 
 
 class TestShortCircuit:
-    @pytest.fixture(autouse=True)
-    def _reset_class_cache(self) -> None:
-        ElicitationGuard._elicitation_available = None
-        yield
-        ElicitationGuard._elicitation_available = None
-
     async def test_elicit_false_skips_all_checks(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
@@ -63,7 +89,7 @@ class TestShortCircuit:
     async def test_unsupported_client_skips_silently(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
-        mock_ctx.elicit.side_effect = McpError(ErrorData(code=-32600, message="not supported"))
+        mock_ctx.elicit.side_effect = MCPError(code=-32600, message="not supported")
         guard = ElicitationGuard(mock_ctx, installed_clis)
         with pytest.raises(ToolError):
             await guard.check_prompt(
@@ -73,7 +99,7 @@ class TestShortCircuit:
                 prompt_text="explain quantum computing in depth",
                 elicit=True,
             )
-        assert ElicitationGuard._elicitation_available is False
+        mock_ctx.elicit.assert_awaited_once()
 
     async def test_no_triggers_fire_when_all_params_provided(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
@@ -98,12 +124,6 @@ class TestShortCircuit:
 
 
 class TestCliDisambiguation:
-    @pytest.fixture(autouse=True)
-    def _reset_class_cache(self) -> None:
-        ElicitationGuard._elicitation_available = None
-        yield
-        ElicitationGuard._elicitation_available = None
-
     async def test_fires_when_cli_none(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
@@ -168,12 +188,6 @@ class TestCliDisambiguation:
 
 
 class TestModelSelection:
-    @pytest.fixture(autouse=True)
-    def _reset_class_cache(self) -> None:
-        ElicitationGuard._elicitation_available = None
-        yield
-        ElicitationGuard._elicitation_available = None
-
     async def test_fires_when_model_none_and_multiple_available(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
@@ -255,14 +269,8 @@ class TestModelSelection:
 
 
 class TestYoloConfirmation:
-    @pytest.fixture(autouse=True)
-    def _reset_class_cache(self) -> None:
-        ElicitationGuard._elicitation_available = None
-        yield
-        ElicitationGuard._elicitation_available = None
-
     async def test_fires_when_yolo(self, mock_ctx: AsyncMock, installed_clis: list[str]) -> None:
-        mock_ctx.elicit.return_value = AcceptedElicitation(data={})
+        mock_ctx.elicit.return_value = AcceptedElicitation(data=True)
         with (
             patch("nexus_mcp.mcp.elicitation.load_preferences", return_value=None),
             patch("nexus_mcp.mcp.elicitation.save_preferences"),
@@ -276,6 +284,7 @@ class TestYoloConfirmation:
                 elicit=True,
             )
         mock_ctx.elicit.assert_called_once()
+        assert mock_ctx.elicit.call_args.kwargs["response_type"] is bool
         assert result.execution_mode == "yolo"
 
     async def test_decline_downgrades_to_default(
@@ -291,6 +300,21 @@ class TestYoloConfirmation:
             elicit=True,
         )
         assert result.execution_mode == "default"
+
+    async def test_false_confirmation_downgrades_without_suppression(
+        self, mock_ctx: AsyncMock, installed_clis: list[str]
+    ) -> None:
+        mock_ctx.elicit.return_value = AcceptedElicitation(data=False)
+        with patch("nexus_mcp.mcp.elicitation.save_preferences") as mock_save:
+            result = await ElicitationGuard(mock_ctx, installed_clis).check_prompt(
+                cli=REPRESENTATIVE_CLI,
+                model=None,
+                execution_mode="yolo",
+                prompt_text="explain quantum computing in depth",
+            )
+        assert result.execution_mode == "default"
+        assert result.selections["mode"] == "declined"
+        mock_save.assert_not_awaited()
 
     async def test_does_not_fire_when_default_mode(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
@@ -308,7 +332,7 @@ class TestYoloConfirmation:
     async def test_auto_suppresses_after_accept(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
-        mock_ctx.elicit.return_value = AcceptedElicitation(data={})
+        mock_ctx.elicit.return_value = AcceptedElicitation(data=True)
         with (
             patch("nexus_mcp.mcp.elicitation.load_preferences", return_value=None) as mock_load,
             patch("nexus_mcp.mcp.elicitation.save_preferences") as mock_save,
@@ -344,7 +368,7 @@ class TestYoloConfirmation:
     async def test_reset_suppression_re_enables_prompt(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
-        mock_ctx.elicit.return_value = AcceptedElicitation(data={})
+        mock_ctx.elicit.return_value = AcceptedElicitation(data=True)
         prefs = SessionPreferences(confirm_yolo=None)
         with (
             patch("nexus_mcp.mcp.elicitation.load_preferences", return_value=None),
@@ -367,12 +391,6 @@ class TestYoloConfirmation:
 
 
 class TestVaguePromptCheck:
-    @pytest.fixture(autouse=True)
-    def _reset_class_cache(self) -> None:
-        ElicitationGuard._elicitation_available = None
-        yield
-        ElicitationGuard._elicitation_available = None
-
     async def test_fires_under_threshold(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
@@ -452,17 +470,11 @@ class TestVaguePromptCheck:
 
 
 class TestBatchElicitation:
-    @pytest.fixture(autouse=True)
-    def _reset_class_cache(self) -> None:
-        ElicitationGuard._elicitation_available = None
-        yield
-        ElicitationGuard._elicitation_available = None
-
     async def test_aggregates_yolo_confirmation(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
         """3 out of 5 YOLO tasks triggers a single elicit with count in message."""
-        mock_ctx.elicit.return_value = AcceptedElicitation(data={})
+        mock_ctx.elicit.return_value = AcceptedElicitation(data=True)
         tasks = [
             AgentTask(
                 cli=REPRESENTATIVE_CLI, prompt="do something useful here", execution_mode="yolo"
@@ -489,6 +501,7 @@ class TestBatchElicitation:
         mock_ctx.elicit.assert_called_once()
         call_message = mock_ctx.elicit.call_args.args[0]
         assert "3" in call_message
+        assert mock_ctx.elicit.call_args.kwargs["response_type"] is bool
 
     async def test_batch_decline_yolo_downgrades_all(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
@@ -511,6 +524,37 @@ class TestBatchElicitation:
         assert result[0].execution_mode == "default"
         assert result[1].execution_mode == "default"
         assert result[2].execution_mode == "default"
+
+    async def test_batch_false_confirmation_downgrades_without_suppression(
+        self, mock_ctx: AsyncMock, installed_clis: list[str]
+    ) -> None:
+        mock_ctx.elicit.return_value = AcceptedElicitation(data=False)
+        tasks = [
+            AgentTask(
+                cli=REPRESENTATIVE_CLI,
+                prompt="a sufficiently long prompt",
+                execution_mode="yolo",
+            ),
+            AgentTask(
+                cli=REPRESENTATIVE_CLI,
+                prompt="a sufficiently long prompt",
+                execution_mode="default",
+            ),
+        ]
+        with patch("nexus_mcp.mcp.elicitation.save_preferences") as mock_save:
+            resolved = await ElicitationGuard(mock_ctx, installed_clis).check_batch(tasks)
+        assert resolved[0].execution_mode == "default"
+        assert resolved[1].execution_mode == "default"
+        mock_save.assert_not_awaited()
+
+    async def test_short_batch_prompt_uses_typed_advisory(
+        self, mock_ctx: AsyncMock, installed_clis: list[str]
+    ) -> None:
+        mock_ctx.elicit.return_value = AcceptedElicitation(data=True)
+        tasks = [AgentTask(cli=REPRESENTATIVE_CLI, prompt="short")]
+        resolved = await ElicitationGuard(mock_ctx, installed_clis).check_batch(tasks)
+        assert resolved == tasks
+        assert mock_ctx.elicit.call_args.kwargs["response_type"] is bool
 
     async def test_batch_validates_cli_required(
         self, mock_ctx: AsyncMock, installed_clis: list[str]

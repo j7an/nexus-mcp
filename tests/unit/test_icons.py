@@ -35,8 +35,8 @@ class TestIconConstants:
     def test_mime_type_is_svg(self) -> None:
         for name, icons in ALL_ICON_LISTS:
             for i, icon in enumerate(icons):
-                assert icon.mimeType == "image/svg+xml", (
-                    f"{name}[{i}].mimeType is {icon.mimeType!r}, expected 'image/svg+xml'"
+                assert icon.mime_type == "image/svg+xml", (
+                    f"{name}[{i}].mime_type is {icon.mime_type!r}, expected 'image/svg+xml'"
                 )
 
     def test_base64_payload_decodes(self) -> None:

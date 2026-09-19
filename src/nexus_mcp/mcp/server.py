@@ -30,6 +30,7 @@ from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp_tasks import TasksExtension
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
@@ -103,6 +104,12 @@ def build_server_instructions() -> str:
     lines.append("## Important: Do not pre-fill `cli` or `model`")
     lines.append("Leave `cli` and `model` empty so the user can choose interactively.")
     lines.append("Only set them when the user explicitly names a runner or model.")
+    lines.append(
+        "Interactive selection needs client elicitation support, which is unavailable on "
+        "sessionless (2026-07-28) connections. If a call fails with 'cli is required', "
+        "ask the user to choose an installed runner listed below, then retry with `cli` set "
+        "to their choice. Do not pick a runner on the user's behalf."
+    )
     lines.append("")
     lines.append("## Available Runners")
     lines.append("")
@@ -217,6 +224,8 @@ mcp = FastMCP(
     icons=SERVER_ICONS,
     lifespan=_lifespan,
 )
+# Required by FastMCP 4 for task-enabled tools (prompt, batch_prompt).
+mcp.add_extension(TasksExtension())
 
 # Middleware executes outermost → innermost on request, reverse on response.
 # Order: ErrorNormalization (catch all) → Timing (measure) → RequestLogging (log entry/exit)
@@ -297,6 +306,14 @@ def _legacy_exception_type(error: JobError) -> str | None:
     return value
 
 
+async def _context_log(ctx: Context, level: str, message: str) -> None:
+    """Log bounded batch metadata locally when no client session exists."""
+    if ctx.is_background_task:
+        getattr(logger, level)(message)
+    else:
+        await getattr(ctx, level)(message)
+
+
 async def _forward_compatibility_event(
     event: JobEvent,
     *,
@@ -307,6 +324,9 @@ async def _forward_compatibility_event(
 ) -> None:
     """Map one committed compatibility event to FastMCP without replaying final output."""
     if ctx is None:
+        return
+    # Worker log and message payloads may contain stderr or provider output.
+    if ctx.is_background_task and event.type in {"log", "message"}:
         return
     payload = event.payload
     match event.type:
@@ -342,13 +362,13 @@ async def _forward_compatibility_event(
                 and level in {"debug", "info", "warning", "error"}
                 and isinstance(message, str)
             ):
-                await getattr(ctx, level)(message)
+                await _context_log(ctx, level, message)
         case "message":
             if payload.get("final") is True:
                 return
             message = payload.get("message", payload.get("text"))
             if isinstance(message, str):
-                await ctx.info(message)
+                await _context_log(ctx, "info", message)
 
 
 async def _drain_compatibility_events(
@@ -540,11 +560,13 @@ async def batch_prompt(
     is_single_task = len(labelled) == 1
 
     if ctx:
-        await ctx.info(f"Starting batch of {len(labelled)} tasks (concurrency={max_concurrency})")
+        await _context_log(
+            ctx, "info", f"Starting batch of {len(labelled)} tasks (concurrency={max_concurrency})"
+        )
     if not labelled:
         response = MultiPromptResponse(results=[])
         if ctx:
-            await ctx.info("Batch complete: 0/0 succeeded")
+            await _context_log(ctx, "info", "Batch complete: 0/0 succeeded")
         return response
 
     effective_demand = min(max_concurrency, len(labelled))
@@ -568,7 +590,9 @@ async def batch_prompt(
         )
     response = MultiPromptResponse(results=list(results))
     if ctx:
-        await ctx.info(f"Batch complete: {response.succeeded}/{response.total} succeeded")
+        await _context_log(
+            ctx, "info", f"Batch complete: {response.succeeded}/{response.total} succeeded"
+        )
     return response
 
 
@@ -732,38 +756,38 @@ _tool_timeout = get_tool_timeout()
 # Annotations communicate behavioral hints to MCP clients (e.g. auto-approval decisions).
 _EXEC_ANNOTATIONS = ToolAnnotations(
     title="Prompt CLI Agent",
-    readOnlyHint=False,
-    destructiveHint=True,
-    idempotentHint=False,
-    openWorldHint=True,
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=False,
+    open_world_hint=True,
 )
 _BATCH_EXEC_ANNOTATIONS = ToolAnnotations(
     title="Batch Prompt CLI Agents",
-    readOnlyHint=False,
-    destructiveHint=True,
-    idempotentHint=False,
-    openWorldHint=True,
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=False,
+    open_world_hint=True,
 )
 _SET_PREFS_ANNOTATIONS = ToolAnnotations(
     title="Set Session Preferences",
-    readOnlyHint=False,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=False,
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=True,
+    open_world_hint=False,
 )
 _CLEAR_PREFS_ANNOTATIONS = ToolAnnotations(
     title="Clear Session Preferences",
-    readOnlyHint=False,
-    destructiveHint=True,
-    idempotentHint=True,
-    openWorldHint=False,
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=True,
+    open_world_hint=False,
 )
 _SET_TIERS_ANNOTATIONS = ToolAnnotations(
     title="Set Model Tiers",
-    readOnlyHint=False,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=False,
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=True,
+    open_world_hint=False,
 )
 mcp.tool(
     task=True,
@@ -799,10 +823,10 @@ mcp.tool(
 register_job_tools(mcp)
 _CONFIG_OC_ANNOTATIONS = ToolAnnotations(
     title="OpenCode Configuration",
-    readOnlyHint=False,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=True,
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=True,
+    open_world_hint=True,
 )
 
 mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_set_provider_auth)
