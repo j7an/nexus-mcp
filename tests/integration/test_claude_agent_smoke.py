@@ -1,5 +1,8 @@
 """Opt-in smoke test against the real Claude Agent SDK. Consumes provider usage."""
 
+import errno
+import subprocess
+import sys
 from collections.abc import Iterable
 from shutil import which
 from typing import Any
@@ -98,10 +101,33 @@ async def test_workspace_write_contains_writes(tmp_path):
 
 async def test_sandbox_failure_is_closed(tmp_path, monkeypatch):
     """A missing OS sandbox fails after the requested Bash command reaches the SDK."""
+    if sys.platform != "darwin":
+        pytest.skip("This smoke requires the macOS sandbox-exec outer profile")
+
+    try:
+        control = subprocess.run(["/usr/bin/true"], check=False, timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        pytest.skip(f"Cannot establish outer-profile control: {error}")
+    if control.returncode != 0:
+        pytest.skip("The outer profile did not permit a control executable")
+    try:
+        subprocess.run(
+            ["/usr/bin/sandbox-exec", "-p", "(version 1) (allow default)", "/usr/bin/true"],
+            check=False,
+            capture_output=True,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.skip("Cannot establish sandbox-exec denial: probe timed out")
+    except OSError as error:
+        if error.errno != errno.EPERM:
+            pytest.skip(f"Cannot establish sandbox-exec denial: {error}")
+    else:
+        pytest.skip("The outer profile did not deny sandbox-exec execution")
+
     touch = which("touch")
     assert touch is not None
 
-    monkeypatch.setenv("PATH", str(tmp_path))
     context = _context(tmp_path, sandbox="workspace_write", approval_policy="never")
     marker = tmp_path / "ran.txt"
     command = f"{touch} {marker}"
