@@ -9,42 +9,13 @@ boundary, letting all layers above run for real:
         → runner → build_command → [MOCK subprocess]
 """
 
-import contextlib
-
 import pytest
 from fastmcp import Client
 
 from nexus_mcp.cli_detector import CLIInfo
 from nexus_mcp.runners.factory import RunnerFactory
 from nexus_mcp.server import mcp
-from nexus_mcp.store import PREFERENCES_COLLECTION, PREFERENCES_KEY, TIERS_COLLECTION, TIERS_KEY
 from tests.fakes import FakeRunner
-
-
-@pytest.fixture(autouse=True)
-async def _clean_preferences_store():
-    """Clear persistent preferences before each E2E test.
-
-    Preferences now persist across MCP sessions via the backing store.
-    Without cleanup, preferences set in one test leak into subsequent tests.
-    """
-    store = mcp._state_store
-    with contextlib.suppress(Exception):
-        await store.delete(key=PREFERENCES_KEY, collection=PREFERENCES_COLLECTION)
-    yield
-    with contextlib.suppress(Exception):
-        await store.delete(key=PREFERENCES_KEY, collection=PREFERENCES_COLLECTION)
-
-
-@pytest.fixture(autouse=True)
-async def _clean_tiers_store():
-    """Clear persisted tier data between E2E tests."""
-    store = mcp._state_store
-    with contextlib.suppress(Exception):
-        await store.delete(key=TIERS_KEY, collection=TIERS_COLLECTION)
-    yield
-    with contextlib.suppress(Exception):
-        await store.delete(key=TIERS_KEY, collection=TIERS_COLLECTION)
 
 
 @pytest.fixture(autouse=True)

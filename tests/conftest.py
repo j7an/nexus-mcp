@@ -40,6 +40,16 @@ def _clean_runner_cache():
     RunnerFactory.clear_cache()
 
 
+@pytest.fixture(autouse=True)
+def _clean_preference_store():
+    """Clear the in-process preference/tier store before and after each test."""
+    from nexus_mcp.store import reset_store
+
+    reset_store()
+    yield
+    reset_store()
+
+
 @pytest.fixture
 def fake_runner_registry():
     """Temporarily register the test-only fake runner."""
@@ -69,9 +79,6 @@ def ctx() -> AsyncMock:
     # By default, simulate a client that does not support elicitation.
     # Tests that need elicitation should configure mock.elicit explicitly.
     mock.elicit.side_effect = McpError(ErrorData(code=-32600, message="not supported"))
-    # Provide a backing store mock for persistent store helpers (store.py)
-    mock.fastmcp._state_store = AsyncMock()
-    mock.fastmcp._state_store.get.return_value = None
     return mock
 
 
