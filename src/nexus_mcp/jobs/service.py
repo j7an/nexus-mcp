@@ -35,6 +35,7 @@ from nexus_mcp.core import (
     RequestedExecutionConfig,
     ReviewOperation,
     SessionNotFoundError,
+    SessionNotResumableError,
     SucceededJobResultResponse,
     TurnOperation,
     UnsupportedCapabilityError,
@@ -122,6 +123,7 @@ class AgentJobService:
         ):
             raise AccessDeniedError("Workspace policy requires workspace authorization")
         backend = self._require_backend(backend_id, operation, explicit_config)
+        self._require_structured_output(backend, operation)
         requested_config = self._snapshot_config(backend, resolved_workspace, explicit_config)
         return await self._create(
             workspace=resolved_workspace,
@@ -152,7 +154,11 @@ class AgentJobService:
         )
         backend = self._require_backend(session.backend_id, operation, explicit_config)
         self._require_session_continuation(backend)
+        self._require_structured_output(backend, operation)
         checkpoint = await self._store.get_provider_references(session_id=session.session_id)
+        if not checkpoint:
+            # A legacy claude session records no reference; resuming it would start fresh.
+            raise SessionNotResumableError(session.session_id)
         requested_config = self._snapshot_config(backend, resolved_workspace, explicit_config)
         return await self._create(
             workspace=resolved_workspace,
@@ -618,6 +624,16 @@ class AgentJobService:
             raise UnsupportedCapabilityError(
                 backend.descriptor.backend_id,
                 "session_fork",
+            )
+
+    @staticmethod
+    def _require_structured_output(backend: AgentBackend, operation: TurnOperation) -> None:
+        if operation.output_schema is not None and not (
+            backend.descriptor.capabilities.structured_output
+        ):
+            raise UnsupportedCapabilityError(
+                backend.descriptor.backend_id,
+                "structured_output",
             )
 
     @staticmethod

@@ -53,6 +53,7 @@ type JobErrorCode = Literal[
     "workspace_invalid",
     "workspace_unsupported",
     "session_not_found",
+    "session_not_resumable",
     "session_busy",
     "job_not_found",
     "input_not_found",

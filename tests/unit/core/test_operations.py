@@ -60,6 +60,35 @@ def test_turn_context_is_deeply_immutable_and_serializes_as_json():
     }
 
 
+def test_turn_operation_omits_absent_output_schema():
+    """A missing schema must not alter persisted turn JSON or idempotency hashes."""
+    operation = TurnOperation(prompt="x")
+
+    assert "output_schema" not in operation.model_dump()
+    assert "output_schema" not in operation.model_dump_json()
+
+
+def test_turn_operation_round_trips_output_schema():
+    """A requested output schema survives durable operation serialization."""
+    schema = {"type": "object", "properties": {"n": {"type": "integer"}}}
+    operation = TurnOperation(prompt="x", output_schema=schema)
+
+    assert TurnOperation.model_validate_json(operation.model_dump_json()).output_schema == schema
+
+
+def test_turn_operation_loads_json_without_output_schema():
+    """Turns persisted before structured output remain readable."""
+    assert TurnOperation.model_validate_json('{"kind":"turn","prompt":"x"}').output_schema is None
+
+
+def test_turn_operation_output_schema_is_immutable():
+    """Mutating an admitted schema cannot change the queued provider request."""
+    operation = TurnOperation(prompt="x", output_schema={"type": "object"})
+
+    with pytest.raises(TypeError):
+        operation.output_schema["type"] = "array"  # type: ignore[index]
+
+
 def test_turn_context_enforces_exact_canonical_json_byte_limit():
     """Nested context cannot exceed the one MiB canonical persistence boundary."""
     TurnOperation(prompt="Inspect", context={"payload": "x" * 1_048_562})

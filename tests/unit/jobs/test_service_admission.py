@@ -16,6 +16,7 @@ from nexus_mcp.core import (
     ReviewOperation,
     ReviewTarget,
     SessionBusyError,
+    SessionNotResumableError,
     TurnOperation,
     UnsupportedCapabilityError,
     WorkspaceInvalidError,
@@ -110,7 +111,7 @@ async def test_child_service_admission_loses_source_idle_race_atomically(
 ):
     """The store, not a stale service read, decides whether a child source is idle."""
     service, durable_store, _, _ = real_service_environment
-    source_session_id = await _source_session(service)
+    source_session_id = await _source_session(service, durable_store)
     original_create = durable_store.create_job
     raced = False
 
@@ -393,6 +394,54 @@ async def test_fork_requires_the_session_fork_capability(
             explicit_config=ExecutionConfigValues(),
         )
 
+    store.create_job.assert_not_awaited()
+
+
+async def test_start_rejects_output_schema_without_capability(
+    service: AgentJobService,
+    store: Mock,
+    backend: Mock,
+):
+    """A schema must not be silently ignored by a backend that cannot honor it."""
+    backend.descriptor = backend.descriptor.model_copy(
+        update={
+            "capabilities": backend.descriptor.capabilities.model_copy(
+                update={"structured_output": False}
+            )
+        }
+    )
+
+    with pytest.raises(UnsupportedCapabilityError) as raised:
+        await service.start(
+            workspace=WORKSPACE_SELECTOR,
+            access=authorized_access(),
+            backend_id=backend.descriptor.backend_id,
+            operation=TurnOperation(prompt="x", output_schema={"type": "object"}),
+            explicit_config=ExecutionConfigValues(),
+        )
+
+    assert raised.value.capability == "structured_output"
+    store.create_job.assert_not_awaited()
+
+
+async def test_continue_rejects_session_without_provider_checkpoint(
+    service: AgentJobService,
+    store: Mock,
+):
+    """A legacy session without a provider reference cannot resume safely."""
+    store.get_provider_references.return_value = ()
+
+    with pytest.raises(SessionNotResumableError) as raised:
+        await service.continue_session(
+            workspace=WORKSPACE_SELECTOR,
+            access=authorized_access(),
+            session_id="session-test",
+            operation=TurnOperation(prompt="Continue"),
+            explicit_config=ExecutionConfigValues(),
+        )
+
+    assert raised.value.code == "session_not_resumable"
+    assert raised.value.session_id == "session-test"
     store.create_job.assert_not_awaited()
 
 
