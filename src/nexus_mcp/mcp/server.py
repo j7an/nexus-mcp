@@ -307,7 +307,7 @@ def _legacy_exception_type(error: JobError) -> str | None:
 
 
 async def _context_log(ctx: Context, level: str, message: str) -> None:
-    """Log worker messages locally when no client session exists."""
+    """Log bounded batch metadata locally when no client session exists."""
     if ctx.is_background_task:
         getattr(logger, level)(message)
     else:
@@ -324,6 +324,9 @@ async def _forward_compatibility_event(
 ) -> None:
     """Map one committed compatibility event to FastMCP without replaying final output."""
     if ctx is None:
+        return
+    # Worker log and message payloads may contain stderr or provider output.
+    if ctx.is_background_task and event.type in {"log", "message"}:
         return
     payload = event.payload
     match event.type:

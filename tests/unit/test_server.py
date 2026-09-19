@@ -27,7 +27,7 @@ from nexus_mcp.core import (
     WorkspaceSelector,
 )
 from nexus_mcp.emitters import make_mcp_emitter
-from nexus_mcp.exceptions import UnsupportedAgentError
+from nexus_mcp.exceptions import RetryableError, UnsupportedAgentError
 from nexus_mcp.jobs import AgentJobService
 from nexus_mcp.labels import assign_labels
 from nexus_mcp.mcp.runtime import runtime_provider
@@ -71,27 +71,58 @@ def test_root_server_clear_preferences_is_implementation_function() -> None:
 
 
 @pytest.mark.parametrize(
-    ("event_type", "payload", "expected_level", "expected_message"),
+    ("event_type", "payload", "method", "expected_message"),
     [
-        ("log", {"level": "warning", "message": "worker warning"}, "WARNING", "worker warning"),
-        ("message", {"text": "worker chunk"}, "INFO", "worker chunk"),
+        ("log", {"level": "warning", "message": "client warning"}, "warning", "client warning"),
+        ("message", {"text": "client chunk"}, "info", "client chunk"),
     ],
 )
-async def test_worker_forwards_compatibility_logs_without_session(
-    event_type, payload, expected_level, expected_message, caplog
+async def test_foreground_forwards_compatibility_events_to_client(
+    event_type, payload, method, expected_message, ctx
 ):
-    """Committed log and nonfinal message events remain visible without a client session."""
-    context = Context(mcp, task_id="worker-task")
+    """Foreground log and nonfinal message events still reach the MCP client."""
     event = JobEvent(job_id="job-1", sequence=1, type=event_type, payload=payload)
 
-    with caplog.at_level("INFO", logger="nexus_mcp.mcp.server"):
-        await _forward_compatibility_event(
-            event, ctx=context, task_index=1, task_count=1, label="fake"
-        )
+    await _forward_compatibility_event(event, ctx=ctx, task_index=1, task_count=1, label="fake")
 
-    assert (expected_level, expected_message) in [
-        (record.levelname, record.message) for record in caplog.records
+    getattr(ctx, method).assert_awaited_once_with(expected_message)
+
+
+async def test_worker_does_not_log_sensitive_compatibility_events(caplog):
+    """Retry stderr and provider output chunks never enter server logs from a worker."""
+    stderr_secret = "stderr-secret-token-49381"
+    chunk_secret = "provider-output-secret-28471"
+    retry_error = RetryableError("temporary failure", stderr=stderr_secret)
+    events = [
+        JobEvent(
+            job_id="job-1",
+            sequence=1,
+            type="log",
+            payload={
+                "level": "warning",
+                "message": f"Retryable error (attempt 1/2), retrying in 0.0s: {retry_error}",
+            },
+        ),
+        JobEvent(
+            job_id="job-1",
+            sequence=2,
+            type="message",
+            payload={"text": chunk_secret, "final": False},
+        ),
     ]
+    context = Context(mcp, task_id="worker-task")
+
+    with caplog.at_level("INFO", logger="nexus_mcp.mcp.server"):
+        for event in events:
+            await _forward_compatibility_event(
+                event, ctx=context, task_index=1, task_count=1, label="fake"
+            )
+
+    server_logs = " ".join(
+        record.message for record in caplog.records if record.name == "nexus_mcp.mcp.server"
+    )
+    assert stderr_secret not in server_logs
+    assert chunk_secret not in server_logs
 
 
 class _JobServiceBoundary:

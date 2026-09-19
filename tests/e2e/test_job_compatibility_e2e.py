@@ -75,10 +75,10 @@ async def test_task_true_keeps_docket_id_out_of_nexus_jobs(job_mcp_client, fake_
 
 @pytest.mark.e2e
 @pytest.mark.parametrize("protocol_mode", ["auto"], indirect=True)
-async def test_task_worker_forwards_log_and_progress_without_session(
+async def test_task_worker_reports_progress_and_bounded_logs_without_session(
     job_mcp_client, fake_runner_registry, monkeypatch, caplog
 ):
-    """A worker can consume durable log and progress events without an MCP session."""
+    """A worker exposes progress while logging only bounded batch metadata."""
     original_run = FakeRunner.run
     release_worker = asyncio.Event()
 
@@ -112,7 +112,12 @@ async def test_task_worker_forwards_log_and_progress_without_session(
     assert status.status_message == "halfway"
     assert result.is_error is False
     assert strip_runner_header(result.data) == "event output"
-    assert "worker log" in caplog.text
+    server_logs = " ".join(
+        record.message for record in caplog.records if record.name == "nexus_mcp.mcp.server"
+    )
+    assert "Starting batch of 1 tasks (concurrency=3)" in server_logs
+    assert "Batch complete: 1/1 succeeded" in server_logs
+    assert "worker log" not in server_logs
 
 
 @pytest.mark.e2e
