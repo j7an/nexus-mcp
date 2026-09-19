@@ -1,0 +1,382 @@
+"""Claude Agent SDK backend: one SDK process per active Nexus turn."""
+
+import re
+import shutil
+import sys
+from collections.abc import Callable
+from typing import Any
+
+import claude_agent_sdk
+import jsonschema
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    PermissionResultAllow,
+    PermissionResultDeny,
+    ResultMessage,
+    TextBlock,
+    ToolPermissionContext,
+    ToolResultBlock,
+    ToolUseBlock,
+    UserMessage,
+)
+from claude_agent_sdk._cli_version import __cli_version__
+
+from nexus_mcp.backends.base import (
+    BackendExecutionContext,
+    BackendFailure,
+    ReconciliationOutcome,
+    RetryDisposition,
+    UnknownReconciliationOutcome,
+)
+from nexus_mcp.backends.claude_policy import WRITE_TOOLS, build_options, decide
+from nexus_mcp.config import get_claude_settings_profile, get_runner_defaults
+from nexus_mcp.config_resolver import get_agent_env
+from nexus_mcp.core import (
+    AgentOperation,
+    ApprovalPolicy,
+    BackendAvailability,
+    BackendCapabilities,
+    BackendDescriptor,
+    BackendEvent,
+    ExecutionConfigValues,
+    JobError,
+    JobErrorCode,
+    OperationResult,
+    ProviderReference,
+    RequestedExecutionConfig,
+    ResolvedExecutionConfig,
+    RetryPolicy,
+    SandboxMode,
+    TurnOperation,
+    TurnResult,
+    Workspace,
+)
+
+__all__ = ["ClaudeAgentBackend"]
+
+_SESSION = "session"
+_EXECUTABLE = re.compile(r"[A-Za-z0-9_./+-]{1,128}")
+
+
+def _failure(
+    code: JobErrorCode,
+    message: str,
+    disposition: RetryDisposition = "terminal",
+) -> BackendFailure:
+    """Build a normalized failure from fixed text only; never copy provider text."""
+    error = JobError(
+        code=code,
+        message=message,
+        retry_disposition=disposition,
+        recoverable=disposition != "terminal",
+    )
+    return BackendFailure(error, disposition)
+
+
+def _truncate(message: str, limit: int | None) -> str:
+    if limit is None:
+        return message
+    return message.encode()[:limit].decode(errors="ignore")
+
+
+def _with_file_refs(prompt: str, file_refs: tuple[str, ...]) -> str:
+    if not file_refs:
+        return prompt
+    return f"{prompt}\n\nFile references:\n" + "\n".join(f"- {path}" for path in file_refs)
+
+
+def _command_summary(tool_input: dict[str, Any]) -> str:
+    """Name only the executable; command arguments and environment may hold credentials."""
+    command = tool_input.get("command")
+    for token in command.split() if isinstance(command, str) else ():
+        if "=" in token:
+            continue
+        return token.rsplit("/", 1)[-1] if _EXECUTABLE.fullmatch(token) else "command"
+    return "command"
+
+
+class ClaudeAgentBackend:
+    """Run Nexus operations through the Claude Python Agent SDK."""
+
+    def __init__(
+        self, client_factory: Callable[[ClaudeAgentOptions], Any] = ClaudeSDKClient
+    ) -> None:
+        self._client_factory = client_factory
+        self._observed: dict[str, JobError | OperationResult] = {}
+        self._changed: dict[str, list[str]] = {}
+        self.descriptor = BackendDescriptor(
+            backend_id="claude",
+            display_name="Claude Agent",
+            description="Claude via the Claude Agent SDK",
+            capabilities=BackendCapabilities(
+                operations=frozenset({"turn", "fork", "review"}),
+                cancellation=True,
+                graceful_interrupt=True,
+                session_continuation=True,
+                session_fork=True,
+                input_required=True,
+                structured_output=True,
+                sandbox_modes=frozenset({"read_only", "workspace_write", "danger_full_access"}),
+                review_targets=frozenset({"working_tree", "branch", "commit"}),
+                review_deliveries=frozenset({"inline", "detached"}),
+            ),
+        )
+
+    async def check_availability(self, workspace: Workspace) -> BackendAvailability:
+        """Report SDK and CLI presence without making an authentication claim."""
+        del workspace
+        override = get_agent_env("claude", "PATH")
+        if override is not None and shutil.which(override) is None:
+            return BackendAvailability(
+                available=False,
+                reason="NEXUS_CLAUDE_PATH does not point to an executable",
+                setup_guidance="Unset NEXUS_CLAUDE_PATH to use the CLI bundled with the SDK",
+            )
+        return BackendAvailability(
+            available=True,
+            authenticated=None,
+            version=f"sdk {claude_agent_sdk.__version__} / cli {__cli_version__}",
+        )
+
+    async def resolve_execution_config(
+        self, requested: RequestedExecutionConfig, workspace: Workspace
+    ) -> ResolvedExecutionConfig:
+        """Default to read-only, ask-on-request; reuse existing Nexus limits as fallback."""
+        del workspace
+        defaults = get_runner_defaults("claude")
+        assert defaults.max_retries is not None
+        assert defaults.retry_base_delay is not None
+        assert defaults.retry_max_delay is not None
+        return ResolvedExecutionConfig.from_requested(
+            requested,
+            backend_defaults=ExecutionConfigValues(
+                sandbox="read_only", approval_policy="on_request"
+            ),
+            fallback_defaults=ExecutionConfigValues(
+                model=defaults.model,
+                timeout_seconds=defaults.timeout,
+                output_limit_bytes=defaults.output_limit,
+                retry_policy=RetryPolicy(
+                    max_attempts=defaults.max_retries,
+                    base_delay_seconds=defaults.retry_base_delay,
+                    max_delay_seconds=defaults.retry_max_delay,
+                ),
+            ),
+            fallback_source="fallback",
+        )
+
+    async def execute(
+        self, operation: AgentOperation, context: BackendExecutionContext
+    ) -> OperationResult:
+        """Execute one admitted turn in one SDK process."""
+        if not isinstance(operation, TurnOperation):
+            raise _failure("unsupported_capability", "Claude Agent does not support this operation")
+        config = context.resolved_config
+        sandbox: SandboxMode = config.sandbox or "read_only"
+        self._require_sandbox_platform(sandbox)
+        session_id = next(
+            (ref.value for ref in context.job.source_checkpoint if ref.kind == _SESSION), None
+        )
+        # The stored schema is frozen; the model serializer thaws it to plain JSON.
+        schema = operation.model_dump().get("output_schema")
+        final = await self._run_turn(
+            context,
+            prompt=_with_file_refs(operation.prompt, operation.file_refs),
+            sandbox=sandbox,
+            resume=session_id,
+            output_schema=schema,
+        )
+        if schema is not None:
+            if final.structured_output is None:
+                raise self._observe(
+                    context,
+                    _failure("structured_output_invalid", "Claude returned no structured output"),
+                )
+            try:
+                jsonschema.validate(final.structured_output, schema)
+            except (jsonschema.ValidationError, jsonschema.SchemaError):
+                raise self._observe(
+                    context,
+                    _failure(
+                        "structured_output_invalid",
+                        "Claude returned structured output that violates the requested schema",
+                    ),
+                ) from None
+        return TurnResult(
+            message=_truncate(final.result or "", config.output_limit_bytes),
+            structured_output=final.structured_output,
+            changed_files=tuple(self._changed.pop(context.job.job_id, ())),
+            usage=final.usage or {},
+        )
+
+    async def reconcile(
+        self,
+        provider_state: tuple[ProviderReference, ...],
+        context: BackendExecutionContext,
+    ) -> ReconciliationOutcome:
+        """Return unknown until Task 8 implements observed outcome recovery."""
+        del provider_state, context
+        return UnknownReconciliationOutcome(
+            error=JobError(
+                code="outcome_unknown",
+                message="Claude process state was lost",
+                retry_disposition="reconcile_required",
+                recoverable=True,
+            )
+        )
+
+    async def close(self) -> None:
+        """Drop remembered outcomes after all one-turn clients have exited."""
+        self._observed.clear()
+        self._changed.clear()
+
+    @staticmethod
+    def _require_sandbox_platform(sandbox: SandboxMode) -> None:
+        if sandbox == "workspace_write" and sys.platform not in ("darwin", "linux"):
+            raise _failure(
+                "backend_unavailable",
+                "Claude Agent workspace_write requires the macOS or Linux sandbox",
+            )
+
+    def _observe(self, context: BackendExecutionContext, failure: BackendFailure) -> BackendFailure:
+        """Remember definitive failure for worker reconciliation after a provider reference."""
+        self._observed[context.job.job_id] = failure.error
+        return failure
+
+    async def _run_turn(
+        self,
+        context: BackendExecutionContext,
+        *,
+        prompt: str,
+        sandbox: SandboxMode,
+        resume: str | None,
+        output_schema: Any = None,
+        review: bool = False,
+    ) -> ResultMessage:
+        config = context.resolved_config
+        approval: ApprovalPolicy = config.approval_policy or "on_request"
+        options = build_options(
+            workspace=context.workspace.canonical_path,
+            sandbox=sandbox,
+            profile=get_claude_settings_profile(),
+            can_use_tool=self._permission_handler(context, sandbox, approval, review),
+            pre_tool_use=self._pre_tool_use(context, sandbox, approval, review),
+            resume=resume,
+            model=config.model,
+            output_schema=output_schema,
+            cli_path=get_agent_env("claude", "PATH"),
+        )
+        recorded: set[str] = set()
+        pending: dict[str, str] = {}
+        async with self._client_factory(options) as client:
+            await client.query(prompt)
+            final: ResultMessage | None = None
+            async for message in client.receive_response():
+                final = await self._translate(message, context, recorded, pending) or final
+        if final is None:
+            raise _failure("outcome_unknown", "Claude ended without a result", "reconcile_required")
+        return final
+
+    async def _translate(
+        self,
+        message: Any,
+        context: BackendExecutionContext,
+        recorded: set[str],
+        pending: dict[str, str],
+    ) -> ResultMessage | None:
+        session_id = getattr(message, "session_id", None)
+        if isinstance(session_id, str) and session_id and session_id not in recorded:
+            recorded.add(session_id)
+            await context.record_provider_reference(
+                ProviderReference(kind=_SESSION, value=session_id)
+            )
+        match message:
+            case AssistantMessage(content=blocks) | UserMessage(content=blocks):
+                for block in blocks if isinstance(blocks, list) else ():
+                    await self._translate_block(block, context, pending)
+            case ResultMessage():
+                return message
+        return None
+
+    async def _translate_block(
+        self, block: Any, context: BackendExecutionContext, pending: dict[str, str]
+    ) -> None:
+        match block:
+            case TextBlock(text=value):
+                await context.emit_output_delta(value)
+            case ToolUseBlock(name="Bash", input=tool_input):
+                await context.emit(
+                    BackendEvent(type="command", payload={"command": _command_summary(tool_input)})
+                )
+            case ToolUseBlock(id=tool_use_id, name=name, input=tool_input) if name in WRITE_TOOLS:
+                path = tool_input.get("file_path") or tool_input.get("notebook_path")
+                if isinstance(path, str) and path:
+                    pending[tool_use_id] = path[:4096]
+            case ToolResultBlock(tool_use_id=tool_use_id, is_error=is_error):
+                path = pending.pop(tool_use_id, None)
+                if path is not None and not is_error:
+                    self._changed.setdefault(context.job.job_id, []).append(path)
+                    await context.emit(BackendEvent(type="file_change", payload={"path": path}))
+
+    @staticmethod
+    def _pre_tool_use(
+        context: BackendExecutionContext,
+        sandbox: SandboxMode,
+        approval: ApprovalPolicy,
+        review: bool,
+    ) -> Any:
+        """Gate all tools, including those settings allow before can_use_tool runs."""
+
+        async def gate(
+            input_data: dict[str, Any], tool_use_id: str | None, hook_context: Any
+        ) -> dict[str, Any]:
+            del tool_use_id, hook_context
+            tool_input = input_data.get("tool_input")
+            verdict = decide(
+                str(input_data.get("tool_name") or ""),
+                tool_input if isinstance(tool_input, dict) else {},
+                sandbox=sandbox,
+                approval=approval,
+                workspace=context.workspace.canonical_path,
+                review=review,
+            )
+            if verdict == "allow":
+                return {}
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": verdict,
+                    "permissionDecisionReason": "Nexus sandbox policy",
+                }
+            }
+
+        return gate
+
+    def _permission_handler(
+        self,
+        context: BackendExecutionContext,
+        sandbox: SandboxMode,
+        approval: ApprovalPolicy,
+        review: bool,
+    ) -> Any:
+        """Deny tools requiring approval until Task 6 adds persisted requests."""
+
+        async def handler(
+            tool: str, tool_input: dict[str, Any], permission: ToolPermissionContext
+        ) -> PermissionResultAllow | PermissionResultDeny:
+            del permission
+            verdict = decide(
+                tool,
+                tool_input,
+                sandbox=sandbox,
+                approval=approval,
+                workspace=context.workspace.canonical_path,
+                review=review,
+            )
+            if verdict == "allow":
+                return PermissionResultAllow()
+            return PermissionResultDeny(message="Denied by Nexus sandbox policy")
+
+        return handler
