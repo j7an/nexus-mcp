@@ -48,6 +48,7 @@ def _claude_json(text: str) -> str:
 @pytest.fixture(autouse=True)
 def _legacy_backend_available(monkeypatch):
     """Keep job-worker availability independent of host Claude installation."""
+    monkeypatch.setenv("NEXUS_ENABLE_LEGACY_RUNNERS", "1")
     monkeypatch.setattr(
         "nexus_mcp.legacy.runner_backend.detect_cli",
         lambda _backend: CLIInfo(found=True, path="/test/claude"),

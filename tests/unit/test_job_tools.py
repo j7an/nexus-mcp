@@ -292,7 +292,7 @@ async def test_mcp_runtime_injects_tuning_and_closes_in_reverse(monkeypatch):
 
     tuning = make_fast_runtime_tuning()
     lifecycle: list[str] = []
-    fake_legacy_backends = (object(),)
+    fake_backends = (object(),)
 
     class FakeStore:
         def __init__(self):
@@ -306,7 +306,7 @@ async def test_mcp_runtime_injects_tuning_and_closes_in_reverse(monkeypatch):
 
     class FakeBackendManager:
         def __init__(self, backends):
-            assert backends is fake_legacy_backends
+            assert backends is fake_backends
             lifecycle.append("backends.construct")
 
         async def close(self):
@@ -364,9 +364,9 @@ async def test_mcp_runtime_injects_tuning_and_closes_in_reverse(monkeypatch):
         async def stop(self):
             lifecycle.append("workers.stop")
 
-    def fake_legacy_factory():
-        lifecycle.append("legacy_backends.construct")
-        return fake_legacy_backends
+    def fake_select_backends():
+        lifecycle.append("select_backends.construct")
+        return fake_backends
 
     monkeypatch.setattr(runtime, "SQLiteJobStore", FakeStore)
     monkeypatch.setattr(runtime, "BackendManager", FakeBackendManager)
@@ -374,13 +374,13 @@ async def test_mcp_runtime_injects_tuning_and_closes_in_reverse(monkeypatch):
     monkeypatch.setattr(runtime, "NexusConfigResolver", FakeResolver)
     monkeypatch.setattr(runtime, "AgentJobService", FakeService)
     monkeypatch.setattr(runtime, "WorkerPool", FakeWorkers)
-    monkeypatch.setattr(runtime, "legacy_backends", fake_legacy_factory)
+    monkeypatch.setattr(runtime, "select_backends", fake_select_backends)
 
     async with runtime.MCPRuntime.open(tuning):
         assert lifecycle == [
             "store.construct",
             "store.open",
-            "legacy_backends.construct",
+            "select_backends.construct",
             "backends.construct",
             "notifier.construct",
             "resolver.construct",
