@@ -36,8 +36,9 @@ classifiers = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "fastmcp[tasks]>=3.4.7,<4.0",
+    "fastmcp[tasks]>=4.0.3,<4.1",
     "httpx>=0.28.1,<0.29",
+    "httpx-sse>=0.4.3,<0.5",
     "pydantic>=2.12.5,<3.0",
 ]
 

@@ -30,6 +30,7 @@ from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp_tasks import TasksExtension
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
@@ -217,6 +218,8 @@ mcp = FastMCP(
     icons=SERVER_ICONS,
     lifespan=_lifespan,
 )
+# Required by FastMCP 4 for task-enabled tools (prompt, batch_prompt).
+mcp.add_extension(TasksExtension())
 
 # Middleware executes outermost → innermost on request, reverse on response.
 # Order: ErrorNormalization (catch all) → Timing (measure) → RequestLogging (log entry/exit)

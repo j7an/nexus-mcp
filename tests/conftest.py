@@ -5,6 +5,10 @@ Fixtures here are available in tests/unit/ and tests/integration/ without
 any additional imports.
 """
 
+import os
+
+os.environ.setdefault("FASTMCP_MCP_CAMELCASE_COMPAT", "false")
+
 from unittest.mock import AsyncMock, patch
 
 import pytest
