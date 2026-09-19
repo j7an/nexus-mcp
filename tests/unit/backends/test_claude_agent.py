@@ -4,9 +4,23 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny, ToolPermissionContext
+from claude_agent_sdk import (
+    CLIConnectionError,
+    CLINotFoundError,
+    PermissionResultAllow,
+    PermissionResultDeny,
+    ProcessError,
+    ToolPermissionContext,
+)
 
-from nexus_mcp.backends.base import BackendFailure, CancelRequested, InputResolved
+from nexus_mcp.backends.base import (
+    BackendFailure,
+    CancelRequested,
+    CompletedReconciliationOutcome,
+    FailedReconciliationOutcome,
+    InputResolved,
+    UnknownReconciliationOutcome,
+)
 from nexus_mcp.backends.claude_agent import ClaudeAgentBackend
 from nexus_mcp.core import (
     ForkOperation,
@@ -23,7 +37,14 @@ from nexus_mcp.core import (
     TurnResult,
 )
 from tests.fixtures import make_workspace
-from tests.unit.backends.claude_fakes import FakeClient, FakeContext, factory, result, text
+from tests.unit.backends.claude_fakes import (
+    FakeClient,
+    FakeContext,
+    assistant,
+    factory,
+    result,
+    text,
+)
 
 PARENT = (ProviderReference(kind="session", value="sid-parent"),)
 
@@ -643,3 +664,110 @@ async def test_detached_review_forks_first(tmp_path, forked):
 
     assert forked == [("sid-parent", str(tmp_path))]
     assert created[0].options.resume == "sid-child"
+
+
+@pytest.mark.parametrize(
+    ("script", "code", "disposition"),
+    [
+        ([CLINotFoundError("missing")], "backend_unavailable", "terminal"),
+        ([CLIConnectionError("refused")], "backend_unavailable", "safe_to_retry"),
+        (
+            [assistant(error="authentication_failed"), result(is_error=True)],
+            "authentication_required",
+            "terminal",
+        ),
+        ([result(is_error=True, api_error_status=401)], "authentication_required", "terminal"),
+        ([assistant(error="billing_error"), result(is_error=True)], "provider_failed", "terminal"),
+        (
+            [assistant(error="rate_limit"), result(is_error=True)],
+            "provider_failed",
+            "safe_to_retry",
+        ),
+        ([result(is_error=True, api_error_status=529)], "provider_failed", "safe_to_retry"),
+        ([result(is_error=True, api_error_status=429)], "provider_failed", "safe_to_retry"),
+        ([result(is_error=True, api_error_status=501)], "provider_failed", "safe_to_retry"),
+        ([result(is_error=True, api_error_status=505)], "provider_failed", "safe_to_retry"),
+        ([result(is_error=True, api_error_status=400)], "provider_failed", "terminal"),
+        ([result(is_error=True, subtype="error_max_turns")], "provider_failed", "terminal"),
+        (
+            [text("partial"), ProcessError("died", exit_code=1)],
+            "outcome_unknown",
+            "reconcile_required",
+        ),
+    ],
+)
+async def test_failure_table(tmp_path, script, code, disposition):
+    with pytest.raises(BackendFailure) as raised:
+        await ClaudeAgentBackend(factory(script, [])).execute(
+            TurnOperation(prompt="x"), FakeContext(workspace_path=tmp_path)
+        )
+    assert raised.value.error.code == code
+    assert raised.value.retry_disposition == disposition
+
+
+async def test_connection_error_after_messages_is_unknown(tmp_path):
+    with pytest.raises(BackendFailure) as raised:
+        await ClaudeAgentBackend(factory([text("a"), CLIConnectionError("lost")], [])).execute(
+            TurnOperation(prompt="x"), FakeContext(workspace_path=tmp_path)
+        )
+    assert raised.value.error.code == "outcome_unknown"
+
+
+async def test_reconcile_reports_observed_failure_once(tmp_path):
+    backend = ClaudeAgentBackend(
+        factory([assistant(error="rate_limit"), result(is_error=True)], [])
+    )
+    context = FakeContext(workspace_path=tmp_path)
+    with pytest.raises(BackendFailure):
+        await backend.execute(TurnOperation(prompt="x"), context)
+    first = await backend.reconcile((), context)
+    assert isinstance(first, FailedReconciliationOutcome)
+    assert first.error.code == "provider_failed"
+    assert first.error.retry_disposition == "terminal"
+    assert isinstance(await backend.reconcile((), context), UnknownReconciliationOutcome)
+
+
+async def test_reconcile_reports_observed_success(tmp_path):
+    backend = ClaudeAgentBackend(factory([result()], []))
+    context = FakeContext(workspace_path=tmp_path)
+    await backend.execute(TurnOperation(prompt="x"), context)
+    outcome = await backend.reconcile((), context)
+    assert isinstance(outcome, CompletedReconciliationOutcome)
+    assert outcome.result.message == "done"
+    assert isinstance(await backend.reconcile((), context), UnknownReconciliationOutcome)
+
+
+async def test_reconcile_without_observation_is_unknown(tmp_path):
+    outcome = await ClaudeAgentBackend().reconcile((), FakeContext(workspace_path=tmp_path))
+    assert isinstance(outcome, UnknownReconciliationOutcome)
+    assert outcome.error.code == "outcome_unknown"
+
+
+async def test_no_credential_material_leaks(tmp_path, monkeypatch):
+    sentinel = "sk-ant-SENTINEL-DO-NOT-LEAK"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", sentinel)
+    created: list[FakeClient] = []
+    backend = ClaudeAgentBackend(
+        factory(
+            [text("a"), ProcessError(f"auth {sentinel}", exit_code=1, stderr=sentinel)],
+            created,
+        )
+    )
+    context = FakeContext(workspace_path=tmp_path)
+    with pytest.raises(BackendFailure) as raised:
+        await backend.execute(TurnOperation(prompt="x"), context)
+    dumped = raised.value.error.model_dump_json() + "".join(
+        item.model_dump_json() for item in [*context.events, *context.references]
+    )
+    assert sentinel not in dumped
+    assert sentinel not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert created[0].options.env == {}
+
+
+async def test_error_subtype_cannot_copy_credential_into_diagnostics(tmp_path):
+    sentinel = "sk-ant-SENTINEL-DO-NOT-LEAK"
+    backend = ClaudeAgentBackend(factory([result(is_error=True, subtype=sentinel)], []))
+    with pytest.raises(BackendFailure) as raised:
+        await backend.execute(TurnOperation(prompt="x"), FakeContext(workspace_path=tmp_path))
+    assert sentinel not in raised.value.error.model_dump_json()

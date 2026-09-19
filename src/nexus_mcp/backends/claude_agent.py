@@ -13,6 +13,8 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    ClaudeSDKError,
+    CLIConnectionError,
     CLINotFoundError,
     PermissionResultAllow,
     PermissionResultDeny,
@@ -32,6 +34,8 @@ from nexus_mcp.backends.base import (
     BackendExecutionContext,
     BackendFailure,
     CancelRequested,
+    CompletedReconciliationOutcome,
+    FailedReconciliationOutcome,
     ReconciliationOutcome,
     RetryDisposition,
     UnknownReconciliationOutcome,
@@ -69,12 +73,15 @@ __all__ = ["ClaudeAgentBackend"]
 
 _SESSION = "session"
 _EXECUTABLE = re.compile(r"[A-Za-z0-9_./+-]{1,128}")
+_SAFE_SUBTYPE = re.compile(r"[a-z][a-z0-9_]{0,127}")
 
 
 def _failure(
     code: JobErrorCode,
     message: str,
     disposition: RetryDisposition = "terminal",
+    *,
+    details: dict[str, str | int] | None = None,
 ) -> BackendFailure:
     """Build a normalized failure from fixed text only; never copy provider text."""
     error = JobError(
@@ -82,8 +89,39 @@ def _failure(
         message=message,
         retry_disposition=disposition,
         recoverable=disposition != "terminal",
+        details=details or {},
     )
     return BackendFailure(error, disposition)
+
+
+def _classify_result(final: ResultMessage, assistant_error: str | None) -> BackendFailure | None:
+    """Map an error result using only safe SDK fields and fixed messages."""
+    if not final.is_error:
+        return None
+    details: dict[str, str | int] = {
+        "subtype": final.subtype if _SAFE_SUBTYPE.fullmatch(final.subtype) else "unknown"
+    }
+    status = final.api_error_status
+    if status is not None:
+        details["status"] = status
+    if assistant_error == "authentication_failed" or status == 401:
+        return _failure(
+            "authentication_required",
+            "Claude authentication failed; run `claude` to log in or set ANTHROPIC_API_KEY",
+            details=details,
+        )
+    if assistant_error == "rate_limit" or (
+        status is not None and (status == 429 or 500 <= status < 600)
+    ):
+        return _failure(
+            "provider_failed",
+            "Claude is rate limited or overloaded",
+            "safe_to_retry",
+            details=details,
+        )
+    if assistant_error == "billing_error":
+        return _failure("provider_failed", "Claude reported a billing error", details=details)
+    return _failure("provider_failed", "Claude ended the turn with an error", details=details)
 
 
 def _truncate(message: str, limit: int | None) -> str:
@@ -213,6 +251,7 @@ class ClaudeAgentBackend:
         self, operation: AgentOperation, context: BackendExecutionContext
     ) -> OperationResult:
         """Execute exactly one admitted operation in one SDK process."""
+        self._observed.pop(context.job.job_id, None)
         config = context.resolved_config
         review = isinstance(operation, ReviewOperation)
         sandbox: SandboxMode = "read_only" if review else (config.sandbox or "read_only")
@@ -225,6 +264,18 @@ class ClaudeAgentBackend:
         ):
             session_id = await self._fork(session_id, context)
 
+        outcome = await self._dispatch(operation, context, sandbox, session_id)
+        self._remember(context.job.job_id, outcome)
+        return outcome
+
+    async def _dispatch(
+        self,
+        operation: AgentOperation,
+        context: BackendExecutionContext,
+        sandbox: SandboxMode,
+        session_id: str | None,
+    ) -> OperationResult:
+        """Translate one admitted operation to its normalized result."""
         match operation:
             case ForkOperation(prompt=None):
                 return self._fork_result(context, session_id)
@@ -336,8 +387,15 @@ class ClaudeAgentBackend:
         provider_state: tuple[ProviderReference, ...],
         context: BackendExecutionContext,
     ) -> ReconciliationOutcome:
-        """Return unknown until Task 8 implements observed outcome recovery."""
-        del provider_state, context
+        """Report one previously observed outcome or an honestly unknown state."""
+        del provider_state
+        seen = self._observed.pop(context.job.job_id, None)
+        if isinstance(seen, JobError):
+            return FailedReconciliationOutcome(
+                error=seen.model_copy(update={"retry_disposition": "terminal"})
+            )
+        if seen is not None:
+            return CompletedReconciliationOutcome(result=seen)
         return UnknownReconciliationOutcome(
             error=JobError(
                 code="outcome_unknown",
@@ -362,8 +420,14 @@ class ClaudeAgentBackend:
 
     def _observe(self, context: BackendExecutionContext, failure: BackendFailure) -> BackendFailure:
         """Remember definitive failure for worker reconciliation after a provider reference."""
-        self._observed[context.job.job_id] = failure.error
+        self._remember(context.job.job_id, failure.error)
         return failure
+
+    def _remember(self, job_id: str, outcome: JobError | OperationResult) -> None:
+        """Keep a bounded set of observed outcomes pending worker reconciliation."""
+        self._observed[job_id] = outcome
+        while len(self._observed) > 256:
+            self._observed.pop(next(iter(self._observed)))
 
     async def _run_turn(
         self,
@@ -391,24 +455,51 @@ class ClaudeAgentBackend:
         recorded: set[str] = set()
         pending: dict[str, str] = {}
         finals: list[ResultMessage] = []
+        assistant_errors: list[str] = []
+        received = False
 
         async def drain(client: Any) -> None:
+            nonlocal received
             async for message in client.receive_response():
+                received = True
+                if isinstance(message, AssistantMessage) and message.error is not None:
+                    assistant_errors.append(message.error)
                 found = await self._translate(message, context, recorded, pending)
                 if found is not None:
                     finals.append(found)
 
-        async with self._client_factory(options) as client:
-            await client.query(prompt)
-            draining = asyncio.create_task(drain(client))
-            try:
-                await self._await_drain_or_cancel(client, draining, context)
-            finally:
-                if not draining.done():
-                    draining.cancel()
-                await asyncio.gather(draining, return_exceptions=True)
+        try:
+            async with self._client_factory(options) as client:
+                await client.query(prompt)
+                draining = asyncio.create_task(drain(client))
+                try:
+                    await self._await_drain_or_cancel(client, draining, context)
+                finally:
+                    if not draining.done():
+                        draining.cancel()
+                    await asyncio.gather(draining, return_exceptions=True)
+        except CLINotFoundError:
+            raise _failure("backend_unavailable", "The Claude CLI could not be found") from None
+        except CLIConnectionError:
+            if not received:
+                raise _failure(
+                    "backend_unavailable", "Could not start the Claude CLI", "safe_to_retry"
+                ) from None
+            raise _failure(
+                "outcome_unknown", "Lost the Claude CLI mid-turn", "reconcile_required"
+            ) from None
+        except ClaudeSDKError as error:
+            raise _failure(
+                "outcome_unknown",
+                "The Claude CLI stream failed mid-turn",
+                "reconcile_required",
+                details={"exception_type": type(error).__name__[:128]},
+            ) from None
         if not finals:
             raise _failure("outcome_unknown", "Claude ended without a result", "reconcile_required")
+        failure = _classify_result(finals[-1], assistant_errors[-1] if assistant_errors else None)
+        if failure is not None:
+            raise self._observe(context, failure)
         return finals[-1]
 
     @staticmethod
