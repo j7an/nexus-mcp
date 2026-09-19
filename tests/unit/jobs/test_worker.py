@@ -651,3 +651,17 @@ def test_worker_policy_defaults_keep_heartbeat_safely_inside_lease():
     """Default production timing retains more than two heartbeat opportunities."""
     policy = WorkerPolicy()
     assert policy.heartbeat_seconds * 2 < policy.lease_seconds
+
+
+async def test_worker_exposes_job_session_on_context():
+    """Fork-capable backends need the Nexus session to build a ForkResult."""
+    store = InMemoryJobStore()
+    backend = ScriptedBackend()
+    job = await admit(store)
+    backend.queue_execute(ReturnResultAction(make_turn_result()))
+
+    assert await make_worker(store, backend).run_once() is True
+
+    context = backend.execute_calls[0][1]
+    assert context.session is not None
+    assert context.session.session_id == job.session_id

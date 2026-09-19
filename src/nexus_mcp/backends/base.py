@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from nexus_mcp.core import (
     AgentJob,
     AgentOperation,
+    AgentSession,
     BackendAvailability,
     BackendDescriptor,
     BackendEvent,
@@ -149,6 +150,7 @@ class BackendExecutionContext(Protocol):
     attempt: JobAttempt
     workspace: Workspace
     resolved_config: ResolvedExecutionConfig
+    session: AgentSession | None
 
     async def emit(self, event: BackendEvent) -> None:
         """Persist one normalized backend event."""

@@ -270,6 +270,11 @@ class JobWorker:
             current_job = await self._store.get_job(claimed.job.job_id)
             if current_job is None:
                 return
+            session = (
+                None
+                if current_job.session_id is None
+                else await self._store.get_session(current_job.session_id)
+            )
             context = StoreBackedExecutionContext(
                 store=self._store,
                 notifier=self._notifier,
@@ -278,6 +283,7 @@ class JobWorker:
                 attempt=current_attempts[-1],
                 workspace=workspace,
                 resolved_config=resolved_config,
+                session=session,
                 control_poll_seconds=self._policy.idle_poll_seconds,
                 output_chunk_bytes=self._output_chunk_bytes,
             )

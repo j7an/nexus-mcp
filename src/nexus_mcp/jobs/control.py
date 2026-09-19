@@ -16,6 +16,7 @@ from nexus_mcp.backends import (
 )
 from nexus_mcp.core import (
     AgentJob,
+    AgentSession,
     BackendEvent,
     InputRequest,
     InputResponse,
@@ -103,6 +104,7 @@ class StoreBackedExecutionContext:
         attempt: JobAttempt,
         workspace: Workspace,
         resolved_config: ResolvedExecutionConfig,
+        session: AgentSession | None = None,
         control_poll_seconds: float = 0.25,
         output_chunk_bytes: int = 4096,
     ) -> None:
@@ -112,6 +114,7 @@ class StoreBackedExecutionContext:
         self.attempt = attempt
         self.workspace = workspace
         self.resolved_config = resolved_config
+        self.session = session
         self._store = store
         self._notifier = notifier
         self._token = token
