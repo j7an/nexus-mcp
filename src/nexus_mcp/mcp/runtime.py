@@ -1,6 +1,7 @@
 """Durable job runtime ownership for FastMCP lifespan and direct tool calls."""
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Iterator
 from contextlib import (
     AbstractAsyncContextManager,
@@ -11,6 +12,9 @@ from contextlib import (
 from dataclasses import dataclass, field
 
 from nexus_mcp.backends import BackendManager
+from nexus_mcp.backends.base import AgentBackend
+from nexus_mcp.backends.claude_agent import ClaudeAgentBackend
+from nexus_mcp.config import get_legacy_runners_enabled
 from nexus_mcp.jobs import (
     AgentJobService,
     EventNotifier,
@@ -31,9 +35,31 @@ __all__ = [
     "RuntimeProvider",
     "RuntimeTuning",
     "runtime_provider",
+    "select_backends",
 ]
 
 DEFAULT_MAX_WORKER_COUNT = 8
+logger = logging.getLogger(__name__)
+
+
+def select_backends() -> tuple[AgentBackend, ...]:
+    """Prefer native backends; the compatibility flag restores replaced legacy runners."""
+    backends: tuple[AgentBackend, ...] = legacy_backends()
+    if get_legacy_runners_enabled():
+        logger.warning(
+            "NEXUS_ENABLE_LEGACY_RUNNERS=1: using the deprecated claude CLI runner "
+            "instead of the Claude Agent SDK backend"
+        )
+        return backends
+    native = ClaudeAgentBackend()
+    return (
+        *(
+            backend
+            for backend in backends
+            if backend.descriptor.backend_id != native.descriptor.backend_id
+        ),
+        native,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +96,7 @@ class MCPRuntime:
             await store.open()
             stack.push_async_callback(store.close)
 
-            backends = BackendManager(legacy_backends())
+            backends = BackendManager(select_backends())
             stack.push_async_callback(backends.close)
             notifier = EventNotifier()
             service = AgentJobService(

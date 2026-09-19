@@ -170,7 +170,8 @@ All `env` keys are optional — see [Configuration](#configuration) for the full
 - **Claude Code** — check with `claude --version`
 - **OpenCode** — check with `opencode --version`
 
-> **Claude Code note:** Nexus invokes Claude Code non-interactively via `claude -p`.
+> **Claude Code note:** `claude -p` is available only through the legacy
+> `NEXUS_ENABLE_LEGACY_RUNNERS=1` compatibility flag.
 > Anthropic says `claude -p` and Agent SDK usage draw from separate monthly Agent SDK
 > credits starting 2026-06-15, while interactive Claude Code usage remains on plan usage
 > limits:
@@ -567,6 +568,7 @@ Models in `nexus://runners` include tier data: `{"name": "gpt-5.4-mini", "tier":
 | `NEXUS_RETRY_MAX_DELAY` | `60.0` | Maximum seconds to wait between retries |
 | `NEXUS_CLI_DETECTION_TIMEOUT` | `30` | Timeout in seconds for CLI binary version detection at startup |
 | `NEXUS_EXECUTION_MODE` | `default` | Global execution mode (`default` or `yolo`) |
+| `NEXUS_ENABLE_LEGACY_RUNNERS` | Unset | `1` restores the deprecated `claude -p` CLI runner for the `claude` backend. By default, Nexus uses the Claude Agent SDK. The legacy runner will be removed in a future release. |
 
 ### Per-Runner Environment Variables
 
@@ -586,6 +588,21 @@ Valid `{AGENT}` values: `CLAUDE`, `CODEX`, `OPENCODE`, `OPENCODE_SERVER`
 | `NEXUS_{AGENT}_EXECUTION_MODE` | `NEXUS_CODEX_EXECUTION_MODE=yolo` | Execution mode override |
 
 Invalid per-runner values are silently ignored (the global or hardcoded default is used instead).
+
+### Claude Agent Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NEXUS_CLAUDE_SETTINGS_PROFILE` | `isolated` | Settings profile: `isolated`, `project`, or `inherit`. With the default `isolated` profile, the Claude backend does not load `CLAUDE.md`, project settings, or hooks; set `project` for trusted local repositories. |
+| `NEXUS_CLAUDE_PATH` | Unset | Optional CLI override. The Claude Agent SDK bundles its own CLI. |
+
+### Claude Agent
+
+The `claude` backend is named **Claude Agent** and uses the Claude Agent SDK. It authenticates
+through the host's existing Claude login or `ANTHROPIC_API_KEY` in Nexus's environment; Nexus
+stores no credentials. Its default sandbox is `read_only`; `workspace_write` requires macOS or
+Linux. Pass `output_schema` to `agent_start` or `agent_continue` for structured results. The SDK
+dependency adds roughly 90–100 MB to the installation.
 
 </details>
 
