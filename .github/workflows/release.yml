@@ -17,7 +17,7 @@ env:
   PACKAGE_DIR: .
   VERIFY_PYTHON: "3.13"
   VERIFY_COMMAND: nexus-mcp --version
-  DRAFT_RELEASE: "true"
+  DRAFT_RELEASE: "false"
   ATTACH_ASSETS: "true"
 
 jobs:
