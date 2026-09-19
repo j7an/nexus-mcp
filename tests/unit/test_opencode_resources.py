@@ -49,19 +49,14 @@ class TestOpenCodeStatusResource:
         assert result["server"]["configured"] is True
         assert result["server"]["healthy"] is True
         assert result["server"]["url"] == "http://test:4096"
-        # Updated tool groups
-        tags = {g["tag"] for g in result["tool_groups"]}
-        assert tags == {"configuration", "workspace", "monitoring", "session"}
-        assert "terminal" not in tags
-        # Session group has 13 tools
-        session_group = next(g for g in result["tool_groups"] if g["tag"] == "session")
-        assert session_group["tool_count"] == 13
-        assert session_group["enabled"] is True
-        # Fixed counts
-        config_group = next(g for g in result["tool_groups"] if g["tag"] == "configuration")
-        assert config_group["tool_count"] == 4
-        workspace_group = next(g for g in result["tool_groups"] if g["tag"] == "workspace")
-        assert workspace_group["tool_count"] == 11
+        assert result["tool_groups"] == [
+            {
+                "tag": "configuration",
+                "description": "Provider credentials and server configuration",
+                "tool_count": 2,
+                "enabled": True,
+            }
+        ]
         # Compound tools unchanged
         assert result["compound_tools"] == ["opencode_investigate", "opencode_session_review"]
         # Resource groups (new)

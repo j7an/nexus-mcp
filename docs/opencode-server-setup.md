@@ -172,7 +172,7 @@ Add the OpenCode server env vars to your MCP client config. Example for Claude C
 }
 ```
 
-When the server is configured and healthy, nexus-mcp automatically registers 38 additional tools and 18 resources for workspace operations, session management, permissions, and questions.
+Nexus-mcp always registers two OpenCode configuration tools, two compound tools, and the OpenCode status and data resources. Calls made before `NEXUS_OPENCODE_SERVER_PASSWORD` is set return an `OpenCode server not configured` error.
 
 ## Health Check
 

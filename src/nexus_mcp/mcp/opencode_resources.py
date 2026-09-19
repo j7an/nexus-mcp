@@ -27,29 +27,11 @@ logger = logging.getLogger(__name__)
 
 _RESOURCE_ANNOTATIONS = {"readOnlyHint": True, "idempotentHint": True}
 
-_TOOL_GROUPS_HEALTHY = [
+_TOOL_GROUPS = [
     {
         "tag": "configuration",
-        "description": "Provider setup, config management",
-        "tool_count": 4,
-        "enabled": True,
-    },
-    {
-        "tag": "workspace",
-        "description": "File search, git status, project info",
-        "tool_count": 11,
-        "enabled": True,
-    },
-    {
-        "tag": "monitoring",
-        "description": "Server health, LSP/MCP status",
-        "tool_count": 4,
-        "enabled": True,
-    },
-    {
-        "tag": "session",
-        "description": "Session lifecycle, permissions, questions",
-        "tool_count": 13,
+        "description": "Provider credentials and server configuration",
+        "tool_count": 2,
         "enabled": True,
     },
 ]
@@ -84,8 +66,8 @@ async def get_opencode_status() -> str:
 
     Resource URI: nexus://opencode
 
-    Always registered — reports configured=false when server is not set up,
-    so client agents can understand why OpenCode tools are absent.
+    Always registered — reports whether the OpenCode server is configured and
+    healthy; the tool and resource set itself never changes.
     """
     if not is_opencode_server_configured():
         return json.dumps(
@@ -108,7 +90,7 @@ async def get_opencode_status() -> str:
     return json.dumps(
         {
             "server": {"configured": True, "healthy": healthy, "url": url},
-            "tool_groups": _TOOL_GROUPS_HEALTHY if healthy else [],
+            "tool_groups": _TOOL_GROUPS if healthy else [],
             "compound_tools": _COMPOUND_TOOLS if healthy else [],
             "resource_groups": _RESOURCE_GROUPS_HEALTHY if healthy else [],
         }
@@ -245,7 +227,7 @@ def register_opencode_status_resource(mcp: FastMCP) -> None:
 
 
 def register_opencode_data_resources(mcp: FastMCP) -> None:
-    """Register OpenCode data resources (when server is configured + healthy)."""
+    """Register OpenCode data resources."""
     mcp.resource(
         "nexus://opencode/providers",
         mime_type="application/json",

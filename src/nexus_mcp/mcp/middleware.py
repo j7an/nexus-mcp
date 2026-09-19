@@ -20,7 +20,7 @@ from fastmcp.tools import ToolResult
 from pydantic import ValidationError
 
 from nexus_mcp.correlation import correlation_id, set_correlation_id
-from nexus_mcp.exceptions import CLINotFoundError, UnsupportedAgentError
+from nexus_mcp.exceptions import CLINotFoundError, ConfigurationError, UnsupportedAgentError
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ class ErrorNormalizationMiddleware(Middleware):
             return await call_next(context)
         except ToolError:
             raise
-        except (CLINotFoundError, UnsupportedAgentError) as e:
+        except (CLINotFoundError, UnsupportedAgentError, ConfigurationError) as e:
             raise ToolError(str(e)) from e
         except ValidationError as e:
             raise ToolError(f"Invalid input: {e}") from e

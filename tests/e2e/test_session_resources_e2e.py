@@ -16,13 +16,6 @@ from mcp.shared.exceptions import McpError
 from nexus_mcp.http_client import reset_http_client
 from nexus_mcp.server import mcp
 
-MINIMAL_OPENAPI_SPEC = {
-    "openapi": "3.1.0",
-    "info": {"title": "OpenCode", "version": "1.0.0"},
-    "servers": [{"url": "http://test:4096"}],
-    "paths": {},
-}
-
 
 @pytest.fixture
 async def healthy_client(monkeypatch):
@@ -33,9 +26,6 @@ async def healthy_client(monkeypatch):
     with respx.mock:
         respx.get("http://test:4096/global/health").mock(
             return_value=httpx.Response(200, json={"status": "ok"})
-        )
-        respx.get("http://test:4096/doc").mock(
-            return_value=httpx.Response(200, json=MINIMAL_OPENAPI_SPEC)
         )
         try:
             async with Client(mcp) as client:
