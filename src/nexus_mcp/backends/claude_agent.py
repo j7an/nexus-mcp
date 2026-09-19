@@ -1,5 +1,6 @@
 """Claude Agent SDK backend: one SDK process per active Nexus turn."""
 
+import asyncio
 import re
 import shutil
 import sys
@@ -28,6 +29,7 @@ from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITra
 from nexus_mcp.backends.base import (
     BackendExecutionContext,
     BackendFailure,
+    CancelRequested,
     ReconciliationOutcome,
     RetryDisposition,
     UnknownReconciliationOutcome,
@@ -46,6 +48,7 @@ from nexus_mcp.core import (
     JobError,
     JobErrorCode,
     OperationResult,
+    PermissionRequest,
     ProviderReference,
     RequestedExecutionConfig,
     ResolvedExecutionConfig,
@@ -281,14 +284,45 @@ class ClaudeAgentBackend:
         )
         recorded: set[str] = set()
         pending: dict[str, str] = {}
+        finals: list[ResultMessage] = []
+
+        async def drain(client: Any) -> None:
+            async for message in client.receive_response():
+                found = await self._translate(message, context, recorded, pending)
+                if found is not None:
+                    finals.append(found)
+
         async with self._client_factory(options) as client:
             await client.query(prompt)
-            final: ResultMessage | None = None
-            async for message in client.receive_response():
-                final = await self._translate(message, context, recorded, pending) or final
-        if final is None:
+            draining = asyncio.create_task(drain(client))
+            try:
+                await self._await_drain_or_cancel(client, draining, context)
+            finally:
+                if not draining.done():
+                    draining.cancel()
+        if not finals:
             raise _failure("outcome_unknown", "Claude ended without a result", "reconcile_required")
-        return final
+        return finals[-1]
+
+    @staticmethod
+    async def _await_drain_or_cancel(
+        client: Any, draining: asyncio.Task[None], context: BackendExecutionContext
+    ) -> None:
+        """Race the stream against control; lease loss and shutdown cancel this task."""
+        while True:
+            control = asyncio.create_task(context.wait_for_control())
+            try:
+                await asyncio.wait({draining, control}, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                if not control.done():
+                    control.cancel()
+            if draining.done():
+                draining.result()
+                return
+            if isinstance(control.result(), CancelRequested):
+                await client.interrupt()
+                await draining
+                raise asyncio.CancelledError
 
     async def _translate(
         self,
@@ -372,12 +406,11 @@ class ClaudeAgentBackend:
         approval: ApprovalPolicy,
         review: bool,
     ) -> Any:
-        """Deny tools requiring approval until Task 6 adds persisted requests."""
+        """Resolve SDK tool approval through persisted Nexus permission requests."""
 
         async def handler(
             tool: str, tool_input: dict[str, Any], permission: ToolPermissionContext
         ) -> PermissionResultAllow | PermissionResultDeny:
-            del permission
             verdict = decide(
                 tool,
                 tool_input,
@@ -388,6 +421,20 @@ class ClaudeAgentBackend:
             )
             if verdict == "allow":
                 return PermissionResultAllow()
-            return PermissionResultDeny(message="Denied by Nexus sandbox policy")
+            if verdict == "deny":
+                return PermissionResultDeny(message="Denied by Nexus sandbox policy")
+            path = tool_input.get("notebook_path" if tool == "NotebookEdit" else "file_path")
+            scope = f"{tool}:{path}" if isinstance(path, str) and path else tool
+            risk = permission.blocked_path or permission.decision_reason
+            response = await context.request_input(
+                PermissionRequest(
+                    prompt=(permission.title or f"Claude wants to use {tool}")[:8192],
+                    risk=None if not risk else risk[:4096],
+                    requested=frozenset({scope[:2048]}),
+                )
+            )
+            if getattr(response, "granted", None):
+                return PermissionResultAllow()
+            return PermissionResultDeny(message="Denied by user")
 
         return handler

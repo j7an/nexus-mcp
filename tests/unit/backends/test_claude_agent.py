@@ -1,10 +1,15 @@
 """Claude Agent backend turn and configuration behavior."""
 
-import pytest
+import asyncio
 
-from nexus_mcp.backends.base import BackendFailure
+import pytest
+from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny, ToolPermissionContext
+
+from nexus_mcp.backends.base import BackendFailure, CancelRequested, InputResolved
 from nexus_mcp.backends.claude_agent import ClaudeAgentBackend
 from nexus_mcp.core import (
+    PermissionRequest,
+    PermissionResponse,
     ProviderReference,
     RequestedExecutionConfig,
     ResolvedExecutionConfig,
@@ -264,3 +269,123 @@ async def test_command_event_never_carries_the_command_line(tmp_path):
     [event] = [e for e in context.events if e.type == "command"]
     assert event.payload == {"command": "curl"}
     assert sentinel not in event.model_dump_json()
+
+
+async def test_cancel_interrupts_then_drains_then_raises(tmp_path):
+    created: list[FakeClient] = []
+    context = FakeContext(workspace_path=tmp_path)
+
+    async def request_cancel(client):
+        context.control.put_nowait(InputResolved(input_id="unrelated"))
+        context.control.put_nowait(CancelRequested())
+        while not client.interrupted:
+            await asyncio.sleep(0)
+
+    backend = ClaudeAgentBackend(
+        factory([text("a"), request_cancel, result(terminal_reason="aborted_streaming")], created)
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(backend.execute(TurnOperation(prompt="x"), context), timeout=1)
+    assert created[0].interrupted
+    assert created[0].drained
+    assert created[0].closed
+
+
+def _ask(tool, tool_input, outcomes, **permission):
+    async def step(client):
+        outcomes.append(
+            await client.options.can_use_tool(
+                tool, tool_input, ToolPermissionContext(tool_use_id="t1", **permission)
+            )
+        )
+
+    return step
+
+
+def _write_config(approval):
+    return ResolvedExecutionConfig(sandbox="workspace_write", approval_policy=approval)
+
+
+async def test_permission_ask_grant_carries_no_tool_body(tmp_path, monkeypatch):
+    monkeypatch.setattr("sys.platform", "linux")
+    outcomes: list = []
+    secret = "TOP-SECRET-BODY"
+    step = _ask(
+        "Write",
+        {"file_path": "/etc/outside.txt", "content": secret},
+        outcomes,
+        title="Claude wants to write /etc/outside.txt",
+    )
+    context = FakeContext(workspace_path=tmp_path, resolved_config=_write_config("on_request"))
+    context.input_response = PermissionResponse(granted=frozenset({"Write:/etc/outside.txt"}))
+    await ClaudeAgentBackend(factory([step, result()], [])).execute(
+        TurnOperation(prompt="x"), context
+    )
+    request = context.input_requests[0]
+    assert isinstance(request, PermissionRequest)
+    assert request.prompt == "Claude wants to write /etc/outside.txt"
+    assert request.requested == frozenset({"Write:/etc/outside.txt"})
+    assert secret not in request.model_dump_json()
+    assert isinstance(outcomes[0], PermissionResultAllow)
+
+
+async def test_notebook_permission_scopes_actual_notebook_path(tmp_path, monkeypatch):
+    monkeypatch.setattr("sys.platform", "linux")
+    outcomes: list = []
+    inside = str(tmp_path / "inside.py")
+    outside = "/etc/outside.ipynb"
+    context = FakeContext(workspace_path=tmp_path, resolved_config=_write_config("on_request"))
+    context.input_response = PermissionResponse(granted=frozenset({f"NotebookEdit:{outside}"}))
+    await ClaudeAgentBackend(
+        factory(
+            [
+                _ask(
+                    "NotebookEdit",
+                    {"file_path": inside, "notebook_path": outside, "new_source": "SECRET"},
+                    outcomes,
+                ),
+                result(),
+            ],
+            [],
+        )
+    ).execute(TurnOperation(prompt="x"), context)
+    [request] = context.input_requests
+    assert request.requested == frozenset({f"NotebookEdit:{outside}"})
+    assert inside not in request.model_dump_json()
+    assert "SECRET" not in request.model_dump_json()
+    assert isinstance(outcomes[0], PermissionResultAllow)
+
+
+async def test_permission_ask_empty_grant_denies(tmp_path, monkeypatch):
+    monkeypatch.setattr("sys.platform", "linux")
+    outcomes: list = []
+    context = FakeContext(workspace_path=tmp_path, resolved_config=_write_config("on_request"))
+    context.input_response = PermissionResponse(granted=frozenset())
+    await ClaudeAgentBackend(
+        factory([_ask("WebFetch", {"url": "https://x"}, outcomes), result()], [])
+    ).execute(TurnOperation(prompt="x"), context)
+    assert context.input_requests[0].requested == frozenset({"WebFetch"})
+    assert isinstance(outcomes[0], PermissionResultDeny)
+
+
+async def test_never_policy_denies_without_asking(tmp_path, monkeypatch):
+    monkeypatch.setattr("sys.platform", "linux")
+    outcomes: list = []
+    context = FakeContext(workspace_path=tmp_path, resolved_config=_write_config("never"))
+    await ClaudeAgentBackend(
+        factory([_ask("WebFetch", {"url": "https://x"}, outcomes), result()], [])
+    ).execute(TurnOperation(prompt="x"), context)
+    assert context.input_requests == []
+    assert isinstance(outcomes[0], PermissionResultDeny)
+
+
+async def test_workspace_write_refused_off_posix(tmp_path, monkeypatch):
+    monkeypatch.setattr("sys.platform", "win32")
+    created: list[FakeClient] = []
+    context = FakeContext(workspace_path=tmp_path, resolved_config=_write_config("never"))
+    with pytest.raises(BackendFailure) as raised:
+        await ClaudeAgentBackend(factory([result()], created)).execute(
+            TurnOperation(prompt="x"), context
+        )
+    assert raised.value.error.code == "backend_unavailable"
+    assert created == []
