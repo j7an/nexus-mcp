@@ -57,15 +57,43 @@ async def test_surface_identical_across_opencode_states(monkeypatch):
 
 
 @pytest.mark.e2e
-async def test_opencode_tool_errors_clearly_when_unconfigured(monkeypatch):
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("opencode_set_provider_auth", {"provider_id": "test", "credentials": {}}),
+        ("opencode_update_config", {"config": {}}),
+        ("opencode_investigate", {"query": "test"}),
+        ("opencode_session_review", {"session_id": "ses_1"}),
+    ],
+)
+async def test_opencode_tool_errors_clearly_when_unconfigured(
+    monkeypatch, caplog, tool_name, arguments
+):
     monkeypatch.delenv("NEXUS_OPENCODE_SERVER_PASSWORD", raising=False)
     reset_http_client()
     try:
         async with Client(mcp) as client:
-            with pytest.raises(ToolError) as exc_info:
-                await client.call_tool("opencode_update_config", {"config": {}})
-            assert "OpenCode server not configured" in str(exc_info.value)
-            assert "Internal error:" not in str(exc_info.value)
+            with (
+                caplog.at_level("ERROR", logger="fastmcp.server.server"),
+                pytest.raises(ToolError, match=r"^OpenCode server not configured"),
+            ):
+                await client.call_tool(tool_name, arguments)
+            assert not any(
+                record.exc_info
+                for record in caplog.records
+                if record.name == "fastmcp.server.server"
+            )
+    finally:
+        mcp._lifespan_result_set = False
+        reset_http_client()
+
+
+@pytest.mark.e2e
+async def test_opencode_data_resource_errors_clearly_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("NEXUS_OPENCODE_SERVER_PASSWORD", raising=False)
+    reset_http_client()
+    try:
+        async with Client(mcp) as client:
             with pytest.raises(Exception, match="OpenCode server not configured"):
                 await client.read_resource("nexus://opencode/providers")
     finally:

@@ -58,7 +58,7 @@ from nexus_mcp.icons import SERVER_ICONS, TOOL_CONFIG_ICONS, TOOL_EXEC_ICONS
 from nexus_mcp.jobs import AgentJobService
 from nexus_mcp.labels import assign_labels
 from nexus_mcp.mcp.access import local_access_context
-from nexus_mcp.mcp.compound_tools import register_compound_tools
+from nexus_mcp.mcp.compound_tools import _get_tool_http_client, register_compound_tools
 from nexus_mcp.mcp.elicitation import ElicitationGuard
 from nexus_mcp.mcp.job_tools import register_job_tools
 from nexus_mcp.mcp.middleware import (
@@ -706,7 +706,7 @@ async def opencode_set_provider_auth(
     """Set authentication credentials for a provider."""
     if not re.fullmatch(r"[a-zA-Z0-9_-]+", provider_id):
         raise ToolError(f"Invalid provider_id: {provider_id!r}")
-    await get_http_client().put(f"/auth/{provider_id}", json=credentials)
+    await _get_tool_http_client().put(f"/auth/{provider_id}", json=credentials)
     return f"Credentials set for provider '{provider_id}'"
 
 
@@ -715,7 +715,7 @@ async def opencode_update_config(
     config: dict[str, Any],
 ) -> str:
     """Update OpenCode server configuration."""
-    data = await get_http_client().patch("/config", json=config)
+    data = await _get_tool_http_client().patch("/config", json=config)
     return _json.dumps(data, indent=2)
 
 
