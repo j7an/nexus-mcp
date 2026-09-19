@@ -1,22 +1,18 @@
 # src/nexus_mcp/mcp/compound_tools.py
 """Compound tools that chain multiple OpenCode HTTP calls.
 
-Each tool aggregates data from multiple API endpoints and optionally
-uses ctx.sample() for AI-powered summarization. When sampling is not
-supported by the client, raw aggregated data is returned.
+Each tool aggregates data from multiple API endpoints.
+Returns deterministic text built from OpenCode server data.
 
 Tools:
-- opencode_investigate: Search + read files + optional analysis
-- opencode_session_review: Session + messages + diff + optional summary
+- opencode_investigate: Search + read files
+- opencode_session_review: Session + messages + diff
 """
 
-import logging
 import re
 from typing import Any
 
-from fastmcp import Context, FastMCP
-
-logger = logging.getLogger(__name__)
+from fastmcp import FastMCP
 
 
 def _format_search_results(
@@ -65,13 +61,10 @@ async def opencode_investigate(
     *,
     query: str,
     max_files: int = 5,
-    ctx: Context | None = None,
 ) -> str:
-    """Search project files and optionally analyze results.
+    """Search project files and return the matching results.
 
     Chains GET /find → GET /file/content for up to max_files results.
-    If ctx.sample() is available, returns AI-analyzed results.
-    Otherwise returns raw search results + file contents.
     """
     max_files = min(max(max_files, 1), 50)  # clamp to [1, 50]
     from nexus_mcp.http_client import get_http_client
@@ -86,31 +79,17 @@ async def opencode_investigate(
         if path:
             content = await client.get("/file/content", params={"path": path})
             contents.append(content if isinstance(content, dict) else {"content": str(content)})
-    raw = _format_search_results(search_results[:max_files], contents)
-    if ctx:
-        try:
-            sampled = await ctx.sample(
-                f"Analyze these search results for: {query}\n\n{raw}",
-                system_prompt="Summarize the relevant findings concisely.",
-            )
-            if sampled.text is not None:
-                return sampled.text
-        except Exception:
-            logger.debug("ctx.sample() failed, returning raw data", exc_info=True)
-    return raw
+    return _format_search_results(search_results[:max_files], contents)
 
 
 async def opencode_session_review(
     *,
     session_id: str,
-    ctx: Context | None = None,
 ) -> str:
     """Review a session's messages and file changes.
 
     Chains GET /session/{id} → GET /session/{id}/message → GET /session/{id}/diff
     → GET /session/{id}/todo.
-    If ctx.sample() is available, returns AI-summarized review.
-    Otherwise returns raw session data.
     """
     if not re.fullmatch(r"ses[a-zA-Z0-9_-]+", session_id):
         raise ValueError(f"Invalid session_id: {session_id!r}")
@@ -125,18 +104,7 @@ async def opencode_session_review(
     messages_list = messages if isinstance(messages, list) else []
     diff_dict = diff if isinstance(diff, dict) else {}
     todo_list = todo if isinstance(todo, list) else []
-    raw = _format_session_review(session_dict, messages_list, diff_dict, todo_list)
-    if ctx:
-        try:
-            sampled = await ctx.sample(
-                f"Summarize this coding session:\n\n{raw}",
-                system_prompt="Provide a concise summary of what was done and what changed.",
-            )
-            if sampled.text is not None:
-                return sampled.text
-        except Exception:
-            logger.debug("ctx.sample() failed, returning raw data", exc_info=True)
-    return raw
+    return _format_session_review(session_dict, messages_list, diff_dict, todo_list)
 
 
 def register_compound_tools(mcp: FastMCP) -> None:
