@@ -277,6 +277,48 @@ async def test_changed_files_only_after_successful_tool_result(tmp_path):
     assert [e.payload["path"] for e in context.events if e.type == "file_change"] == ["kept.txt"]
 
 
+async def test_failed_turn_discards_changed_files_before_same_job_retries(tmp_path):
+    from claude_agent_sdk import ToolResultBlock, ToolUseBlock, UserMessage
+
+    script = [
+        assistant(ToolUseBlock(id="write", name="Write", input={"file_path": "stale.txt"})),
+        UserMessage(content=[ToolResultBlock(tool_use_id="write", content="done")]),
+        result(is_error=True),
+    ]
+    backend = ClaudeAgentBackend(factory(script, []))
+    context = FakeContext(workspace_path=tmp_path)
+    with pytest.raises(BackendFailure):
+        await backend.execute(TurnOperation(prompt="first"), context)
+
+    script[:] = [result()]
+    outcome = await backend.execute(TurnOperation(prompt="retry"), context)
+    assert outcome.changed_files == ()
+
+
+async def test_notebook_edit_reports_actual_notebook_path(tmp_path):
+    from claude_agent_sdk import ToolResultBlock, ToolUseBlock, UserMessage
+
+    script = [
+        assistant(
+            ToolUseBlock(
+                id="notebook",
+                name="NotebookEdit",
+                input={"file_path": "wrong.py", "notebook_path": "actual.ipynb"},
+            )
+        ),
+        UserMessage(content=[ToolResultBlock(tool_use_id="notebook", content="done")]),
+        result(),
+    ]
+    context = FakeContext(workspace_path=tmp_path)
+    outcome = await ClaudeAgentBackend(factory(script, [])).execute(
+        TurnOperation(prompt="x"), context
+    )
+    assert outcome.changed_files == ("actual.ipynb",)
+    assert [e.payload["path"] for e in context.events if e.type == "file_change"] == [
+        "actual.ipynb"
+    ]
+
+
 async def test_command_event_never_carries_the_command_line(tmp_path):
     from claude_agent_sdk import ToolUseBlock
 

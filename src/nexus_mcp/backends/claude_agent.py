@@ -271,21 +271,24 @@ class ClaudeAgentBackend:
     ) -> OperationResult:
         """Execute exactly one admitted operation in one SDK process."""
         self._observed.pop(context.job.job_id, None)
-        config = context.resolved_config
-        review = isinstance(operation, ReviewOperation)
-        sandbox: SandboxMode = "read_only" if review else (config.sandbox or "read_only")
-        self._require_sandbox_platform(sandbox)
-        session_id = next(
-            (ref.value for ref in context.job.source_checkpoint if ref.kind == _SESSION), None
-        )
-        if isinstance(operation, ForkOperation) or (
-            isinstance(operation, ReviewOperation) and operation.delivery == "detached"
-        ):
-            session_id = await self._fork(session_id, context)
+        try:
+            config = context.resolved_config
+            review = isinstance(operation, ReviewOperation)
+            sandbox: SandboxMode = "read_only" if review else (config.sandbox or "read_only")
+            self._require_sandbox_platform(sandbox)
+            session_id = next(
+                (ref.value for ref in context.job.source_checkpoint if ref.kind == _SESSION), None
+            )
+            if isinstance(operation, ForkOperation) or (
+                isinstance(operation, ReviewOperation) and operation.delivery == "detached"
+            ):
+                session_id = await self._fork(session_id, context)
 
-        outcome = await self._dispatch(operation, context, sandbox, session_id)
-        self._remember(context.job.job_id, outcome)
-        return outcome
+            outcome = await self._dispatch(operation, context, sandbox, session_id)
+            self._remember(context.job.job_id, outcome)
+            return outcome
+        finally:
+            self._changed.pop(context.job.job_id, None)
 
     async def _dispatch(
         self,
@@ -576,7 +579,7 @@ class ClaudeAgentBackend:
                     BackendEvent(type="command", payload={"command": _command_summary(tool_input)})
                 )
             case ToolUseBlock(id=tool_use_id, name=name, input=tool_input) if name in WRITE_TOOLS:
-                path = tool_input.get("file_path") or tool_input.get("notebook_path")
+                path = tool_input.get("notebook_path" if name == "NotebookEdit" else "file_path")
                 if isinstance(path, str) and path:
                     pending[tool_use_id] = path[:4096]
             case ToolResultBlock(tool_use_id=tool_use_id, is_error=is_error):
