@@ -79,6 +79,8 @@ def ctx() -> AsyncMock:
     """
     mock = AsyncMock(spec=Context)
     mock.get_state.return_value = None  # simulate empty session state
+    mock.is_background_task = False
+    mock.request_context.protocol_version = "2025-11-25"
     # By default, simulate a client that does not support elicitation.
     # Tests that need elicitation should configure mock.elicit explicitly.
     mock.elicit.side_effect = MCPError(code=-32600, message="not supported")

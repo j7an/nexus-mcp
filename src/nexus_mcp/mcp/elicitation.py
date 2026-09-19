@@ -21,6 +21,7 @@ from fastmcp.server.elicitation import (
     DeclinedElicitation,
 )
 from mcp.shared.exceptions import MCPError
+from mcp.types.version import MODERN_PROTOCOL_VERSIONS
 
 from nexus_mcp.config import get_runner_models
 from nexus_mcp.mcp.preference_store import load_preferences, save_preferences
@@ -56,16 +57,21 @@ class ResolvedParams:
     selections: dict[str, str] = dataclasses.field(default_factory=dict)
 
 
+def _is_modern_connection(ctx: Context) -> bool:
+    """Return whether the connection lacks server-initiated elicitation."""
+    request_context = ctx.request_context
+    return (
+        request_context is not None and request_context.protocol_version in MODERN_PROTOCOL_VERSIONS
+    )
+
+
 class ElicitationGuard:
     """Guards tool calls with interactive parameter resolution.
 
     Wraps ctx.elicit() to interactively fill in missing parameters before
-    a tool call proceeds. Caches elicitation availability at the class level
-    so that a single McpError short-circuits all future elicitation attempts
-    within the process lifetime.
+    a tool call proceeds. Elicitation is skipped in background tasks and on
+    sessionless connections, or when the client reports it as unsupported.
     """
-
-    _elicitation_available: bool | None = None
 
     def __init__(
         self,
@@ -82,20 +88,14 @@ class ElicitationGuard:
         message: str,
         response_type: Any = None,
     ) -> ElicitResult:
-        """Wrap ctx.elicit() with error handling and availability caching.
-
-        Returns the elicitation result, or None if elicitation is unavailable.
-        Caches unavailability at class level after first McpError.
-        """
-        if ElicitationGuard._elicitation_available is False:
+        """Return the elicitation result, or None when it is unavailable."""
+        if self._ctx.is_background_task or _is_modern_connection(self._ctx):
             return None
         try:
             result = await self._ctx.elicit(message, response_type=response_type)
-            ElicitationGuard._elicitation_available = True
             return cast("ElicitResult", result)
         except MCPError:
-            ElicitationGuard._elicitation_available = False
-            logger.debug("Elicitation not supported by client — disabling for session")
+            logger.debug("Elicitation not supported by client")
             return None
 
     async def _auto_suppress(self, pref_key: str) -> None:
@@ -149,11 +149,11 @@ class ElicitationGuard:
             return mode, {}
         result = await self._try_elicit(
             f"YOLO mode will auto-approve all actions in {cli}. Confirm?",
-            None,
+            bool,
         )
         if result is None:
             return mode, {}
-        if result.action == "accept":
+        if isinstance(result, AcceptedElicitation) and result.data is True:
             await self._auto_suppress("confirm_yolo")
             return mode, {"mode": SELECTED}
         logger.warning("YOLO mode declined, downgrading to default")
@@ -228,11 +228,11 @@ class ElicitationGuard:
         count = len(yolo_indices)
         result = await self._try_elicit(
             f"YOLO mode will auto-approve all actions for {count} task(s). Confirm?",
-            None,
+            bool,
         )
         if result is None:
             return tasks
-        if result.action == "accept":
+        if isinstance(result, AcceptedElicitation) and result.data is True:
             await self._auto_suppress("confirm_yolo")
             return tasks
         resolved = list(tasks)
@@ -267,7 +267,7 @@ class ElicitationGuard:
         if vague_indices and self._prefs.confirm_vague_prompt is not False:
             await self._try_elicit(
                 f"{len(vague_indices)} task(s) have very short prompts. Consider elaborating.",
-                None,
+                bool,
             )
 
     # ------------------------------------------------------------------

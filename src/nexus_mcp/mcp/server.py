@@ -104,6 +104,12 @@ def build_server_instructions() -> str:
     lines.append("## Important: Do not pre-fill `cli` or `model`")
     lines.append("Leave `cli` and `model` empty so the user can choose interactively.")
     lines.append("Only set them when the user explicitly names a runner or model.")
+    lines.append(
+        "Interactive selection needs client elicitation support, which is unavailable on "
+        "sessionless (2026-07-28) connections. If a call fails with 'cli is required', "
+        "ask the user to choose an installed runner listed below, then retry with `cli` set "
+        "to their choice. Do not pick a runner on the user's behalf."
+    )
     lines.append("")
     lines.append("## Available Runners")
     lines.append("")

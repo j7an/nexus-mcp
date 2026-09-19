@@ -522,6 +522,12 @@ class TestBatchPrompt:
 class TestServerInstructions:
     """Tests for the build_server_instructions() function."""
 
+    def test_instructions_tell_clients_when_cli_is_required(self):
+        result = build_server_instructions()
+        assert "cli is required" in result
+        assert "ask the user to choose an installed runner" in result
+        assert "retry with `cli` set to their choice" in result
+
     def test_instructions_is_non_empty_string(self):
         """build_server_instructions() returns a non-empty markdown string."""
         result = build_server_instructions()
