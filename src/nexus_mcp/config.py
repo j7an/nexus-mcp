@@ -6,6 +6,11 @@ Resolution order (highest → lowest priority):
   per-request → session prefs → per-runner env → global env → hardcoded
 """
 
+import os
+from typing import Literal, cast
+
+from nexus_mcp.exceptions import ConfigurationError
+
 __all__ = [
     "HARDCODED_DEFAULTS",
     "get_global_output_limit",
@@ -19,6 +24,9 @@ __all__ = [
     "get_runner_models",
     "get_agent_fallback_models",
     "get_agent_env",
+    "get_legacy_runners_enabled",
+    "get_claude_settings_profile",
+    "ClaudeSettingsProfile",
 ]
 
 # Re-export resolution functions and HARDCODED_DEFAULTS so existing imports
@@ -55,6 +63,39 @@ from nexus_mcp.config_resolver import (
 # ---------------------------------------------------------------------------
 # Backward-compatible getter functions
 # ---------------------------------------------------------------------------
+
+
+type ClaudeSettingsProfile = Literal["isolated", "project", "inherit"]
+
+_CLAUDE_SETTINGS_PROFILES = ("isolated", "project", "inherit")
+
+
+def get_legacy_runners_enabled() -> bool:
+    """Return whether legacy CLI runners replace their native backends.
+
+    Environment Variable:
+        NEXUS_ENABLE_LEGACY_RUNNERS: "1" restores the legacy runner for every backend
+            that has a native replacement. Any other value keeps native backends.
+    """
+    return os.environ.get("NEXUS_ENABLE_LEGACY_RUNNERS", "").strip() == "1"
+
+
+def get_claude_settings_profile() -> ClaudeSettingsProfile:
+    """Return which Claude settings sources the Claude Agent backend may load.
+
+    Raises:
+        ConfigurationError: If the env var names an unknown profile.
+
+    Environment Variable:
+        NEXUS_CLAUDE_SETTINGS_PROFILE: "isolated" (default), "project", or "inherit".
+    """
+    value = os.environ.get("NEXUS_CLAUDE_SETTINGS_PROFILE", "isolated").strip().lower()
+    if value not in _CLAUDE_SETTINGS_PROFILES:
+        raise ConfigurationError(
+            f"NEXUS_CLAUDE_SETTINGS_PROFILE must be one of {_CLAUDE_SETTINGS_PROFILES}",
+            config_key="NEXUS_CLAUDE_SETTINGS_PROFILE",
+        )
+    return cast("ClaudeSettingsProfile", value)
 
 
 def get_global_output_limit() -> int:
