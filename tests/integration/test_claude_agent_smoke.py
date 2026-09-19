@@ -169,7 +169,8 @@ async def test_sandbox_failure_is_closed(tmp_path, monkeypatch):
         and (
             "unavailable" in _tool_result_text(result.content).casefold()
             or "failed" in _tool_result_text(result.content).casefold()
+            or "operation not permitted" in _tool_result_text(result.content).casefold()
         )
         for result in failures
-    ), "Bash did not report sandbox unavailability"
+    ), "Bash did not report sandbox failure"
     assert not marker.exists(), "Bash ran unsandboxed: failIfUnavailable is not enforced"
