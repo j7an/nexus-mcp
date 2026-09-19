@@ -8,9 +8,12 @@ Tests the full MCP stack that unit/pipeline tests miss:
 - task=True background task lifecycle (Docket memory://)
 - Schema validation at the protocol boundary
 
-Mock boundary: asyncio.create_subprocess_exec only.
+Mock boundary: asyncio.create_subprocess_exec. The Windows timeout test also
+simulates OS tree termination for its synthetic process ID.
 All layers above run for real, including JSON-RPC dispatch.
 """
+
+import os
 
 import pytest
 from fastmcp.exceptions import ToolError
@@ -484,14 +487,24 @@ class TestToolTimeout:
             await mcp_client.call_tool("prompt", {"cli": "codex", "prompt": "test"})
 
     @pytest.mark.parametrize("protocol_mode", ["auto"], indirect=True)
-    async def test_task_worker_enforces_subprocess_timeout(self, mock_subprocess, mcp_client):
-        """A modern task call still stops a slow subprocess at Nexus's request timeout."""
-        mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE, delay=5.0)
+    async def test_task_worker_timeout_cleans_up_slow_subprocess(
+        self, mock_subprocess, mcp_client, monkeypatch
+    ):
+        """A modern task call fails on timeout and requests process cleanup."""
+        process = create_mock_process(stdout=CODEX_NDJSON_RESPONSE, delay=5.0)
+        mock_subprocess.return_value = process
+        if os.name == "nt":
+            # The mock PID is synthetic; taskkill cannot prove it stopped on Windows.
+            monkeypatch.setattr(
+                "nexus_mcp.process._terminate_windows_tree", lambda pid: pid == process.pid
+            )
 
         with pytest.raises(ToolError, match="timed out"):
             await mcp_client.call_tool("prompt", {"cli": "codex", "prompt": "test", "timeout": 1})
 
         assert mock_subprocess.await_count == 1
+        process.communicate.assert_awaited_once()
+        process.wait.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
