@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Nexus MCP is a Python 3.13+ MCP server that enables AI models to invoke agent
+Nexus MCP is a Python 3.12+ MCP server that enables AI models to invoke agent
 runners and integrations (Claude Code, Codex, OpenCode, OpenCode server) as tools.
 Built with FastMCP 3.1+.
 
@@ -77,7 +77,7 @@ uv run pre-commit run --all-files
 
 ## Python Code Style
 
-### Modern Syntax (Python 3.13+)
+### Modern Syntax (Python 3.12+)
 
 - Use `str | None` instead of `Optional[str]`.
 - Use `type` aliases instead of `TypeAlias`.

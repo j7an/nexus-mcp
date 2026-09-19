@@ -29,11 +29,12 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries",
     "Typing :: Typed",
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "fastmcp[tasks]>=3.4.7,<4.0",
     "httpx>=0.28.1,<0.29",
@@ -71,7 +72,7 @@ dev = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py313"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [
@@ -113,7 +114,7 @@ select = [
 quote-style = "double"
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
