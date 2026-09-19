@@ -5,7 +5,7 @@ import json
 import os
 import sqlite3
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 
 import pytest
 
@@ -22,7 +22,7 @@ _START_TIMEOUT = 10.0
 
 def _job_rows(*columns: str) -> list[tuple[object, ...]]:
     database_path = os.environ["NEXUS_DB_PATH"]
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection, connection:
         query = f"SELECT {', '.join(columns)} FROM jobs ORDER BY created_at_ms"
         return connection.execute(query).fetchall()
 

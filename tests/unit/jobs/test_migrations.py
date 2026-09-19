@@ -316,7 +316,7 @@ async def test_initial_migration_creates_complete_schema(tmp_path):
     database_path = tmp_path / "schema.sqlite3"
     await create_database(database_path)
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection, connection:
         table_sql = {
             row[0]: normalize_sql(row[1])
             for row in connection.execute(
@@ -365,7 +365,7 @@ async def test_required_check_constraints_reject_invalid_values(tmp_path):
     database_path = tmp_path / "checks.sqlite3"
     await create_database(database_path)
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection, connection:
         connection.execute(
             "INSERT INTO workspaces VALUES (?, ?, NULL, NULL, ?, ?)",
             ("workspace", "/tmp/workspace", 1, 1),
@@ -414,7 +414,7 @@ async def test_foreign_keys_retain_referenced_execution_rows(tmp_path):
     database_path = tmp_path / "retained.sqlite3"
     await create_database(database_path)
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection, connection:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(
             "INSERT INTO workspaces VALUES (?, ?, NULL, NULL, ?, ?)",
@@ -447,7 +447,7 @@ async def test_job_event_provider_reference_rejects_an_unknown_identity(tmp_path
     database_path = tmp_path / "event-reference.sqlite3"
     await create_database(database_path)
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection, connection:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(
             "INSERT INTO workspaces VALUES (?, ?, NULL, NULL, ?, ?)",
@@ -472,7 +472,7 @@ async def test_nonterminal_session_index_uses_exact_partial_scope(tmp_path):
     database_path = tmp_path / "nonterminal.sqlite3"
     await create_database(database_path)
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection, connection:
         connection.execute(
             "INSERT INTO workspaces VALUES (?, ?, NULL, NULL, ?, ?)",
             ("workspace", "/tmp/workspace", 1, 1),
@@ -493,7 +493,7 @@ async def test_idempotency_scope_includes_nullable_source_session(tmp_path):
     database_path = tmp_path / "idempotency.sqlite3"
     await create_database(database_path)
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection, connection:
         connection.execute(
             "INSERT INTO workspaces VALUES (?, ?, NULL, NULL, ?, ?)",
             ("workspace", "/tmp/workspace", 1, 1),
@@ -575,11 +575,11 @@ async def test_repeat_open_does_not_reapply_migration(tmp_path):
     store = SQLiteJobStore(database_path)
 
     await store.open()
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection, connection:
         before = connection.execute("SELECT * FROM schema_migrations").fetchall()
     await store.open()
     await store.close()
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection, connection:
         after = connection.execute("SELECT * FROM schema_migrations").fetchall()
 
     assert after == before
@@ -590,7 +590,7 @@ async def test_checksum_mismatch_fails_closed(tmp_path):
     """Changed migration contents cannot silently reinterpret an existing schema."""
     database_path = tmp_path / "checksum.sqlite3"
     await create_database(database_path)
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection, connection:
         connection.execute("UPDATE schema_migrations SET checksum = 'tampered'")
 
     store = SQLiteJobStore(database_path)
@@ -603,7 +603,7 @@ async def test_newer_schema_fails_closed(tmp_path):
     """Code must not open a database containing an unknown future migration."""
     database_path = tmp_path / "newer.sqlite3"
     await create_database(database_path)
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection, connection:
         connection.execute("INSERT INTO schema_migrations VALUES ('v9999_future', 'future', 9999)")
 
     store = SQLiteJobStore(database_path)
