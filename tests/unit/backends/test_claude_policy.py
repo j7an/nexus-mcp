@@ -1,7 +1,10 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from claude_agent_sdk import PermissionResultAllow, ToolPermissionContext
 
+from nexus_mcp.backends.claude_agent import ClaudeAgentBackend
 from nexus_mcp.backends.claude_policy import READ_TOOLS, build_options, decide
 from nexus_mcp.exceptions import ConfigurationError
 
@@ -16,7 +19,13 @@ async def _never_called(*_args):  # pragma: no cover - placeholder callback
 @pytest.mark.parametrize("approval", APPROVALS)
 @pytest.mark.parametrize(
     ("tool", "expected"),
-    [("Read", "allow"), ("Write", "deny"), ("Bash", "deny"), ("WebFetch", "deny")],
+    [
+        ("Read", "allow"),
+        ("Write", "deny"),
+        ("Bash", "deny"),
+        ("WebFetch", "deny"),
+        ("Unknown", "deny"),
+    ],
 )
 def test_read_only_never_asks(tmp_path, tool, expected, approval):
     tool_input = {"file_path": str(tmp_path / "a.txt")}
@@ -24,6 +33,35 @@ def test_read_only_never_asks(tmp_path, tool, expected, approval):
         decide(tool, tool_input, sandbox="read_only", approval=approval, workspace=tmp_path)
         == expected
     )
+
+
+@pytest.mark.parametrize("review", [False, True])
+def test_structured_output_is_allowed_for_read_only_and_review_turns(tmp_path, review):
+    """A missing StructuredOutput exception blocks schema turns before output is returned."""
+    assert (
+        decide(
+            "StructuredOutput",
+            {},
+            sandbox="read_only",
+            approval="never",
+            workspace=tmp_path,
+            review=review,
+        )
+        == "allow"
+    )
+
+
+async def test_structured_output_policy_allows_sdk_permission_callbacks(tmp_path):
+    context = SimpleNamespace(workspace=SimpleNamespace(canonical_path=tmp_path))
+    backend = object.__new__(ClaudeAgentBackend)
+    can_use_tool = backend._permission_handler(context, "read_only", "never", review=True)
+    pre_tool_use = ClaudeAgentBackend._pre_tool_use(context, "read_only", "never", review=True)
+
+    result = await can_use_tool("StructuredOutput", {}, ToolPermissionContext())
+    gate = await pre_tool_use({"tool_name": "StructuredOutput", "tool_input": {}}, "tool-use", None)
+
+    assert isinstance(result, PermissionResultAllow)
+    assert gate == {}
 
 
 @pytest.mark.parametrize("approval", APPROVALS)

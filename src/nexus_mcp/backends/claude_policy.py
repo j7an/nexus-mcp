@@ -28,6 +28,7 @@ type Decision = Literal["allow", "ask", "deny"]
 READ_TOOLS = frozenset({"Read", "Glob", "Grep"})
 WRITE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
 REVIEW_GIT_SUBCOMMANDS = frozenset({"diff", "log", "show"})
+_SDK_INTERNAL_OUTPUT_TOOL = "StructuredOutput"
 _PLAIN_COMMAND = re.compile(r"[A-Za-z0-9 _./:=@~^,+-]+")
 _HELPERS_OFF = frozenset({"--no-ext-diff", "--no-textconv"})
 _HELPERS_ON = frozenset({"--ext-diff", "--textconv"})
@@ -72,7 +73,7 @@ def decide(
     review: bool = False,
 ) -> Decision:
     """Return the single authoritative permission decision for one Claude tool call."""
-    if sandbox == "danger_full_access" or tool in READ_TOOLS:
+    if sandbox == "danger_full_access" or tool in READ_TOOLS or tool == _SDK_INTERNAL_OUTPUT_TOOL:
         return "allow"
     if review and tool == "Bash" and _is_read_only_git(tool_input):
         return "allow"
