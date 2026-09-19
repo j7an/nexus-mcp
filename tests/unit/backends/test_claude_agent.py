@@ -291,6 +291,58 @@ async def test_cancel_interrupts_then_drains_then_raises(tmp_path):
     assert created[0].closed
 
 
+async def test_cancel_wins_when_stream_and_control_complete_together(tmp_path):
+    created: list[FakeClient] = []
+    context = FakeContext(workspace_path=tmp_path)
+    context.control.put_nowait(CancelRequested())
+    backend = ClaudeAgentBackend(factory([result()], created))
+
+    with pytest.raises(asyncio.CancelledError):
+        await backend.execute(TurnOperation(prompt="x"), context)
+    assert created[0].interrupted
+    assert created[0].drained
+
+
+async def test_outer_cancellation_waits_for_child_cleanup_before_client_exit(tmp_path):
+    started = asyncio.Event()
+    control_started = asyncio.Event()
+    finish = asyncio.Event()
+    order: list[str] = []
+
+    class OrderingContext(FakeContext):
+        async def wait_for_control(self):
+            control_started.set()
+            try:
+                return await super().wait_for_control()
+            finally:
+                order.append("control_finished")
+
+    class OrderingClient(FakeClient):
+        async def receive_response(self):
+            started.set()
+            try:
+                await finish.wait()
+                yield result()
+            finally:
+                order.append("drain_finished")
+
+        async def __aexit__(self, *_exc: object) -> bool:
+            order.append("client_exited")
+            return await super().__aexit__(*_exc)
+
+    backend = ClaudeAgentBackend(lambda options: OrderingClient(options, []))
+    task = asyncio.create_task(
+        backend.execute(TurnOperation(prompt="x"), OrderingContext(workspace_path=tmp_path))
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+    await asyncio.wait_for(control_started.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert set(order) == {"drain_finished", "control_finished", "client_exited"}
+    assert order[-1] == "client_exited"
+
+
 def _ask(tool, tool_input, outcomes, **permission):
     async def step(client):
         outcomes.append(
@@ -323,10 +375,51 @@ async def test_permission_ask_grant_carries_no_tool_body(tmp_path, monkeypatch):
     )
     request = context.input_requests[0]
     assert isinstance(request, PermissionRequest)
-    assert request.prompt == "Claude wants to write /etc/outside.txt"
+    assert request.prompt == "Claude wants to use Write"
     assert request.requested == frozenset({"Write:/etc/outside.txt"})
     assert secret not in request.model_dump_json()
     assert isinstance(outcomes[0], PermissionResultAllow)
+
+
+async def test_permission_request_does_not_persist_opaque_sdk_context(tmp_path, monkeypatch):
+    monkeypatch.setattr("sys.platform", "linux")
+    secret = "TOP-SECRET-BODY"
+    context = FakeContext(workspace_path=tmp_path, resolved_config=_write_config("on_request"))
+    context.input_response = PermissionResponse()
+    await ClaudeAgentBackend(
+        factory(
+            [
+                _ask(
+                    "Write",
+                    {"file_path": "/etc/outside.txt", "content": secret},
+                    [],
+                    title=f"write {secret}",
+                    blocked_path=f"blocked {secret}",
+                    decision_reason=f"reason {secret}",
+                ),
+                result(),
+            ],
+            [],
+        )
+    ).execute(TurnOperation(prompt="x"), context)
+    [request] = context.input_requests
+    assert request.prompt == "Claude wants to use Write"
+    assert request.risk == "Nexus sandbox policy requires approval"
+    assert request.requested == frozenset({"Write:/etc/outside.txt"})
+    assert secret not in request.model_dump_json()
+
+
+async def test_permission_scope_too_long_is_denied_without_request(tmp_path, monkeypatch):
+    monkeypatch.setattr("sys.platform", "linux")
+    context = FakeContext(workspace_path=tmp_path, resolved_config=_write_config("on_request"))
+    outcomes: list = []
+    outside = "/etc/" + "/".join("x" * 100 for _ in range(25))
+    context.input_response = PermissionResponse(granted=frozenset({f"Write:{outside}"[:2048]}))
+    await ClaudeAgentBackend(
+        factory([_ask("Write", {"file_path": outside}, outcomes), result()], [])
+    ).execute(TurnOperation(prompt="x"), context)
+    assert context.input_requests == []
+    assert isinstance(outcomes[0], PermissionResultDeny)
 
 
 async def test_notebook_permission_scopes_actual_notebook_path(tmp_path, monkeypatch):

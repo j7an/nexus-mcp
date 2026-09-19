@@ -300,6 +300,7 @@ class ClaudeAgentBackend:
             finally:
                 if not draining.done():
                     draining.cancel()
+                await asyncio.gather(draining, return_exceptions=True)
         if not finals:
             raise _failure("outcome_unknown", "Claude ended without a result", "reconcile_required")
         return finals[-1]
@@ -312,17 +313,20 @@ class ClaudeAgentBackend:
         while True:
             control = asyncio.create_task(context.wait_for_control())
             try:
-                await asyncio.wait({draining, control}, return_when=asyncio.FIRST_COMPLETED)
+                done, _ = await asyncio.wait(
+                    {draining, control}, return_when=asyncio.FIRST_COMPLETED
+                )
             finally:
                 if not control.done():
                     control.cancel()
-            if draining.done():
-                draining.result()
-                return
-            if isinstance(control.result(), CancelRequested):
+                await asyncio.gather(control, return_exceptions=True)
+            if control in done and isinstance(control.result(), CancelRequested):
                 await client.interrupt()
                 await draining
                 raise asyncio.CancelledError
+            if draining.done():
+                draining.result()
+                return
 
     async def _translate(
         self,
@@ -411,6 +415,7 @@ class ClaudeAgentBackend:
         async def handler(
             tool: str, tool_input: dict[str, Any], permission: ToolPermissionContext
         ) -> PermissionResultAllow | PermissionResultDeny:
+            del permission
             verdict = decide(
                 tool,
                 tool_input,
@@ -425,12 +430,13 @@ class ClaudeAgentBackend:
                 return PermissionResultDeny(message="Denied by Nexus sandbox policy")
             path = tool_input.get("notebook_path" if tool == "NotebookEdit" else "file_path")
             scope = f"{tool}:{path}" if isinstance(path, str) and path else tool
-            risk = permission.blocked_path or permission.decision_reason
+            if len(scope) > 2048:
+                return PermissionResultDeny(message="Permission scope exceeds Nexus limit")
             response = await context.request_input(
                 PermissionRequest(
-                    prompt=(permission.title or f"Claude wants to use {tool}")[:8192],
-                    risk=None if not risk else risk[:4096],
-                    requested=frozenset({scope[:2048]}),
+                    prompt=f"Claude wants to use {tool}",
+                    risk="Nexus sandbox policy requires approval",
+                    requested=frozenset({scope}),
                 )
             )
             if getattr(response, "granted", None):
