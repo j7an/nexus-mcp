@@ -159,7 +159,7 @@ All `env` keys are optional — see [Configuration](#configuration) for the full
 <summary><h3>Setup for Development</h3></summary>
 
 **Prerequisites:**
-- **Python 3.13+** ([download](https://www.python.org/downloads/))
+- **Python 3.12+** ([download](https://www.python.org/downloads/))
 - **uv** dependency manager ([install guide](https://github.com/astral-sh/uv))
   ```bash
   curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -648,7 +648,7 @@ uv sync                       # Sync environment after changes
 - **Pytest:** `asyncio_mode = "auto"`, no `@pytest.mark.asyncio` needed — `pyproject.toml → [tool.pytest.ini_options]`
 - **Pre-commit:** ruff-check, ruff-format, mypy, trailing-whitespace, end-of-file-fixer — `.pre-commit-config.yaml`
 
-### Python 3.13+ Syntax
+### Python 3.12+ Syntax
 
 - `type` keyword for type aliases: `type AgentName = str`
 - Union syntax: `str | None` (not `Optional[str]`)
