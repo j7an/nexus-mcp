@@ -13,8 +13,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastmcp import Context
-from mcp.shared.exceptions import McpError
-from mcp.types import ErrorData
+from mcp.shared.exceptions import MCPError
 
 from nexus_mcp.runners.factory import RunnerFactory
 from tests.fakes import FakeRunner
@@ -82,7 +81,7 @@ def ctx() -> AsyncMock:
     mock.get_state.return_value = None  # simulate empty session state
     # By default, simulate a client that does not support elicitation.
     # Tests that need elicitation should configure mock.elicit explicitly.
-    mock.elicit.side_effect = McpError(ErrorData(code=-32600, message="not supported"))
+    mock.elicit.side_effect = MCPError(code=-32600, message="not supported")
     return mock
 
 

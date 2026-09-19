@@ -735,38 +735,38 @@ _tool_timeout = get_tool_timeout()
 # Annotations communicate behavioral hints to MCP clients (e.g. auto-approval decisions).
 _EXEC_ANNOTATIONS = ToolAnnotations(
     title="Prompt CLI Agent",
-    readOnlyHint=False,
-    destructiveHint=True,
-    idempotentHint=False,
-    openWorldHint=True,
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=False,
+    open_world_hint=True,
 )
 _BATCH_EXEC_ANNOTATIONS = ToolAnnotations(
     title="Batch Prompt CLI Agents",
-    readOnlyHint=False,
-    destructiveHint=True,
-    idempotentHint=False,
-    openWorldHint=True,
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=False,
+    open_world_hint=True,
 )
 _SET_PREFS_ANNOTATIONS = ToolAnnotations(
     title="Set Session Preferences",
-    readOnlyHint=False,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=False,
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=True,
+    open_world_hint=False,
 )
 _CLEAR_PREFS_ANNOTATIONS = ToolAnnotations(
     title="Clear Session Preferences",
-    readOnlyHint=False,
-    destructiveHint=True,
-    idempotentHint=True,
-    openWorldHint=False,
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=True,
+    open_world_hint=False,
 )
 _SET_TIERS_ANNOTATIONS = ToolAnnotations(
     title="Set Model Tiers",
-    readOnlyHint=False,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=False,
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=True,
+    open_world_hint=False,
 )
 mcp.tool(
     task=True,
@@ -802,10 +802,10 @@ mcp.tool(
 register_job_tools(mcp)
 _CONFIG_OC_ANNOTATIONS = ToolAnnotations(
     title="OpenCode Configuration",
-    readOnlyHint=False,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=True,
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=True,
+    open_world_hint=True,
 )
 
 mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_set_provider_auth)

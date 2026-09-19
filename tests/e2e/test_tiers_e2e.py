@@ -28,9 +28,9 @@ class TestTierToolAnnotations:
         tools = await mcp_client.list_tools()
         tool = next(t for t in tools if t.name == "set_model_tiers")
         assert tool.annotations is not None
-        assert tool.annotations.readOnlyHint is False
-        assert tool.annotations.destructiveHint is False
-        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.read_only_hint is False
+        assert tool.annotations.destructive_hint is False
+        assert tool.annotations.idempotent_hint is True
         assert tool.annotations.title == "Set Model Tiers"
 
 

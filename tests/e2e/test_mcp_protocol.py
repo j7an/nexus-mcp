@@ -62,7 +62,7 @@ class TestToolDiscovery:
         """prompt tool schema requires 'prompt'; 'cli' is optional (elicitation)."""
         tools = await mcp_client.list_tools()
         prompt_tool = next(t for t in tools if t.name == "prompt")
-        schema = prompt_tool.inputSchema
+        schema = prompt_tool.input_schema
         assert schema is not None
         required = schema.get("required", [])
         assert "prompt" in required
@@ -74,7 +74,7 @@ class TestToolDiscovery:
         """batch_prompt tool schema requires 'tasks' as an array parameter."""
         tools = await mcp_client.list_tools()
         batch_tool = next(t for t in tools if t.name == "batch_prompt")
-        schema = batch_tool.inputSchema
+        schema = batch_tool.input_schema
         assert schema is not None
         assert "tasks" in schema.get("required", [])
         assert schema["properties"]["tasks"]["type"] == "array"
@@ -101,30 +101,30 @@ class TestToolAnnotations:
         for name in ("prompt", "batch_prompt"):
             tool = next(t for t in tools if t.name == name)
             assert tool.annotations is not None, f"{name} missing annotations"
-            assert tool.annotations.readOnlyHint is False
-            assert tool.annotations.destructiveHint is True
-            assert tool.annotations.idempotentHint is False
-            assert tool.annotations.openWorldHint is True
+            assert tool.annotations.read_only_hint is False
+            assert tool.annotations.destructive_hint is True
+            assert tool.annotations.idempotent_hint is False
+            assert tool.annotations.open_world_hint is True
 
     async def test_set_preferences_is_idempotent_non_destructive(self, mcp_client):
         """set_preferences merges state (non-destructive) and is idempotent."""
         tools = await mcp_client.list_tools()
         tool = next(t for t in tools if t.name == "set_preferences")
         assert tool.annotations is not None
-        assert tool.annotations.readOnlyHint is False
-        assert tool.annotations.destructiveHint is False
-        assert tool.annotations.idempotentHint is True
-        assert tool.annotations.openWorldHint is False
+        assert tool.annotations.read_only_hint is False
+        assert tool.annotations.destructive_hint is False
+        assert tool.annotations.idempotent_hint is True
+        assert tool.annotations.open_world_hint is False
 
     async def test_clear_preferences_is_destructive_and_idempotent(self, mcp_client):
         """clear_preferences erases all state (destructive) but clearing twice is the same."""
         tools = await mcp_client.list_tools()
         tool = next(t for t in tools if t.name == "clear_preferences")
         assert tool.annotations is not None
-        assert tool.annotations.readOnlyHint is False
-        assert tool.annotations.destructiveHint is True
-        assert tool.annotations.idempotentHint is True
-        assert tool.annotations.openWorldHint is False
+        assert tool.annotations.read_only_hint is False
+        assert tool.annotations.destructive_hint is True
+        assert tool.annotations.idempotent_hint is True
+        assert tool.annotations.open_world_hint is False
 
     async def test_core_tools_have_titles(self, mcp_client):
         """Core tools have human-readable titles set via annotations."""

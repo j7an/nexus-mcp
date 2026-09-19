@@ -10,8 +10,7 @@ from fastmcp.server.elicitation import (
     CancelledElicitation,
     DeclinedElicitation,
 )
-from mcp.shared.exceptions import McpError
-from mcp.types import ErrorData
+from mcp.shared.exceptions import MCPError
 
 from nexus_mcp.elicitation import ElicitationGuard
 from nexus_mcp.types import AgentTask, SessionPreferences
@@ -63,7 +62,7 @@ class TestShortCircuit:
     async def test_unsupported_client_skips_silently(
         self, mock_ctx: AsyncMock, installed_clis: list[str]
     ) -> None:
-        mock_ctx.elicit.side_effect = McpError(ErrorData(code=-32600, message="not supported"))
+        mock_ctx.elicit.side_effect = MCPError(code=-32600, message="not supported")
         guard = ElicitationGuard(mock_ctx, installed_clis)
         with pytest.raises(ToolError):
             await guard.check_prompt(

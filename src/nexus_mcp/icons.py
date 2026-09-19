@@ -47,13 +47,13 @@ _SETTINGS_B64 = (
 )
 
 SERVER_ICONS: list[Icon] = [
-    Icon(src=f"{_PREFIX}{_WORKFLOW_B64}", mimeType=_MIME),
+    Icon(src=f"{_PREFIX}{_WORKFLOW_B64}", mime_type=_MIME),
 ]
 
 TOOL_EXEC_ICONS: list[Icon] = [
-    Icon(src=f"{_PREFIX}{_TERMINAL_B64}", mimeType=_MIME),
+    Icon(src=f"{_PREFIX}{_TERMINAL_B64}", mime_type=_MIME),
 ]
 
 TOOL_CONFIG_ICONS: list[Icon] = [
-    Icon(src=f"{_PREFIX}{_SETTINGS_B64}", mimeType=_MIME),
+    Icon(src=f"{_PREFIX}{_SETTINGS_B64}", mime_type=_MIME),
 ]

@@ -27,8 +27,6 @@ from nexus_mcp.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
 
-_RESOURCE_ANNOTATIONS = {"readOnlyHint": True, "idempotentHint": True}
-
 _TOOL_GROUPS = [
     {
         "tag": "configuration",
@@ -224,7 +222,6 @@ def register_opencode_status_resource(mcp: FastMCP) -> None:
     mcp.resource(
         "nexus://opencode",
         mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
     )(get_opencode_status)
 
 
@@ -233,60 +230,48 @@ def register_opencode_data_resources(mcp: FastMCP) -> None:
     mcp.resource(
         "nexus://opencode/providers",
         mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
     )(get_opencode_providers)
     mcp.resource(
         "nexus://opencode/providers/auth",
         mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
     )(get_opencode_providers_auth)
     mcp.resource(
         "nexus://opencode/config",
         mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
     )(get_opencode_config)
     mcp.resource(
         "nexus://opencode/sessions",
         mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
     )(get_opencode_sessions)
     mcp.resource(
         "nexus://opencode/sessions/status",
         mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
     )(get_opencode_sessions_status)
     mcp.resource(
         "nexus://opencode/permissions",
         mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
     )(get_opencode_permissions)
     mcp.resource(
         "nexus://opencode/questions",
         mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
     )(get_opencode_questions)
     mcp.resource(
         "nexus://opencode/session/{session_id}/todo",
         mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
     )(get_session_todo)
     mcp.resource(
         "nexus://opencode/session/{session_id}/messages",
         mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
     )(get_session_messages)
     mcp.resource(
         "nexus://opencode/session/{session_id}/children",
         mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
     )(get_session_children)
     mcp.resource(
         "nexus://opencode/session/{session_id}/diff",
         mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
     )(get_session_diff)
     mcp.resource(
         "nexus://opencode/session/{session_id}/message/{message_id}",
         mime_type="application/json",
-        annotations=_RESOURCE_ANNOTATIONS,
     )(get_session_message)

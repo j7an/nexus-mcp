@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 import mcp.types as mt
 import pytest
 from fastmcp.exceptions import ToolError
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools import ToolResult
 from pydantic import ValidationError
 
 from nexus_mcp.correlation import correlation_id

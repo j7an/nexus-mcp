@@ -26,8 +26,6 @@ from nexus_mcp.tiers import get_model_tier
 
 logger = logging.getLogger(__name__)
 
-_RESOURCE_ANNOTATIONS = {"readOnlyHint": True, "idempotentHint": True}
-
 
 def _build_runner_info(
     cli_name: str,
@@ -183,18 +181,8 @@ def register_resources(mcp: FastMCP) -> None:
 
     Called from server.py after tool registration.
     """
-    mcp.resource(
-        "nexus://runners", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS
-    )(get_all_runners)
-    mcp.resource(
-        "nexus://runners/{cli}", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS
-    )(get_runner)
-    mcp.resource("nexus://config", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS)(
-        get_config
-    )
-    mcp.resource(
-        "nexus://preferences", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS
-    )(get_preferences_resource)
-    mcp.resource("nexus://tiers", mime_type="application/json", annotations=_RESOURCE_ANNOTATIONS)(
-        get_tiers_resource
-    )
+    mcp.resource("nexus://runners", mime_type="application/json")(get_all_runners)
+    mcp.resource("nexus://runners/{cli}", mime_type="application/json")(get_runner)
+    mcp.resource("nexus://config", mime_type="application/json")(get_config)
+    mcp.resource("nexus://preferences", mime_type="application/json")(get_preferences_resource)
+    mcp.resource("nexus://tiers", mime_type="application/json")(get_tiers_resource)

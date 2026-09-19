@@ -11,7 +11,7 @@ __all__ = ["ElicitationGuard", "ResolvedParams"]
 import dataclasses
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
@@ -20,7 +20,7 @@ from fastmcp.server.elicitation import (
     CancelledElicitation,
     DeclinedElicitation,
 )
-from mcp.shared.exceptions import McpError
+from mcp.shared.exceptions import MCPError
 
 from nexus_mcp.config import get_runner_models
 from nexus_mcp.mcp.preference_store import load_preferences, save_preferences
@@ -92,8 +92,8 @@ class ElicitationGuard:
         try:
             result = await self._ctx.elicit(message, response_type=response_type)
             ElicitationGuard._elicitation_available = True
-            return result
-        except McpError:
+            return cast("ElicitResult", result)
+        except MCPError:
             ElicitationGuard._elicitation_available = False
             logger.debug("Elicitation not supported by client — disabling for session")
             return None

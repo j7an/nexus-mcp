@@ -456,15 +456,15 @@ async def test_agent_tool_annotations_match_observation_and_mutation():
     for name in {"agent_status", "agent_result", "agent_list", "agent_backends"}:
         annotations = tools[name].annotations
         assert annotations is not None
-        assert annotations.readOnlyHint is True
-        assert annotations.destructiveHint is False
-        assert annotations.idempotentHint is True
+        assert annotations.read_only_hint is True
+        assert annotations.destructive_hint is False
+        assert annotations.idempotent_hint is True
     for name in {"agent_start", "agent_continue", "agent_fork", "agent_review", "agent_diagnose"}:
         annotations = tools[name].annotations
         assert annotations is not None
-        assert annotations.readOnlyHint is False
-        assert annotations.destructiveHint is True
-        assert annotations.idempotentHint is False
+        assert annotations.read_only_hint is False
+        assert annotations.destructive_hint is True
+        assert annotations.idempotent_hint is False
 
 
 async def test_unsupported_capability_becomes_structured_tool_error(monkeypatch):
