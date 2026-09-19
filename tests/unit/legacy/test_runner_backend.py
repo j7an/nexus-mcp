@@ -43,6 +43,7 @@ class RecordingContext:
         self.attempt = JobAttempt(job_id=self.job.job_id, attempt_number=1)
         self.workspace = make_workspace()
         self.resolved_config = resolved_config or ResolvedExecutionConfig()
+        self.session = None
         self.events: list[BackendEvent] = []
 
     async def emit(self, event: BackendEvent) -> None:

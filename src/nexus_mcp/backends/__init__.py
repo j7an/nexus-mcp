@@ -18,6 +18,7 @@ from nexus_mcp.backends.base import (
     RuntimeShutdown,
     UnknownReconciliationOutcome,
 )
+from nexus_mcp.backends.claude_agent import ClaudeAgentBackend
 from nexus_mcp.backends.manager import BackendManager
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "BackendManager",
     "CancelRequested",
     "CancelledReconciliationOutcome",
+    "ClaudeAgentBackend",
     "CompletedReconciliationOutcome",
     "ControlSignal",
     "FailedReconciliationOutcome",

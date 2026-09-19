@@ -5,8 +5,22 @@ import json
 import os
 import sqlite3
 from contextlib import closing
+from functools import partial
 
 import pytest
+
+
+@pytest.fixture
+def fake_claude_sdk(monkeypatch):
+    """Install a scripted SDK client before the server lifespan opens the runtime."""
+    from nexus_mcp.backends.claude_agent import ClaudeAgentBackend
+    from tests.unit.backends.claude_fakes import factory, result
+
+    monkeypatch.delenv("NEXUS_ENABLE_LEGACY_RUNNERS", raising=False)
+    monkeypatch.setattr(
+        "nexus_mcp.mcp.runtime.ClaudeAgentBackend",
+        partial(ClaudeAgentBackend, factory([result(structured_output={"ok": True})], [])),
+    )
 
 
 @pytest.mark.e2e
@@ -68,6 +82,44 @@ async def test_agent_start_status_and_result_round_trip(job_mcp_client, tmp_path
         "commands": [],
         "usage": {},
     }
+
+
+@pytest.mark.e2e
+async def test_claude_agent_structured_turn_round_trip(fake_claude_sdk, job_mcp_client, tmp_path):
+    """A Claude structured turn reaches agent_result through the MCP server."""
+    started = await job_mcp_client.call_tool(
+        "agent_start",
+        {
+            "workspace": {"path": str(tmp_path)},
+            "backend": "claude",
+            "prompt": "x",
+            "output_schema": {"type": "object"},
+        },
+    )
+    handle = started.structured_content
+    assert handle is not None
+
+    for _ in range(500):
+        current = await job_mcp_client.call_tool(
+            "agent_status",
+            {"workspace": {"path": str(tmp_path)}, "job_id": handle["job_id"]},
+        )
+        status = current.structured_content
+        assert status is not None
+        if status["state"] in {"completed", "failed", "cancelled"}:
+            break
+        await asyncio.sleep(0.01)
+    else:
+        pytest.fail("claude agent job did not reach a terminal state")
+
+    assert status["state"] == "completed"
+    completed = await job_mcp_client.call_tool(
+        "agent_result",
+        {"workspace": {"path": str(tmp_path)}, "job_id": handle["job_id"]},
+    )
+    payload = completed.data["result"]["payload"]
+    assert payload["kind"] == "turn"
+    assert payload["structured_output"] == {"ok": True}
 
 
 @pytest.mark.e2e
