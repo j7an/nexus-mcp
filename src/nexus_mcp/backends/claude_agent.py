@@ -12,6 +12,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    CLINotFoundError,
     PermissionResultAllow,
     PermissionResultDeny,
     ResultMessage,
@@ -22,6 +23,7 @@ from claude_agent_sdk import (
     UserMessage,
 )
 from claude_agent_sdk._cli_version import __cli_version__
+from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from nexus_mcp.backends.base import (
     BackendExecutionContext,
@@ -134,6 +136,15 @@ class ClaudeAgentBackend:
                 reason="NEXUS_CLAUDE_PATH does not point to an executable",
                 setup_guidance="Unset NEXUS_CLAUDE_PATH to use the CLI bundled with the SDK",
             )
+        if override is None:
+            try:
+                SubprocessCLITransport("", ClaudeAgentOptions())._find_cli()
+            except CLINotFoundError:
+                return BackendAvailability(
+                    available=False,
+                    reason="Claude CLI is not available",
+                    setup_guidance="Install Claude CLI or set NEXUS_CLAUDE_PATH",
+                )
         return BackendAvailability(
             available=True,
             authenticated=None,
@@ -287,7 +298,7 @@ class ClaudeAgentBackend:
         pending: dict[str, str],
     ) -> ResultMessage | None:
         session_id = getattr(message, "session_id", None)
-        if isinstance(session_id, str) and session_id and session_id not in recorded:
+        if isinstance(session_id, str) and session_id and not recorded:
             recorded.add(session_id)
             await context.record_provider_reference(
                 ProviderReference(kind=_SESSION, value=session_id)

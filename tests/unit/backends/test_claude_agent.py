@@ -51,6 +51,27 @@ async def test_availability_makes_no_auth_claim(tmp_path):
     assert availability.version is not None and availability.version.startswith("sdk ")
 
 
+async def test_availability_reports_missing_effective_cli_without_sdk_error(tmp_path, monkeypatch):
+    from claude_agent_sdk import CLINotFoundError
+    from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+
+    def missing_cli(_transport):
+        raise CLINotFoundError("SDK-secret-cli-path")
+
+    monkeypatch.setattr("nexus_mcp.backends.claude_agent.get_agent_env", lambda *_: None)
+    monkeypatch.setattr(SubprocessCLITransport, "_find_cli", missing_cli)
+
+    availability = await ClaudeAgentBackend().check_availability(
+        make_workspace(canonical_path=tmp_path)
+    )
+
+    assert availability.available is False
+    assert availability.authenticated is None
+    assert availability.reason is not None
+    assert availability.setup_guidance is not None
+    assert "SDK-secret" not in availability.model_dump_json()
+
+
 async def test_new_turn_streams_records_session_and_returns_result(tmp_path):
     created: list[FakeClient] = []
     backend = ClaudeAgentBackend(factory([text("hel"), text("lo"), result()], created))
@@ -68,6 +89,15 @@ async def test_new_turn_streams_records_session_and_returns_result(tmp_path):
     assert client.options.resume is None
     assert client.options.cwd == str(tmp_path)
     assert client.closed
+
+
+async def test_turn_records_only_first_distinct_session_id(tmp_path):
+    context = FakeContext(workspace_path=tmp_path)
+    backend = ClaudeAgentBackend(factory([text("first"), result(session_id="sid-2")], []))
+
+    await backend.execute(TurnOperation(prompt="hi"), context)
+
+    assert context.references == [ProviderReference(kind="session", value="sid-1")]
 
 
 async def test_continue_resumes_checkpoint_session(tmp_path):
