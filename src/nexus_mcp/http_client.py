@@ -10,12 +10,13 @@ httpx directly. This enables future swap to httpxyz if httpx remains stalled.
 import contextlib
 import json
 import logging
+import os
 
 import httpx
 from httpx_sse import aconnect_sse
 
 from nexus_mcp.config_resolver import get_opencode_server_auth, get_opencode_server_url
-from nexus_mcp.exceptions import RetryableError, SubprocessError
+from nexus_mcp.exceptions import ConfigurationError, RetryableError, SubprocessError
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +28,17 @@ def get_http_client() -> "OpenCodeHTTPClient":
     """Return the module-level OpenCodeHTTPClient singleton.
 
     Creates the client on first call. Subsequent calls return the same instance.
+
+    Raises:
+        ConfigurationError: If the OpenCode server password is not set.
     """
     global _client  # noqa: PLW0603
     if _client is None:
+        if os.environ.get("NEXUS_OPENCODE_SERVER_PASSWORD") is None:
+            raise ConfigurationError(
+                "OpenCode server not configured: set NEXUS_OPENCODE_SERVER_PASSWORD",
+                config_key="NEXUS_OPENCODE_SERVER_PASSWORD",
+            )
         _client = OpenCodeHTTPClient()
     return _client
 

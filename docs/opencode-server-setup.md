@@ -1,8 +1,8 @@
 # OpenCode Server Setup Guide — experimental
 
-Run an isolated OpenCode server via Docker for HTTP-based agent execution. This enables session management, file search, workspace tools, permissions, and questions — capabilities not available through the CLI subprocess runner.
+Run an isolated OpenCode server via Docker for HTTP-based agent execution. Nexus-mcp exposes a fixed OpenCode surface: configuration and compound tools, plus status and data resources.
 
-> ⚠️ **Experimental** — This integration has not been validated end-to-end by the maintainer. Expect rough edges in setup, auth, and tool exposure. The MCP tools surfaced from upstream OpenCode track the upstream project and may change without notice. Feedback and bug reports are welcome.
+> ⚠️ **Experimental** — This integration has not been validated end-to-end by the maintainer. Expect rough edges in setup and auth. Nexus-mcp's static configuration and compound tools, plus its status and data resources, are maintained independently of upstream OpenCode's tool surface. Feedback and bug reports are welcome.
 
 ## Prerequisites
 
@@ -172,7 +172,7 @@ Add the OpenCode server env vars to your MCP client config. Example for Claude C
 }
 ```
 
-When the server is configured and healthy, nexus-mcp automatically registers 38 additional tools and 18 resources for workspace operations, session management, permissions, and questions.
+Nexus-mcp always registers two OpenCode configuration tools, two compound tools, and the OpenCode status and data resources. Calls made before `NEXUS_OPENCODE_SERVER_PASSWORD` is set return an `OpenCode server not configured` error.
 
 ## Health Check
 

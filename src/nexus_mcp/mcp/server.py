@@ -58,7 +58,7 @@ from nexus_mcp.icons import SERVER_ICONS, TOOL_CONFIG_ICONS, TOOL_EXEC_ICONS
 from nexus_mcp.jobs import AgentJobService
 from nexus_mcp.labels import assign_labels
 from nexus_mcp.mcp.access import local_access_context
-from nexus_mcp.mcp.compound_tools import register_compound_tools
+from nexus_mcp.mcp.compound_tools import _get_tool_http_client, register_compound_tools
 from nexus_mcp.mcp.elicitation import ElicitationGuard
 from nexus_mcp.mcp.job_tools import register_job_tools
 from nexus_mcp.mcp.middleware import (
@@ -66,7 +66,6 @@ from nexus_mcp.mcp.middleware import (
     RequestLoggingMiddleware,
     TimingMiddleware,
 )
-from nexus_mcp.mcp.openapi_setup import setup_opencode_tools
 from nexus_mcp.mcp.opencode_resources import (
     is_opencode_server_configured,
     register_opencode_data_resources,
@@ -188,87 +187,28 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
 
 @asynccontextmanager
 async def _opencode_lifespan(server: FastMCP) -> AsyncIterator[None]:
-    """Conditionally register OpenCode tools based on server availability.
+    """Log OpenCode server state at startup and close the HTTP client on exit.
 
-    Tracks registered tools/resources and cleans them up on exit to support
-    test isolation (re-running lifespan with different configurations).
+    OpenCode tools and resources are registered statically at import time; server
+    availability is reported by the nexus://opencode resource, never by the tool set.
     """
-    # Track what we register for cleanup
-    registered_tools: list[str] = []
-    registered_resources: list[str] = []
-    registered_providers: list[object] = []  # Provider instances added to server.providers
-
-    register_opencode_status_resource(server)
-    registered_resources.append("nexus://opencode")
-
-    client_to_close = None
+    del server
+    client = None
     if is_opencode_server_configured():
         client = get_http_client()
-        client_to_close = client
-
-        server.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(
-            opencode_set_provider_auth
-        )
-        registered_tools.append("opencode_set_provider_auth")
-
-        server.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(
-            opencode_update_config
-        )
-        registered_tools.append("opencode_update_config")
-
-        healthy = await client.health_check()
-        if healthy:
-            # Track OpenAPIProvider for cleanup
-            provider_count_before = len(server.providers)
-            await setup_opencode_tools(server, client)
-            if len(server.providers) > provider_count_before:
-                # New provider was added
-                registered_providers.append(server.providers[-1])
-
-            register_compound_tools(server)
-            registered_tools.extend(["opencode_investigate", "opencode_session_review"])
-
-            register_opencode_data_resources(server)
-            registered_resources.extend(
-                [
-                    "nexus://opencode/providers",
-                    "nexus://opencode/providers/auth",
-                    "nexus://opencode/config",
-                    "nexus://opencode/sessions",
-                    "nexus://opencode/sessions/status",
-                    "nexus://opencode/permissions",
-                    "nexus://opencode/questions",
-                    "nexus://opencode/session/{session_id}/todo",
-                    "nexus://opencode/session/{session_id}/messages",
-                    "nexus://opencode/session/{session_id}/children",
-                    "nexus://opencode/session/{session_id}/diff",
-                    "nexus://opencode/session/{session_id}/message/{message_id}",
-                ]
-            )
-            logger.info("OpenCode server tools registered (server healthy)")
+        if await client.health_check():
+            logger.info("OpenCode server reachable")
         else:
-            logger.warning("OpenCode server not reachable, mutation tools only")
+            logger.warning("OpenCode server configured but not reachable")
     else:
         logger.warning("OpenCode server not configured (NEXUS_OPENCODE_SERVER_PASSWORD not set)")
 
     try:
         yield
     finally:
-        # Cleanup: remove registered tools, resources, and providers
-        lp = server._local_provider
-        for tool_name in registered_tools:
+        if client is not None:
             with contextlib.suppress(Exception):
-                lp.remove_tool(tool_name)
-        for resource_uri in registered_resources:
-            with contextlib.suppress(Exception):
-                lp.remove_resource(resource_uri)
-        for provider in registered_providers:
-            with contextlib.suppress(Exception):
-                server.providers.remove(provider)  # type: ignore[arg-type]
-
-        if client_to_close is not None:
-            with contextlib.suppress(Exception):
-                await client_to_close.close()
+                await client.close()
 
 
 mcp = FastMCP(
@@ -766,7 +706,7 @@ async def opencode_set_provider_auth(
     """Set authentication credentials for a provider."""
     if not re.fullmatch(r"[a-zA-Z0-9_-]+", provider_id):
         raise ToolError(f"Invalid provider_id: {provider_id!r}")
-    await get_http_client().put(f"/auth/{provider_id}", json=credentials)
+    await _get_tool_http_client().put(f"/auth/{provider_id}", json=credentials)
     return f"Credentials set for provider '{provider_id}'"
 
 
@@ -775,7 +715,7 @@ async def opencode_update_config(
     config: dict[str, Any],
 ) -> str:
     """Update OpenCode server configuration."""
-    data = await get_http_client().patch("/config", json=config)
+    data = await _get_tool_http_client().patch("/config", json=config)
     return _json.dumps(data, indent=2)
 
 
@@ -864,6 +804,12 @@ _CONFIG_OC_ANNOTATIONS = ToolAnnotations(
     idempotentHint=True,
     openWorldHint=True,
 )
+
+mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_set_provider_auth)
+mcp.tool(annotations=_CONFIG_OC_ANNOTATIONS, tags={"configuration"})(opencode_update_config)
+register_compound_tools(mcp)
+register_opencode_status_resource(mcp)
+register_opencode_data_resources(mcp)
 
 # Register MCP resources (read-only data endpoints).
 register_resources(mcp)
