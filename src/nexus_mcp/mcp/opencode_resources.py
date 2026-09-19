@@ -7,9 +7,11 @@ tools following the 'tools mutate, resources read' pattern.
 
 Resources:
 - nexus://opencode: Integration status + tool group overview (always registered)
-- nexus://opencode/providers: Provider list (conditional on server availability)
-- nexus://opencode/providers/auth: Auth methods (conditional)
-- nexus://opencode/config: Server configuration (conditional)
+- nexus://opencode/providers: Provider list (always registered)
+- nexus://opencode/providers/auth: Auth methods (always registered)
+- nexus://opencode/config: Server configuration (always registered)
+
+Data resources return an error when the OpenCode server is not configured.
 """
 
 import json

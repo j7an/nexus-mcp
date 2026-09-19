@@ -13,6 +13,18 @@ import re
 from typing import Any
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
+
+from nexus_mcp.exceptions import ConfigurationError
+from nexus_mcp.http_client import OpenCodeHTTPClient, get_http_client
+
+
+def _get_tool_http_client() -> OpenCodeHTTPClient:
+    """Translate missing OpenCode configuration at the MCP tool boundary."""
+    try:
+        return get_http_client()
+    except ConfigurationError as exc:
+        raise ToolError(str(exc)) from exc
 
 
 def _format_search_results(
@@ -67,9 +79,7 @@ async def opencode_investigate(
     Chains GET /find → GET /file/content for up to max_files results.
     """
     max_files = min(max(max_files, 1), 50)  # clamp to [1, 50]
-    from nexus_mcp.http_client import get_http_client
-
-    client = get_http_client()
+    client = _get_tool_http_client()
     search_results = await client.get("/find", params={"query": query})
     if not isinstance(search_results, list):
         search_results = []
@@ -93,9 +103,7 @@ async def opencode_session_review(
     """
     if not re.fullmatch(r"ses[a-zA-Z0-9_-]+", session_id):
         raise ValueError(f"Invalid session_id: {session_id!r}")
-    from nexus_mcp.http_client import get_http_client
-
-    client = get_http_client()
+    client = _get_tool_http_client()
     session = await client.get(f"/session/{session_id}")
     messages = await client.get(f"/session/{session_id}/message")
     diff = await client.get(f"/session/{session_id}/diff")
