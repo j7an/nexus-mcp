@@ -765,9 +765,22 @@ async def test_no_credential_material_leaks(tmp_path, monkeypatch):
     assert created[0].options.env == {}
 
 
-async def test_error_subtype_cannot_copy_credential_into_diagnostics(tmp_path):
-    sentinel = "sk-ant-SENTINEL-DO-NOT-LEAK"
+@pytest.mark.parametrize("sentinel", ["sk-ant-SENTINEL-DO-NOT-LEAK", "sk_ant_sentinel_123"])
+async def test_error_subtype_cannot_copy_credential_into_diagnostics(tmp_path, sentinel):
     backend = ClaudeAgentBackend(factory([result(is_error=True, subtype=sentinel)], []))
     with pytest.raises(BackendFailure) as raised:
         await backend.execute(TurnOperation(prompt="x"), FakeContext(workspace_path=tmp_path))
     assert sentinel not in raised.value.error.model_dump_json()
+
+
+@pytest.mark.parametrize("assistant_error", [None, "rate_limit"])
+async def test_invalid_api_status_cannot_leak_or_crash(tmp_path, assistant_error):
+    sentinel = "sk_ant_sentinel_123"
+    script = [result(is_error=True, api_error_status=sentinel)]
+    if assistant_error is not None:
+        script.insert(0, assistant(error=assistant_error))
+    backend = ClaudeAgentBackend(factory(script, []))
+    with pytest.raises(BackendFailure) as raised:
+        await backend.execute(TurnOperation(prompt="x"), FakeContext(workspace_path=tmp_path))
+    assert sentinel not in raised.value.error.model_dump_json()
+    assert "status" not in raised.value.error.details

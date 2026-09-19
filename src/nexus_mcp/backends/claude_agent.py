@@ -73,7 +73,15 @@ __all__ = ["ClaudeAgentBackend"]
 
 _SESSION = "session"
 _EXECUTABLE = re.compile(r"[A-Za-z0-9_./+-]{1,128}")
-_SAFE_SUBTYPE = re.compile(r"[a-z][a-z0-9_]{0,127}")
+_RESULT_SUBTYPES = frozenset(
+    {
+        "success",
+        "error_during_execution",
+        "error_max_budget_usd",
+        "error_max_structured_output_retries",
+        "error_max_turns",
+    }
+)
 
 
 def _failure(
@@ -99,9 +107,20 @@ def _classify_result(final: ResultMessage, assistant_error: str | None) -> Backe
     if not final.is_error:
         return None
     details: dict[str, str | int] = {
-        "subtype": final.subtype if _SAFE_SUBTYPE.fullmatch(final.subtype) else "unknown"
+        "subtype": (
+            final.subtype
+            if isinstance(final.subtype, str) and final.subtype in _RESULT_SUBTYPES
+            else "unknown"
+        )
     }
-    status = final.api_error_status
+    raw_status = final.api_error_status
+    status = (
+        raw_status
+        if isinstance(raw_status, int)
+        and not isinstance(raw_status, bool)
+        and 100 <= raw_status <= 599
+        else None
+    )
     if status is not None:
         details["status"] = status
     if assistant_error == "authentication_failed" or status == 401:
