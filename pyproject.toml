@@ -122,6 +122,12 @@ warn_unused_configs = true
 asyncio_mode = "auto"  # Recommended by FastMCP: eliminates need for @pytest.mark.asyncio decorators
 asyncio_default_fixture_loop_scope = "function"  # Avoids deprecation warning in pytest-asyncio 1.x (will be default in v2.0)
 testpaths = ["tests"]  # Explicit test discovery
+filterwarnings = [
+    # Fail on leaked handles such as unclosed sqlite3 connections. Leaks reported during
+    # garbage collection surface as unraisable-exception warnings, so escalate both.
+    "error::ResourceWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+]
 markers = [
     "integration: tests that call real CLI subprocesses",
     "slow: tests that take >1 second",

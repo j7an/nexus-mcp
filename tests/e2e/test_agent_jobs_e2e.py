@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -109,5 +110,5 @@ async def test_legacy_agent_continue_is_rejected_without_creating_a_fresh_job(
 
     assert continued.is_error is True
     assert json.loads(continued.content[0].text)["code"] == "unsupported_capability"
-    with sqlite3.connect(os.environ["NEXUS_DB_PATH"]) as connection:
+    with closing(sqlite3.connect(os.environ["NEXUS_DB_PATH"])) as connection, connection:
         assert connection.execute("SELECT count(*) FROM jobs").fetchone() == (1,)
