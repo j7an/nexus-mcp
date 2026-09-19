@@ -1,8 +1,11 @@
 """Opt-in smoke test against the real Claude Agent SDK. Consumes provider usage."""
 
-from contextlib import suppress
+from collections.abc import Iterable
+from shutil import which
+from typing import Any
 
 import pytest
+from claude_agent_sdk import AssistantMessage, ToolResultBlock, ToolUseBlock, UserMessage
 
 from nexus_mcp.backends.base import BackendFailure
 from nexus_mcp.backends.claude_agent import ClaudeAgentBackend
@@ -18,6 +21,32 @@ def _context(path, *, checkpoint: tuple[ProviderReference, ...] = (), **config):
         resolved_config=ResolvedExecutionConfig(model="haiku", **config),
         source_checkpoint=checkpoint,
     )
+
+
+def _tool_blocks(messages: Iterable[object]) -> Iterable[ToolUseBlock | ToolResultBlock]:
+    """Yield raw SDK tool blocks for smoke-test evidence only."""
+    for message in messages:
+        if isinstance(message, (AssistantMessage, UserMessage)) and isinstance(
+            message.content, list
+        ):
+            yield from (
+                block
+                for block in message.content
+                if isinstance(block, (ToolUseBlock, ToolResultBlock))
+            )
+
+
+def _tool_result_text(content: str | list[dict[str, Any]] | None) -> str:
+    """Extract textual diagnostics from either SDK tool-result content shape."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            item["text"]
+            for item in content
+            if isinstance(item, dict) and isinstance(item.get("text"), str)
+        )
+    return ""
 
 
 async def test_turn_resume_fork_structured(tmp_path):
@@ -68,12 +97,53 @@ async def test_workspace_write_contains_writes(tmp_path):
 
 
 async def test_sandbox_failure_is_closed(tmp_path, monkeypatch):
-    """failIfUnavailable stops the turn when the OS sandbox cannot start."""
+    """A missing OS sandbox fails after the requested Bash command reaches the SDK."""
+    touch = which("touch")
+    assert touch is not None
+
     monkeypatch.setenv("PATH", str(tmp_path))
     context = _context(tmp_path, sandbox="workspace_write", approval_policy="never")
     marker = tmp_path / "ran.txt"
-    with suppress(BackendFailure):
-        await ClaudeAgentBackend().execute(
-            TurnOperation(prompt=f"Run this exact Bash command: touch {marker}"), context
+    command = f"{touch} {marker}"
+    received: list[object] = []
+    backend = ClaudeAgentBackend()
+    translate = backend._translate
+
+    async def record_raw_message(
+        message: Any, execution_context: Any, recorded: set[str], pending: dict[str, str]
+    ) -> Any:
+        received.append(message)
+        return await translate(message, execution_context, recorded, pending)
+
+    monkeypatch.setattr(backend, "_translate", record_raw_message)
+    try:
+        await backend.execute(
+            TurnOperation(prompt=f"Run this exact Bash command: {command}"), context
         )
+    except BackendFailure as error:
+        assert error.error.code == "provider_failed"
+
+    blocks = tuple(_tool_blocks(received))
+    calls = tuple(
+        block for block in blocks if isinstance(block, ToolUseBlock) and block.name == "Bash"
+    )
+    assert any(call.input.get("command") == command for call in calls)
+    assert any(event.type == "command" for event in context.events)
+
+    call_ids = {call.id for call in calls if call.input.get("command") == command}
+    failures = (
+        block
+        for block in blocks
+        if isinstance(block, ToolResultBlock)
+        and block.tool_use_id in call_ids
+        and block.is_error is True
+    )
+    assert any(
+        "sandbox" in _tool_result_text(result.content).casefold()
+        and (
+            "unavailable" in _tool_result_text(result.content).casefold()
+            or "failed" in _tool_result_text(result.content).casefold()
+        )
+        for result in failures
+    ), "Bash did not report sandbox unavailability"
     assert not marker.exists(), "Bash ran unsandboxed: failIfUnavailable is not enforced"
