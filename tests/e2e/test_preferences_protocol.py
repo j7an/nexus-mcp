@@ -285,14 +285,12 @@ class TestCrossSessionPersistence:
             contents = await client1.read_resource("nexus://preferences")
             r1 = json.loads(contents[0].text)
             assert r1["preferences"]["execution_mode"] == "yolo"
-        mcp._lifespan_result_set = False
 
         # Session 2: should see session 1's preference
         async with Client(mcp) as client2:
             contents = await client2.read_resource("nexus://preferences")
             r2 = json.loads(contents[0].text)
             assert r2["preferences"]["execution_mode"] == "yolo"
-        mcp._lifespan_result_set = False
 
     async def test_clear_preferences_then_new_session_sees_defaults(self):
         """Clear in session 1 → session 2 sees None values."""
@@ -303,11 +301,9 @@ class TestCrossSessionPersistence:
             contents = await client1.read_resource("nexus://preferences")
             r1 = json.loads(contents[0].text)
             assert r1["preferences"]["execution_mode"] is None
-        mcp._lifespan_result_set = False
 
         # Session 2: should see defaults (cleared)
         async with Client(mcp) as client2:
             contents = await client2.read_resource("nexus://preferences")
             r2 = json.loads(contents[0].text)
             assert r2["preferences"]["execution_mode"] is None
-        mcp._lifespan_result_set = False

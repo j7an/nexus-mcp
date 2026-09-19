@@ -31,7 +31,6 @@ async def healthy_client(monkeypatch):
             async with Client(mcp) as client:
                 yield client
         finally:
-            mcp._lifespan_result_set = False
             reset_http_client()
 
 

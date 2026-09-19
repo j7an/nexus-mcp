@@ -33,7 +33,6 @@ async def _surface() -> tuple[set[str], set[str], set[str]]:
             }
             return tools, resources, templates
     finally:
-        mcp._lifespan_result_set = False
         reset_http_client()
 
 
@@ -97,7 +96,6 @@ async def test_opencode_data_resource_errors_clearly_when_unconfigured(monkeypat
             with pytest.raises(Exception, match="OpenCode server not configured"):
                 await client.read_resource("nexus://opencode/providers")
     finally:
-        mcp._lifespan_result_set = False
         reset_http_client()
 
 
@@ -108,7 +106,6 @@ async def test_tool_annotations_survive_with_camelcase_compat_disabled():
         async with Client(mcp) as client:
             tools = {tool.name: tool for tool in await client.list_tools()}
     finally:
-        mcp._lifespan_result_set = False
         reset_http_client()
 
     prompt_tool = tools["prompt"]

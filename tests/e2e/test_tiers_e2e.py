@@ -57,15 +57,9 @@ class TestTierToolRoundTrip:
 class TestTierPersistenceAcrossSessions:
     async def test_tiers_persist_across_sessions(self):
         tiers = {"gemini-2.5-flash": "quick", "gpt-5.2": "standard"}
-        try:
-            async with Client(mcp) as client1:
-                await client1.call_tool("set_model_tiers", {"tiers": tiers})
-        finally:
-            mcp._lifespan_result_set = False
+        async with Client(mcp) as client1:
+            await client1.call_tool("set_model_tiers", {"tiers": tiers})
 
-        try:
-            async with Client(mcp) as client2:
-                contents = await client2.read_resource("nexus://tiers")
-                assert json.loads(contents[0].text) == tiers
-        finally:
-            mcp._lifespan_result_set = False
+        async with Client(mcp) as client2:
+            contents = await client2.read_resource("nexus://tiers")
+            assert json.loads(contents[0].text) == tiers

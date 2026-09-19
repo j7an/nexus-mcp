@@ -14,6 +14,7 @@ All layers above run for real, including JSON-RPC dispatch.
 
 import pytest
 from fastmcp.exceptions import ToolError
+from fastmcp_tasks import call_tool_task
 
 from nexus_mcp.server import mcp
 from tests.fixtures import (
@@ -207,22 +208,36 @@ class TestPromptProtocol:
         assert strip_runner_header(result.data) == "hello from e2e"
         assert mock_subprocess.await_count == 0
 
+    @pytest.mark.parametrize("protocol_mode", ["auto"], indirect=True)
     async def test_task_true_lifecycle(self, mock_subprocess, job_mcp_client, fake_runner_registry):
-        """task=True returns a ToolTask; awaiting it resolves to the final output."""
-        task = await job_mcp_client.call_tool(
+        """A task handle resolves to the final output."""
+        task = await call_tool_task(
+            job_mcp_client,
             "prompt",
             {
                 "cli": fake_runner_registry,
                 "prompt": "background task",
                 "context": {"fake_output": "task result"},
             },
-            task=True,
         )
-        result = await task
+        result = await task.result()
 
         assert result.is_error is False
         assert strip_runner_header(result.data) == "task result"
         assert mock_subprocess.await_count == 0
+
+    @pytest.mark.parametrize("protocol_mode", ["auto"], indirect=True)
+    async def test_same_tool_sync_and_task_paths_agree(self, job_mcp_client, fake_runner_registry):
+        args = {
+            "cli": fake_runner_registry,
+            "prompt": "parity",
+            "context": {"fake_output": "same"},
+        }
+        sync_result = await job_mcp_client.call_tool("prompt", args)
+        task = await call_tool_task(job_mcp_client, "prompt", args)
+        task_result = await task.result()
+        assert strip_runner_header(sync_result.data) == "same"
+        assert strip_runner_header(task_result.data) == "same"
 
     async def test_model_parameter_reaches_subprocess(self, mock_subprocess, mcp_client):
         """model parameter survives JSON-RPC round-trip and appears in subprocess args."""
@@ -397,14 +412,15 @@ class TestBatchPromptProtocol:
         labels = {r.label for r in result.data.results}
         assert labels == {"my-task-a", "my-task-b"}
 
+    @pytest.mark.parametrize("protocol_mode", ["auto"], indirect=True)
     async def test_task_true_docket_coercion(self, job_mcp_client, fake_runner_registry):
         """batch_prompt with task=True handles dict→AgentTask coercion after Docket."""
-        task = await job_mcp_client.call_tool(
+        task = await call_tool_task(
+            job_mcp_client,
             "batch_prompt",
             {"tasks": [{"cli": fake_runner_registry, "prompt": "docket test"}]},
-            task=True,
         )
-        result = await task
+        result = await task.result()
 
         assert result.is_error is False
         assert result.data.succeeded == 1
@@ -451,6 +467,8 @@ class TestToolTimeout:
     + server rebuild.
     """
 
+    # FunctionTool.timeout applies to legacy foreground calls; modern calls use task workers.
+    @pytest.mark.parametrize("protocol_mode", ["legacy"], indirect=True)
     async def test_hung_tool_times_out(self, mock_subprocess, mcp_client, monkeypatch):
         """A hung subprocess is cancelled by the tool-level anyio.fail_after().
 
@@ -464,6 +482,16 @@ class TestToolTimeout:
         mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE, delay=5.0)
         with pytest.raises(ToolError, match="timed out after 0\\.5s"):
             await mcp_client.call_tool("prompt", {"cli": "codex", "prompt": "test"})
+
+    @pytest.mark.parametrize("protocol_mode", ["auto"], indirect=True)
+    async def test_task_worker_enforces_subprocess_timeout(self, mock_subprocess, mcp_client):
+        """A modern task call still stops a slow subprocess at Nexus's request timeout."""
+        mock_subprocess.return_value = create_mock_process(stdout=CODEX_NDJSON_RESPONSE, delay=5.0)
+
+        with pytest.raises(ToolError, match="timed out"):
+            await mcp_client.call_tool("prompt", {"cli": "codex", "prompt": "test", "timeout": 1})
+
+        assert mock_subprocess.await_count == 1
 
 
 # ---------------------------------------------------------------------------

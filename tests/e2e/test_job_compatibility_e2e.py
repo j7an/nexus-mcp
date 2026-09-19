@@ -8,6 +8,7 @@ import time
 from contextlib import asynccontextmanager, closing
 
 import pytest
+from fastmcp_tasks import call_tool_task
 
 from nexus_mcp.jobs import sqlite_store
 from nexus_mcp.mcp.runtime import MCPRuntime, runtime_provider
@@ -52,23 +53,66 @@ async def test_single_prompt_submits_nexus_job_and_preserves_header(
 
 
 @pytest.mark.e2e
+@pytest.mark.parametrize("protocol_mode", ["auto"], indirect=True)
 async def test_task_true_keeps_docket_id_out_of_nexus_jobs(job_mcp_client, fake_runner_registry):
-    task = await job_mcp_client.call_tool(
+    task = await call_tool_task(
+        job_mcp_client,
         "prompt",
         {
             "cli": fake_runner_registry,
             "prompt": "background compatibility prompt",
             "context": {"fake_output": "background output"},
         },
-        task=True,
     )
-    result = await task
+    result = await task.result()
 
     assert result.is_error is False
     assert strip_runner_header(result.data) == "background output"
     nexus_job_ids = {str(row[0]) for row in _job_rows("job_id")}
     assert len(nexus_job_ids) == 1
     assert task.task_id not in nexus_job_ids
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize("protocol_mode", ["auto"], indirect=True)
+async def test_task_worker_forwards_log_and_progress_without_session(
+    job_mcp_client, fake_runner_registry, monkeypatch, caplog
+):
+    """A worker can consume durable log and progress events without an MCP session."""
+    original_run = FakeRunner.run
+    release_worker = asyncio.Event()
+
+    async def emitting_run(self, request, emitter=None, progress=None):
+        assert emitter is not None
+        assert progress is not None
+        await emitter("info", "worker log")
+        await progress(1, 2, "halfway")
+        await release_worker.wait()
+        return await original_run(self, request, emitter=emitter, progress=progress)
+
+    monkeypatch.setattr(FakeRunner, "run", emitting_run)
+    with caplog.at_level("INFO", logger="nexus_mcp.mcp.server"):
+        task = await call_tool_task(
+            job_mcp_client,
+            "prompt",
+            {
+                "cli": fake_runner_registry,
+                "prompt": "worker events",
+                "context": {"fake_output": "event output"},
+            },
+        )
+        try:
+            async with asyncio.timeout(_START_TIMEOUT):
+                while (status := await task.status()).status_message != "halfway":
+                    await asyncio.sleep(0.01)
+        finally:
+            release_worker.set()
+        result = await task.result()
+
+    assert status.status_message == "halfway"
+    assert result.is_error is False
+    assert strip_runner_header(result.data) == "event output"
+    assert "worker log" in caplog.text
 
 
 @pytest.mark.e2e

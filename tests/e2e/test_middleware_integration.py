@@ -10,6 +10,7 @@ import logging
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastmcp_tasks import call_tool_task
 
 from tests.fixtures import make_agent_response
 
@@ -47,6 +48,9 @@ class TestMiddlewarePipeline:
         )
         assert "say hello" not in middleware_text
 
+    # Foreground middleware sees the tool exception only on legacy calls; modern task workers
+    # report failures through the task result after the middleware's submission call completes.
+    @pytest.mark.parametrize("protocol_mode", ["legacy"], indirect=True)
     async def test_error_normalization_propagates_tool_error(self, mcp_client, caplog):
         """ToolError from batch_prompt propagates through the middleware stack.
 
@@ -81,3 +85,22 @@ class TestMiddlewarePipeline:
 
         # TimingMiddleware still logged duration
         assert "completed in" in caplog.text
+
+    @pytest.mark.parametrize("protocol_mode", ["auto"], indirect=True)
+    async def test_modern_task_call_does_not_log_prompt_text(self, mcp_client, caplog):
+        """Modern submission and worker logs omit the user's prompt text."""
+        secret_prompt = "private prompt marker 28374"
+
+        with caplog.at_level(logging.DEBUG, logger="nexus_mcp"):
+            task = await call_tool_task(
+                mcp_client,
+                "prompt",
+                {"cli": "fake", "prompt": secret_prompt, "context": {"fake_output": "hello"}},
+            )
+            result = await task.result()
+
+        assert result.is_error is False
+        nexus_logs = " ".join(
+            record.message for record in caplog.records if record.name.startswith("nexus_mcp")
+        )
+        assert secret_prompt not in nexus_logs

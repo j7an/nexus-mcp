@@ -306,6 +306,14 @@ def _legacy_exception_type(error: JobError) -> str | None:
     return value
 
 
+async def _context_log(ctx: Context, level: str, message: str) -> None:
+    """Log worker messages locally when no client session exists."""
+    if ctx.is_background_task:
+        getattr(logger, level)(message)
+    else:
+        await getattr(ctx, level)(message)
+
+
 async def _forward_compatibility_event(
     event: JobEvent,
     *,
@@ -351,13 +359,13 @@ async def _forward_compatibility_event(
                 and level in {"debug", "info", "warning", "error"}
                 and isinstance(message, str)
             ):
-                await getattr(ctx, level)(message)
+                await _context_log(ctx, level, message)
         case "message":
             if payload.get("final") is True:
                 return
             message = payload.get("message", payload.get("text"))
             if isinstance(message, str):
-                await ctx.info(message)
+                await _context_log(ctx, "info", message)
 
 
 async def _drain_compatibility_events(
@@ -549,11 +557,13 @@ async def batch_prompt(
     is_single_task = len(labelled) == 1
 
     if ctx:
-        await ctx.info(f"Starting batch of {len(labelled)} tasks (concurrency={max_concurrency})")
+        await _context_log(
+            ctx, "info", f"Starting batch of {len(labelled)} tasks (concurrency={max_concurrency})"
+        )
     if not labelled:
         response = MultiPromptResponse(results=[])
         if ctx:
-            await ctx.info("Batch complete: 0/0 succeeded")
+            await _context_log(ctx, "info", "Batch complete: 0/0 succeeded")
         return response
 
     effective_demand = min(max_concurrency, len(labelled))
@@ -577,7 +587,9 @@ async def batch_prompt(
         )
     response = MultiPromptResponse(results=list(results))
     if ctx:
-        await ctx.info(f"Batch complete: {response.succeeded}/{response.total} succeeded")
+        await _context_log(
+            ctx, "info", f"Batch complete: {response.succeeded}/{response.total} succeeded"
+        )
     return response
 
 

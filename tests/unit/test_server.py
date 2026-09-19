@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from fastmcp import Context
 from fastmcp.exceptions import ToolError
 
 from nexus_mcp.config import get_tool_timeout
@@ -30,6 +31,7 @@ from nexus_mcp.exceptions import UnsupportedAgentError
 from nexus_mcp.jobs import AgentJobService
 from nexus_mcp.labels import assign_labels
 from nexus_mcp.mcp.runtime import runtime_provider
+from nexus_mcp.mcp.server import _forward_compatibility_event
 from nexus_mcp.mcp.server import mcp as implementation_mcp
 from nexus_mcp.server import (
     _inject_cli_enum,
@@ -66,6 +68,30 @@ def test_root_server_clear_preferences_is_implementation_function() -> None:
     from nexus_mcp.server import clear_preferences as compatibility_clear_preferences
 
     assert compatibility_clear_preferences is implementation_clear_preferences
+
+
+@pytest.mark.parametrize(
+    ("event_type", "payload", "expected_level", "expected_message"),
+    [
+        ("log", {"level": "warning", "message": "worker warning"}, "WARNING", "worker warning"),
+        ("message", {"text": "worker chunk"}, "INFO", "worker chunk"),
+    ],
+)
+async def test_worker_forwards_compatibility_logs_without_session(
+    event_type, payload, expected_level, expected_message, caplog
+):
+    """Committed log and nonfinal message events remain visible without a client session."""
+    context = Context(mcp, task_id="worker-task")
+    event = JobEvent(job_id="job-1", sequence=1, type=event_type, payload=payload)
+
+    with caplog.at_level("INFO", logger="nexus_mcp.mcp.server"):
+        await _forward_compatibility_event(
+            event, ctx=context, task_index=1, task_count=1, label="fake"
+        )
+
+    assert (expected_level, expected_message) in [
+        (record.levelname, record.message) for record in caplog.records
+    ]
 
 
 class _JobServiceBoundary:
