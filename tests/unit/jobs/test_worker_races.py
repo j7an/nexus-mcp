@@ -701,7 +701,6 @@ async def test_worker_pool_stop_flushes_and_delivers_runtime_shutdown():
         store=store,
         backends=BackendManager([backend]),
         notifier=notifier,
-        policy=WorkerPolicy(idle_poll_seconds=0.01),
     )
     await pool.start()
     await backend.started.wait()
