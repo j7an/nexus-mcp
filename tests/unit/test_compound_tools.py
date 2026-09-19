@@ -1,12 +1,18 @@
-"""Tests for compound tools with sampling fallback."""
+"""Tests for compound tools."""
 
-from unittest.mock import AsyncMock
+import inspect
 
 import httpx
 import pytest
 import respx
 
 from nexus_mcp.http_client import reset_http_client
+from nexus_mcp.mcp.compound_tools import opencode_investigate, opencode_session_review
+
+
+def test_compound_tools_take_no_context():
+    for fn in (opencode_investigate, opencode_session_review):
+        assert "ctx" not in inspect.signature(fn).parameters
 
 
 @pytest.fixture(autouse=True)
@@ -56,38 +62,6 @@ class TestOpenCodeInvestigate:
         await opencode_investigate(query="test", max_files=3)
         assert respx.calls.call_count == 4  # 1 search + 3 file reads
 
-    @respx.mock
-    async def test_sampling_success_returns_analyzed_result(self):
-        respx.get("http://test:4096/find").mock(
-            return_value=httpx.Response(200, json=[{"path": "src/auth.py"}])
-        )
-        respx.get("http://test:4096/file/content").mock(
-            return_value=httpx.Response(200, json={"content": "code"})
-        )
-        mock_ctx = AsyncMock()
-        mock_sample_result = AsyncMock()
-        mock_sample_result.text = "Analysis: auth module handles authentication"
-        mock_ctx.sample.return_value = mock_sample_result
-        from nexus_mcp.compound_tools import opencode_investigate
-
-        result = await opencode_investigate(query="auth", ctx=mock_ctx)
-        assert "Analysis:" in result
-
-    @respx.mock
-    async def test_sampling_failure_returns_raw_data(self):
-        respx.get("http://test:4096/find").mock(
-            return_value=httpx.Response(200, json=[{"path": "src/auth.py"}])
-        )
-        respx.get("http://test:4096/file/content").mock(
-            return_value=httpx.Response(200, json={"content": "code"})
-        )
-        mock_ctx = AsyncMock()
-        mock_ctx.sample.side_effect = Exception("sampling not supported")
-        from nexus_mcp.compound_tools import opencode_investigate
-
-        result = await opencode_investigate(query="auth", ctx=mock_ctx)
-        assert "auth.py" in result
-
 
 class TestOpenCodeSessionReview:
     @respx.mock
@@ -109,27 +83,6 @@ class TestOpenCodeSessionReview:
         result = await opencode_session_review(session_id="ses_1")
         assert "ses_1" in result
         assert "fix the bug" in result
-
-    @respx.mock
-    async def test_sampling_fallback(self):
-        respx.get("http://test:4096/session/ses_1").mock(
-            return_value=httpx.Response(200, json={"id": "ses_1", "status": "completed"})
-        )
-        respx.get("http://test:4096/session/ses_1/message").mock(
-            return_value=httpx.Response(200, json=[])
-        )
-        respx.get("http://test:4096/session/ses_1/diff").mock(
-            return_value=httpx.Response(200, json={"diff": ""})
-        )
-        respx.get("http://test:4096/session/ses_1/todo").mock(
-            return_value=httpx.Response(200, json=[])
-        )
-        mock_ctx = AsyncMock()
-        mock_ctx.sample.side_effect = Exception("not supported")
-        from nexus_mcp.compound_tools import opencode_session_review
-
-        result = await opencode_session_review(session_id="ses_1", ctx=mock_ctx)
-        assert "ses_1" in result
 
     @respx.mock
     async def test_includes_todo_data(self):

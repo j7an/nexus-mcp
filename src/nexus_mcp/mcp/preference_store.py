@@ -1,12 +1,10 @@
-# src/nexus_mcp/mcp/preference_store.py
-"""Persistent preference and model-tier store access for nexus-mcp.
+"""In-process preference and model-tier store for nexus-mcp.
 
-Provides access to FastMCP's backing store using custom collections
-that bypass session scoping. Data in these collections persists across
-MCP sessions for the server's process lifetime (MemoryStore default)
-or across restarts (FileTreeStore/RedisStore).
+Values are global to the server process and persist across MCP sessions for
+the process lifetime. They are not written to disk.
 """
 
+import copy
 from typing import Any, cast
 
 from fastmcp import Context
@@ -17,36 +15,33 @@ PREFERENCES_KEY = "preferences"
 TIERS_COLLECTION = "nexus_tiers"
 TIERS_KEY = "model_tiers"
 
+# ponytail: in-process only; move to the Nexus SQLite store keyed by
+# principal/workspace when prompt/batch_prompt route through JobService.
+_STORE: dict[tuple[str, str], dict[str, Any]] = {}
 
-def _get_store(ctx: Context) -> Any:
-    """Get the backing store from the MCP server context.
 
-    Returns the PydanticAdapter[StateValue] which wraps the configured
-    AsyncKeyValue backend. Using a custom collection bypasses session-scoped
-    key prefixing done by ctx.get_state/ctx.set_state.
-    """
-    return ctx.fastmcp._state_store
+def reset_store() -> None:
+    """Clear all stored values (for tests)."""
+    _STORE.clear()
 
 
 async def _load(ctx: Context, *, key: str, collection: str) -> dict[str, Any] | None:
-    """Load a value from the backing store, returning None if absent."""
-    store = _get_store(ctx)
-    data = await store.get(key=key, collection=collection)
-    if data is None:
-        return None
-    return cast("dict[str, Any]", data.value)
+    """Load a copy of a stored value, returning None if absent."""
+    del ctx
+    value = _STORE.get((collection, key))
+    return None if value is None else copy.deepcopy(value)
 
 
 async def _save(ctx: Context, value: dict[str, Any], *, key: str, collection: str) -> None:
-    """Save a value to the backing store, overwriting any existing entry."""
-    store = _get_store(ctx)
-    await store.put(key=key, value={"value": value}, collection=collection)
+    """Store a copy of a value, overwriting any existing entry."""
+    del ctx
+    _STORE[(collection, key)] = copy.deepcopy(value)
 
 
 async def _delete(ctx: Context, *, key: str, collection: str) -> None:
-    """Delete a value from the backing store."""
-    store = _get_store(ctx)
-    await store.delete(key=key, collection=collection)
+    """Delete a stored value if present."""
+    del ctx
+    _STORE.pop((collection, key), None)
 
 
 async def load_preferences(ctx: Context) -> dict[str, Any] | None:

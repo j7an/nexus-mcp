@@ -610,16 +610,9 @@ def test_new_core_job_and_backend_code_avoids_fastmcp_runtime_internals() -> Non
     )
 
 
-_PENDING_INTERNALS = {"._state_store"}
-
-
 def test_production_code_avoids_fastmcp_runtime_internals() -> None:
     """No production module may touch FastMCP private provider/state internals."""
-    violations = [
-        violation
-        for violation in _forbidden_runtime_internal_violations(production_python_files())
-        if not any(violation.endswith(suffix) for suffix in _PENDING_INTERNALS)
-    ]
+    violations = _forbidden_runtime_internal_violations(production_python_files())
     assert violations == [], "FastMCP runtime internals in src/:\n" + "\n".join(violations)
 
 

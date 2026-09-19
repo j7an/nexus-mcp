@@ -41,7 +41,7 @@ parallel rather than sequentially:
   spillover for outputs exceeding 50 KB
 - **Execution modes** — `default` (safe, no auto-approve), `yolo` (full auto-approve)
 - **CLI detection** — auto-detects binary path, version, and JSON output capability at startup
-- **Persistent preferences** — set defaults for execution mode, model, retries, output limit, and timeout; preferences persist across MCP sessions via the backing store (MemoryStore default, FileTreeStore/RedisStore for restart persistence)
+- **Persistent preferences** — set defaults for execution mode, model, retries, output limit, and timeout; preferences persist across MCP sessions for the lifetime of the server process
 - **Prompt templates** — 10 discoverable workflow scaffolds (code review, debug, research, implement feature, etc.) via `list_prompts`/`get_prompt`; each returns structured messages with expert framing the client can use or ignore
 - **Model tier classification** — heuristic-based model classification into quick/standard/thorough tiers; clients can override with sampling or live benchmarks. The `nexus://runners` resource includes tier data per model
 - **Tool timeouts** — configurable safety timeout (default 15 min) cancels long-running tool calls to prevent the server from blocking indefinitely
@@ -298,7 +298,7 @@ If the client supports MCP elicitation, the server asks which runner to use. Pas
 { "execution_mode": "yolo", "model": "gpt-5.2", "max_retries": 5 }
 ```
 
-Subsequent calls inherit these settings. Preferences persist across MCP sessions until explicitly cleared.
+Subsequent calls inherit these settings. Preferences persist across MCP sessions for the lifetime of the server process, until explicitly cleared.
 
 Fallback chain: **explicit parameter → saved preference → per-runner env → global env → hardcoded default**.
 

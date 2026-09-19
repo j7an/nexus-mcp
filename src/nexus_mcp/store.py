@@ -8,6 +8,7 @@ from nexus_mcp.mcp.preference_store import (
     delete_preferences,
     load_model_tiers,
     load_preferences,
+    reset_store,
     save_model_tiers,
     save_preferences,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "delete_preferences",
     "load_model_tiers",
     "load_preferences",
+    "reset_store",
     "save_model_tiers",
     "save_preferences",
 ]
