@@ -22,9 +22,11 @@ from claude_agent_sdk import (
     ToolResultBlock,
     ToolUseBlock,
     UserMessage,
+    fork_session,
 )
 from claude_agent_sdk._cli_version import __cli_version__
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+from pydantic import ValidationError
 
 from nexus_mcp.backends.base import (
     BackendExecutionContext,
@@ -45,6 +47,8 @@ from nexus_mcp.core import (
     BackendDescriptor,
     BackendEvent,
     ExecutionConfigValues,
+    ForkOperation,
+    ForkResult,
     JobError,
     JobErrorCode,
     OperationResult,
@@ -53,6 +57,8 @@ from nexus_mcp.core import (
     RequestedExecutionConfig,
     ResolvedExecutionConfig,
     RetryPolicy,
+    ReviewOperation,
+    ReviewResult,
     SandboxMode,
     TurnOperation,
     TurnResult,
@@ -90,6 +96,28 @@ def _with_file_refs(prompt: str, file_refs: tuple[str, ...]) -> str:
     if not file_refs:
         return prompt
     return f"{prompt}\n\nFile references:\n" + "\n".join(f"- {path}" for path in file_refs)
+
+
+def _review_prompt(operation: ReviewOperation) -> str:
+    """Return a fixed, read-only prompt for an admitted review operation."""
+    target = operation.target
+    subject = {
+        "working_tree": "the uncommitted changes in the working tree",
+        "branch": f"the changes on this branch relative to {target.reference}",
+        "commit": f"commit {target.reference}",
+    }.get(target.kind, f"{target.kind} {target.reference or ''}".strip())
+    parts = [
+        (
+            f"Review {subject}. Inspect it with the Read, Glob and Grep tools and with git diff, "
+            "git log and git show only. Every git command must include both --no-ext-diff and "
+            "--no-textconv and must not use quotes, pipes, redirects or --output; any other "
+            "command is denied. Do not modify anything. "
+            "Report a verdict, a short summary, and concrete findings."
+        ),
+    ]
+    if operation.instructions:
+        parts.append(operation.instructions)
+    return _with_file_refs("\n\n".join(parts), operation.file_refs)
 
 
 def _command_summary(tool_input: dict[str, Any]) -> str:
@@ -184,15 +212,68 @@ class ClaudeAgentBackend:
     async def execute(
         self, operation: AgentOperation, context: BackendExecutionContext
     ) -> OperationResult:
-        """Execute one admitted turn in one SDK process."""
-        if not isinstance(operation, TurnOperation):
-            raise _failure("unsupported_capability", "Claude Agent does not support this operation")
+        """Execute exactly one admitted operation in one SDK process."""
         config = context.resolved_config
-        sandbox: SandboxMode = config.sandbox or "read_only"
+        review = isinstance(operation, ReviewOperation)
+        sandbox: SandboxMode = "read_only" if review else (config.sandbox or "read_only")
         self._require_sandbox_platform(sandbox)
         session_id = next(
             (ref.value for ref in context.job.source_checkpoint if ref.kind == _SESSION), None
         )
+        if isinstance(operation, ForkOperation) or (
+            isinstance(operation, ReviewOperation) and operation.delivery == "detached"
+        ):
+            session_id = await self._fork(session_id, context)
+
+        match operation:
+            case ForkOperation(prompt=None):
+                return self._fork_result(context, session_id)
+            case ForkOperation(prompt=str(prompt), file_refs=refs):
+                await self._run_turn(
+                    context,
+                    prompt=_with_file_refs(prompt, refs),
+                    sandbox=sandbox,
+                    resume=session_id,
+                )
+                return self._fork_result(context, session_id)
+            case ReviewOperation():
+                if session_id is None:
+                    raise _failure("session_not_found", "No Claude session exists to review")
+                final = await self._run_turn(
+                    context,
+                    prompt=_review_prompt(operation),
+                    sandbox=sandbox,
+                    resume=session_id,
+                    output_schema=ReviewResult.model_json_schema(),
+                    review=True,
+                )
+                try:
+                    return ReviewResult.model_validate(
+                        (
+                            final.structured_output
+                            if isinstance(final.structured_output, dict)
+                            else {}
+                        )
+                        | {"target": operation.target, "delivery": operation.delivery}
+                    )
+                except ValidationError:
+                    raise self._observe(
+                        context,
+                        _failure("structured_output_invalid", "Claude returned an invalid review"),
+                    ) from None
+            case TurnOperation():
+                return await self._turn(operation, context, sandbox, session_id)
+        raise _failure("unsupported_capability", "Claude Agent does not support this operation")
+
+    async def _turn(
+        self,
+        operation: TurnOperation,
+        context: BackendExecutionContext,
+        sandbox: SandboxMode,
+        session_id: str | None,
+    ) -> TurnResult:
+        """Run a turn and translate its SDK result to the Nexus result contract."""
+        config = context.resolved_config
         # The stored schema is frozen; the model serializer thaws it to plain JSON.
         schema = operation.model_dump().get("output_schema")
         final = await self._run_turn(
@@ -223,6 +304,31 @@ class ClaudeAgentBackend:
             structured_output=final.structured_output,
             changed_files=tuple(self._changed.pop(context.job.job_id, ())),
             usage=final.usage or {},
+        )
+
+    @staticmethod
+    async def _fork(session_id: str | None, context: BackendExecutionContext) -> str:
+        """Create and record a local SDK fork without starting a model conversation."""
+        if session_id is None:
+            raise _failure("session_not_found", "No Claude session exists to fork")
+        forked = await asyncio.to_thread(
+            fork_session, session_id, directory=str(context.workspace.canonical_path)
+        )
+        await context.record_provider_reference(
+            ProviderReference(kind=_SESSION, value=forked.session_id)
+        )
+        return forked.session_id
+
+    @staticmethod
+    def _fork_result(context: BackendExecutionContext, session_id: str | None) -> ForkResult:
+        """Build the child-session result once its provider reference is available."""
+        session = context.session
+        if session is None or session.parent_session_id is None or session_id is None:
+            raise _failure("internal_error", "Fork job has no parent Nexus session")
+        return ForkResult(
+            session=session,
+            provider_reference=ProviderReference(kind=_SESSION, value=session_id),
+            parent_session_id=session.parent_session_id,
         )
 
     async def reconcile(

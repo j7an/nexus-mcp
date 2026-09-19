@@ -1,6 +1,7 @@
 """Claude Agent backend turn and configuration behavior."""
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny, ToolPermissionContext
@@ -8,16 +9,23 @@ from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny, ToolPe
 from nexus_mcp.backends.base import BackendFailure, CancelRequested, InputResolved
 from nexus_mcp.backends.claude_agent import ClaudeAgentBackend
 from nexus_mcp.core import (
+    ForkOperation,
+    ForkResult,
     PermissionRequest,
     PermissionResponse,
     ProviderReference,
     RequestedExecutionConfig,
     ResolvedExecutionConfig,
+    ReviewOperation,
+    ReviewResult,
+    ReviewTarget,
     TurnOperation,
     TurnResult,
 )
 from tests.fixtures import make_workspace
 from tests.unit.backends.claude_fakes import FakeClient, FakeContext, factory, result, text
+
+PARENT = (ProviderReference(kind="session", value="sid-parent"),)
 
 
 def test_descriptor_matches_spec():
@@ -482,3 +490,156 @@ async def test_workspace_write_refused_off_posix(tmp_path, monkeypatch):
         )
     assert raised.value.error.code == "backend_unavailable"
     assert created == []
+
+
+@pytest.fixture
+def forked(monkeypatch):
+    calls: list[tuple[str, str | None]] = []
+
+    def fake_fork(session_id: str, directory: str | None = None) -> SimpleNamespace:
+        calls.append((session_id, directory))
+        return SimpleNamespace(session_id="sid-child")
+
+    monkeypatch.setattr("nexus_mcp.backends.claude_agent.fork_session", fake_fork)
+    return calls
+
+
+def _child_context(tmp_path, **overrides):
+    context = FakeContext(workspace_path=tmp_path, **overrides)
+    context.session = context.session.model_copy(update={"parent_session_id": "session-parent"})
+    return context
+
+
+async def test_promptless_fork_makes_no_model_call(tmp_path, forked):
+    created: list[FakeClient] = []
+    context = _child_context(tmp_path, source_checkpoint=PARENT)
+
+    outcome = await ClaudeAgentBackend(factory([result()], created)).execute(
+        ForkOperation(), context
+    )
+
+    assert isinstance(outcome, ForkResult)
+    assert forked == [("sid-parent", str(tmp_path))]
+    assert created == []
+    assert outcome.provider_reference == ProviderReference(kind="session", value="sid-child")
+    assert outcome.session == context.session
+    assert outcome.parent_session_id == "session-parent"
+    assert context.references == [ProviderReference(kind="session", value="sid-child")]
+
+
+async def test_fork_result_requires_parent_session(tmp_path, forked):
+    context = FakeContext(workspace_path=tmp_path, source_checkpoint=PARENT)
+
+    with pytest.raises(BackendFailure) as raised:
+        await ClaudeAgentBackend(factory([result()], [])).execute(ForkOperation(), context)
+
+    assert raised.value.error.code == "internal_error"
+
+
+async def test_fork_with_prompt_runs_turn_on_child(tmp_path, forked):
+    created: list[FakeClient] = []
+    context = _child_context(tmp_path, source_checkpoint=PARENT)
+
+    outcome = await ClaudeAgentBackend(factory([result(session_id="sid-child")], created)).execute(
+        ForkOperation(prompt="go"), context
+    )
+
+    assert isinstance(outcome, ForkResult)
+    assert created[0].options.resume == "sid-child"
+    assert created[0].options.fork_session is False
+    assert created[0].queries == ["go"]
+
+
+async def test_fork_without_provider_checkpoint_fails(tmp_path, forked):
+    with pytest.raises(BackendFailure) as raised:
+        await ClaudeAgentBackend(factory([result()], [])).execute(
+            ForkOperation(), FakeContext(workspace_path=tmp_path)
+        )
+
+    assert raised.value.error.code == "session_not_found"
+    assert forked == []
+
+
+REVIEW_JSON = {
+    "kind": "review",
+    "verdict": "fail",
+    "summary": "one issue",
+    "target": {"kind": "commit", "reference": "deadbeef"},
+    "delivery": "detached",
+    "findings": [],
+}
+
+
+async def test_review_is_read_only_structured(tmp_path):
+    created: list[FakeClient] = []
+    context = FakeContext(
+        workspace_path=tmp_path,
+        source_checkpoint=PARENT,
+        resolved_config=ResolvedExecutionConfig(sandbox="danger_full_access"),
+    )
+    operation = ReviewOperation(
+        target=ReviewTarget(kind="branch", reference="main"), instructions="focus on auth"
+    )
+
+    outcome = await ClaudeAgentBackend(
+        factory([result(structured_output=REVIEW_JSON)], created)
+    ).execute(operation, context)
+
+    assert isinstance(outcome, ReviewResult)
+    assert outcome.target == operation.target
+    assert outcome.delivery == "inline"
+    assert outcome.verdict == "fail"
+    options = created[0].options
+    assert options.sandbox is None
+    assert not any(rule.startswith("Bash") for rule in options.allowed_tools)
+    assert options.output_format["schema"] == ReviewResult.model_json_schema()
+    assert "main" in created[0].queries[0] and "focus on auth" in created[0].queries[0]
+    denied = await options.can_use_tool("Write", {"file_path": "x"}, ToolPermissionContext())
+    assert isinstance(denied, PermissionResultDeny)
+    safe = "git diff --no-ext-diff --no-textconv"
+    assert "--no-ext-diff" in created[0].queries[0] and "--no-textconv" in created[0].queries[0]
+    allowed = await options.can_use_tool("Bash", {"command": safe}, ToolPermissionContext())
+    assert isinstance(allowed, PermissionResultAllow)
+    [matcher] = options.hooks["PreToolUse"]
+    for unsafe in ("git diff", f"{safe} --output=x", f"{safe} --ext-diff", f"{safe} --textconv"):
+        refused = await options.can_use_tool("Bash", {"command": unsafe}, ToolPermissionContext())
+        assert isinstance(refused, PermissionResultDeny)
+        gated = await matcher.hooks[0](_hook_input("Bash", {"command": unsafe}), "t1", None)
+        assert gated["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+async def test_inline_review_without_provider_checkpoint_fails_before_client_creation(tmp_path):
+    created: list[FakeClient] = []
+
+    with pytest.raises(BackendFailure) as raised:
+        await ClaudeAgentBackend(factory([result(structured_output=REVIEW_JSON)], created)).execute(
+            ReviewOperation(target=ReviewTarget(kind="working_tree")),
+            FakeContext(workspace_path=tmp_path),
+        )
+
+    assert raised.value.error.code == "session_not_found"
+    assert created == []
+
+
+async def test_review_with_malformed_output_is_invalid(tmp_path):
+    with pytest.raises(BackendFailure) as raised:
+        await ClaudeAgentBackend(
+            factory([result(structured_output={"verdict": "maybe"})], [])
+        ).execute(
+            ReviewOperation(target=ReviewTarget(kind="working_tree")),
+            FakeContext(workspace_path=tmp_path, source_checkpoint=PARENT),
+        )
+
+    assert raised.value.error.code == "structured_output_invalid"
+
+
+async def test_detached_review_forks_first(tmp_path, forked):
+    created: list[FakeClient] = []
+    context = FakeContext(workspace_path=tmp_path, source_checkpoint=PARENT)
+
+    await ClaudeAgentBackend(factory([result(structured_output=REVIEW_JSON)], created)).execute(
+        ReviewOperation(target=ReviewTarget(kind="working_tree"), delivery="detached"), context
+    )
+
+    assert forked == [("sid-parent", str(tmp_path))]
+    assert created[0].options.resume == "sid-child"
