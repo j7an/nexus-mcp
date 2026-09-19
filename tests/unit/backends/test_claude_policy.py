@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from nexus_mcp.backends.claude_policy import READ_TOOLS, build_options, decide
+from nexus_mcp.exceptions import ConfigurationError
 
 APPROVALS = ["on_request", "provider_default", "never"]
 SAFE = "--no-ext-diff --no-textconv"
@@ -73,6 +74,21 @@ def test_workspace_write_escalates_paths_outside_workspace(tmp_path, tool_input)
     assert (
         decide(
             "Write", tool_input, sandbox="workspace_write", approval="never", workspace=workspace
+        )
+        == "deny"
+    )
+
+
+def test_notebook_edit_uses_notebook_path_for_workspace_containment(tmp_path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    assert (
+        decide(
+            "NotebookEdit",
+            {"file_path": str(workspace / "inside.txt"), "notebook_path": "../outside.ipynb"},
+            sandbox="workspace_write",
+            approval="never",
+            workspace=workspace,
         )
         == "deny"
     )
@@ -177,6 +193,11 @@ def test_options_sandbox_only_for_workspace_write(tmp_path):
 )
 def test_options_profile(tmp_path, profile, expected):
     assert _options(tmp_path, profile=profile).setting_sources == expected
+
+
+def test_options_rejects_unknown_profile(tmp_path):
+    with pytest.raises(ConfigurationError):
+        _options(tmp_path, profile="invalid")
 
 
 def test_options_optional_fields(tmp_path):

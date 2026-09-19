@@ -9,6 +9,7 @@ from claude_agent_sdk import CanUseTool, ClaudeAgentOptions, HookCallback, HookM
 
 from nexus_mcp.config import ClaudeSettingsProfile
 from nexus_mcp.core import ApprovalPolicy, SandboxMode
+from nexus_mcp.exceptions import ConfigurationError
 
 if TYPE_CHECKING:
     from claude_agent_sdk.types import SandboxSettings
@@ -54,8 +55,8 @@ def _is_read_only_git(tool_input: Mapping[str, Any]) -> bool:
     )
 
 
-def _inside_workspace(workspace: Path, tool_input: Mapping[str, Any]) -> bool:
-    raw = tool_input.get("file_path") or tool_input.get("notebook_path")
+def _inside_workspace(tool: str, workspace: Path, tool_input: Mapping[str, Any]) -> bool:
+    raw = tool_input.get("notebook_path" if tool == "NotebookEdit" else "file_path")
     if not isinstance(raw, str) or not raw:
         return False
     return (workspace / raw).resolve().is_relative_to(workspace.resolve())
@@ -78,7 +79,7 @@ def decide(
     if sandbox == "workspace_write":
         if tool == "Bash":
             return "allow"
-        if tool in WRITE_TOOLS and _inside_workspace(workspace, tool_input):
+        if tool in WRITE_TOOLS and _inside_workspace(tool, workspace, tool_input):
             return "allow"
         return "deny" if approval == "never" else "ask"
     return "deny"
@@ -97,6 +98,8 @@ def build_options(
     cli_path: str | None = None,
 ) -> ClaudeAgentOptions:
     """Build fail-closed SDK options; decide() stays the only permission authority."""
+    if profile not in _SETTING_SOURCES:
+        raise ConfigurationError(f"Unknown Claude settings profile: {profile}")
     sandbox_settings = (
         cast(
             "SandboxSettings",
