@@ -13,15 +13,9 @@ from nexus_mcp.config import (
     _read_global_env_defaults,
     _read_runner_env_defaults,
     get_agent_env,
-    get_agent_fallback_models,
     get_claude_settings_profile,
     get_cli_detection_timeout,
-    get_global_output_limit,
-    get_global_timeout,
     get_legacy_runners_enabled,
-    get_retry_base_delay,
-    get_retry_max_attempts,
-    get_retry_max_delay,
     get_runner_defaults,
     get_runner_models,
     get_tool_timeout,
@@ -29,168 +23,6 @@ from nexus_mcp.config import (
 from nexus_mcp.exceptions import ConfigurationError
 from nexus_mcp.types import OperationalDefaults
 from tests.fixtures import REPRESENTATIVE_CLI
-
-
-class TestGetGlobalOutputLimit:
-    """Test get_global_output_limit() function."""
-
-    def test_get_global_output_limit_default(self):
-        """Output limit defaults to 50KB if env var not set."""
-        limit = get_global_output_limit()
-        assert limit == 50_000  # 50KB default
-
-    @patch.dict(os.environ, {"NEXUS_OUTPUT_LIMIT_BYTES": "100000"})
-    def test_get_global_output_limit_from_env(self):
-        """Output limit can be overridden via NEXUS_OUTPUT_LIMIT_BYTES."""
-        limit = get_global_output_limit()
-        assert limit == 100_000
-
-    @patch.dict(os.environ, {"NEXUS_OUTPUT_LIMIT_BYTES": "not-a-number"})
-    def test_get_global_output_limit_invalid_raises_configuration_error(self):
-        """Invalid output limit value should raise ConfigurationError."""
-        with pytest.raises(ConfigurationError) as exc_info:
-            get_global_output_limit()
-
-        assert exc_info.value.config_key == "NEXUS_OUTPUT_LIMIT_BYTES"
-        assert "Invalid output limit value: 'not-a-number'" in str(exc_info.value)
-
-
-class TestGetGlobalTimeout:
-    """Test get_global_timeout() function."""
-
-    def test_get_global_timeout_default(self):
-        """Timeout defaults to 600s if env var not set."""
-        timeout = get_global_timeout()
-        assert timeout == 600  # Match existing process.py default
-
-    @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "300"})
-    def test_get_global_timeout_from_env(self):
-        """Timeout can be overridden via NEXUS_TIMEOUT_SECONDS."""
-        timeout = get_global_timeout()
-        assert timeout == 300
-
-    @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "abc"})
-    def test_get_global_timeout_invalid_raises_configuration_error(self):
-        """Invalid timeout value should raise ConfigurationError."""
-        with pytest.raises(ConfigurationError) as exc_info:
-            get_global_timeout()
-
-        assert exc_info.value.config_key == "NEXUS_TIMEOUT_SECONDS"
-        assert "Invalid timeout value: 'abc'" in str(exc_info.value)
-
-
-class TestGetRetryMaxAttempts:
-    """Test get_retry_max_attempts() function."""
-
-    def test_default_is_three(self):
-        """Max attempts defaults to 3 if env var not set."""
-        assert get_retry_max_attempts() == 3
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_MAX_ATTEMPTS": "5"})
-    def test_custom_value_from_env(self):
-        """Max attempts can be overridden via NEXUS_RETRY_MAX_ATTEMPTS."""
-        assert get_retry_max_attempts() == 5
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_MAX_ATTEMPTS": "not-a-number"})
-    def test_invalid_raises_configuration_error(self):
-        """Invalid value should raise ConfigurationError."""
-        with pytest.raises(ConfigurationError) as exc_info:
-            get_retry_max_attempts()
-        assert exc_info.value.config_key == "NEXUS_RETRY_MAX_ATTEMPTS"
-        assert "Invalid retry max attempts value" in str(exc_info.value)
-
-
-class TestGetRetryBaseDelay:
-    """Test get_retry_base_delay() function."""
-
-    def test_default_is_two_seconds(self):
-        """Base delay defaults to 2.0s if env var not set."""
-        assert get_retry_base_delay() == 2.0
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "0.5"})
-    def test_custom_float_from_env(self):
-        """Base delay accepts float values."""
-        assert get_retry_base_delay() == 0.5
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "1"})
-    def test_integer_string_accepted(self):
-        """Integer string is coerced to float."""
-        assert get_retry_base_delay() == 1.0
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "not-a-float"})
-    def test_invalid_raises_configuration_error(self):
-        """Invalid value should raise ConfigurationError."""
-        with pytest.raises(ConfigurationError) as exc_info:
-            get_retry_base_delay()
-        assert exc_info.value.config_key == "NEXUS_RETRY_BASE_DELAY"
-        assert "Invalid retry base delay value" in str(exc_info.value)
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "inf"})
-    def test_inf_raises_configuration_error(self):
-        with pytest.raises(ConfigurationError, match="must be a finite number"):
-            get_retry_base_delay()
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "nan"})
-    def test_nan_raises_configuration_error(self):
-        with pytest.raises(ConfigurationError, match="must be a finite number"):
-            get_retry_base_delay()
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "-1.0"})
-    def test_negative_raises_configuration_error(self):
-        """Negative base delay is semantically invalid and raises ConfigurationError."""
-        with pytest.raises(ConfigurationError) as exc_info:
-            get_retry_base_delay()
-        assert exc_info.value.config_key == "NEXUS_RETRY_BASE_DELAY"
-        assert "non-negative" in str(exc_info.value)
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "0.0"})
-    def test_zero_base_delay_allowed(self):
-        """Zero is allowed (useful for testing — sleep(0) returns immediately)."""
-        assert get_retry_base_delay() == 0.0
-
-
-class TestGetRetryMaxDelay:
-    """Test get_retry_max_delay() function."""
-
-    def test_default_is_sixty_seconds(self):
-        """Max delay defaults to 60.0s if env var not set."""
-        assert get_retry_max_delay() == 60.0
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_MAX_DELAY": "30.0"})
-    def test_custom_float_from_env(self):
-        """Max delay can be overridden via NEXUS_RETRY_MAX_DELAY."""
-        assert get_retry_max_delay() == 30.0
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_MAX_DELAY": "bad"})
-    def test_invalid_raises_configuration_error(self):
-        """Invalid value should raise ConfigurationError."""
-        with pytest.raises(ConfigurationError) as exc_info:
-            get_retry_max_delay()
-        assert exc_info.value.config_key == "NEXUS_RETRY_MAX_DELAY"
-        assert "Invalid retry max delay value" in str(exc_info.value)
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_MAX_DELAY": "inf"})
-    def test_inf_raises_configuration_error(self):
-        with pytest.raises(ConfigurationError, match="must be a finite number"):
-            get_retry_max_delay()
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_MAX_DELAY": "nan"})
-    def test_nan_raises_configuration_error(self):
-        with pytest.raises(ConfigurationError, match="must be a finite number"):
-            get_retry_max_delay()
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_MAX_DELAY": "-5.0"})
-    def test_negative_raises_configuration_error(self):
-        """Negative max delay is semantically invalid and raises ConfigurationError."""
-        with pytest.raises(ConfigurationError) as exc_info:
-            get_retry_max_delay()
-        assert exc_info.value.config_key == "NEXUS_RETRY_MAX_DELAY"
-        assert "non-negative" in str(exc_info.value)
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_MAX_DELAY": "0.0"})
-    def test_zero_max_delay_allowed(self):
-        """Zero is allowed — means no cap on wait time, which is unusual but valid."""
-        assert get_retry_max_delay() == 0.0
 
 
 class TestGetToolTimeout:
@@ -257,32 +89,32 @@ class TestPositiveValueValidation:
     @patch.dict(os.environ, {"NEXUS_OUTPUT_LIMIT_BYTES": "-1"})
     def test_negative_output_limit_rejected(self):
         with pytest.raises(ConfigurationError):
-            get_global_output_limit()
+            _read_global_env_defaults()
 
     @patch.dict(os.environ, {"NEXUS_OUTPUT_LIMIT_BYTES": "0"})
     def test_zero_output_limit_rejected(self):
         with pytest.raises(ConfigurationError):
-            get_global_output_limit()
+            _read_global_env_defaults()
 
     @patch.dict(os.environ, {"NEXUS_RETRY_MAX_ATTEMPTS": "-1"})
     def test_negative_retry_max_attempts_rejected(self):
         with pytest.raises(ConfigurationError):
-            get_retry_max_attempts()
+            _read_global_env_defaults()
 
     @patch.dict(os.environ, {"NEXUS_RETRY_MAX_ATTEMPTS": "0"})
     def test_zero_retry_max_attempts_rejected(self):
         with pytest.raises(ConfigurationError):
-            get_retry_max_attempts()
+            _read_global_env_defaults()
 
     @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "-1"})
     def test_negative_timeout_rejected(self):
         with pytest.raises(ConfigurationError):
-            get_global_timeout()
+            _read_global_env_defaults()
 
     @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "0"})
     def test_zero_timeout_rejected(self):
         with pytest.raises(ConfigurationError):
-            get_global_timeout()
+            _read_global_env_defaults()
 
 
 class TestGetCLIDetectionTimeout:
@@ -656,31 +488,6 @@ class TestGetRunnerModels:
         assert get_runner_models(REPRESENTATIVE_CLI) == ()
 
 
-class TestGetAgentFallbackModels:
-    """Test get_agent_fallback_models() env parsing."""
-
-    @patch.dict(
-        os.environ,
-        {
-            "NEXUS_FAKE_FALLBACK_MODELS": (
-                " gpt-5.3-codex-spark ,GPT-5.3-Codex-Spark,, gpt-5.4-mini "
-            )
-        },
-        clear=False,
-    )
-    def test_preserves_exact_strings_after_whitespace_strip(self):
-        assert get_agent_fallback_models(REPRESENTATIVE_CLI) == (
-            "gpt-5.3-codex-spark",
-            "GPT-5.3-Codex-Spark",
-            "gpt-5.4-mini",
-        )
-
-    @patch.dict(os.environ, {}, clear=False)
-    def test_returns_empty_tuple_when_env_var_missing(self):
-        os.environ.pop("NEXUS_FAKE_FALLBACK_MODELS", None)
-        assert get_agent_fallback_models(REPRESENTATIVE_CLI) == ()
-
-
 # ---------------------------------------------------------------------------
 # Per-runner defaults (3-tier merge)
 # ---------------------------------------------------------------------------
@@ -727,31 +534,6 @@ class TestGetRunnerDefaults:
 # ---------------------------------------------------------------------------
 # Backward-compatible getter functions
 # ---------------------------------------------------------------------------
-
-
-class TestBackwardCompatGetters:
-    """Backward-compat getters read env vars fresh (no singleton)."""
-
-    def test_all_getters_return_hardcoded_defaults(self):
-        assert get_global_timeout() == HARDCODED_DEFAULTS.timeout
-        assert get_global_output_limit() == HARDCODED_DEFAULTS.output_limit
-        assert get_retry_max_attempts() == HARDCODED_DEFAULTS.max_retries
-        assert get_retry_base_delay() == HARDCODED_DEFAULTS.retry_base_delay
-        assert get_retry_max_delay() == HARDCODED_DEFAULTS.retry_max_delay
-        assert get_cli_detection_timeout() == HARDCODED_DEFAULTS.cli_detection_timeout
-
-    def test_get_tool_timeout_zero_coercion(self, monkeypatch):
-        monkeypatch.setenv("NEXUS_TOOL_TIMEOUT_SECONDS", "0")
-        assert get_tool_timeout() is None
-
-    @patch.dict(os.environ, {"NEXUS_TIMEOUT_SECONDS": "42"})
-    def test_env_override_reaches_getter(self):
-        assert get_global_timeout() == 42
-
-    @patch.dict(os.environ, {"NEXUS_RETRY_BASE_DELAY": "0.0"})
-    def test_zero_delay_preserved_by_getter(self):
-        """0.0 is a valid base delay — getter must not coerce to default."""
-        assert get_retry_base_delay() == 0.0
 
 
 @pytest.mark.parametrize(
