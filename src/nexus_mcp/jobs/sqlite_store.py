@@ -85,8 +85,6 @@ from nexus_mcp.jobs.store import (
     PrunePolicy,
     PruneResult,
     ResolveInputCommand,
-    RuntimeLease,
-    RuntimeLeaseBusyError,
     StoredJobPage,
     SucceededTerminalOutcome,
     TerminalOutcome,
@@ -500,37 +498,6 @@ class SQLiteJobStore:
             raise ValueError("event page limit must be from 1 through 1000")
         return await self._worker._call(
             lambda connection: _read_events(connection, job_id, after_sequence, limit)
-        )
-
-    async def acquire_runtime_lease(
-        self, runtime_key: str, owner_id: str, lease_until: datetime
-    ) -> RuntimeLease:
-        """Acquire or generation-fence one managed runtime."""
-        lease_until = _normalize_datetime(lease_until)
-        return await self._worker._call(
-            lambda connection: _acquire_runtime_lease_transaction(
-                connection,
-                runtime_key,
-                owner_id,
-                lease_until,
-            )
-        )
-
-    async def renew_runtime_lease(self, lease: RuntimeLease, lease_until: datetime) -> bool:
-        """Renew the matching live runtime generation."""
-        lease_until = _normalize_datetime(lease_until)
-        return await self._worker._call(
-            lambda connection: _renew_runtime_lease_transaction(
-                connection,
-                lease,
-                lease_until,
-            )
-        )
-
-    async def release_runtime_lease(self, lease: RuntimeLease) -> None:
-        """Release only the matching live runtime generation."""
-        await self._worker._call(
-            lambda connection: _release_runtime_lease_transaction(connection, lease)
         )
 
     async def prune(self, policy: PrunePolicy, now: datetime) -> PruneResult:
@@ -1606,136 +1573,6 @@ def _terminalize_transaction(
         return job
 
     return _run_immediate(connection, terminalize)
-
-
-def _acquire_runtime_lease_transaction(
-    connection: sqlite3.Connection,
-    runtime_key: str,
-    owner_id: str,
-    lease_until: datetime,
-) -> RuntimeLease:
-    def acquire() -> RuntimeLease:
-        now_ms = _now_ms()
-        row = _fetch_one_mapping(
-            connection,
-            "SELECT * FROM runtime_leases WHERE runtime_key = ?",
-            (runtime_key,),
-        )
-        if row is not None and row["lease_expires_at_ms"] > now_ms:
-            if row["owner_id"] != owner_id:
-                raise RuntimeLeaseBusyError(
-                    runtime_key,
-                    row["owner_id"],
-                    _ms_to_datetime(row["lease_expires_at_ms"]),
-                )
-            lease_until_ms = max(row["lease_expires_at_ms"], _datetime_to_ms(lease_until))
-            cursor = connection.execute(
-                """
-                UPDATE runtime_leases
-                SET lease_expires_at_ms = ?, heartbeat_at_ms = ?
-                WHERE runtime_key = ? AND owner_id = ? AND lease_generation = ?
-                  AND lease_expires_at_ms > ?
-                """,
-                (
-                    lease_until_ms,
-                    now_ms,
-                    runtime_key,
-                    owner_id,
-                    row["lease_generation"],
-                    now_ms,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise RuntimeLeaseBusyError(
-                    runtime_key,
-                    row["owner_id"],
-                    _ms_to_datetime(row["lease_expires_at_ms"]),
-                )
-            generation = row["lease_generation"]
-            endpoint = row["endpoint"]
-        else:
-            generation = 1 if row is None else int(row["lease_generation"]) + 1
-            lease_until_ms = _datetime_to_ms(lease_until)
-            endpoint = None
-            connection.execute(
-                """
-                INSERT INTO runtime_leases (
-                  runtime_key, owner_id, lease_generation, endpoint,
-                  lease_expires_at_ms, heartbeat_at_ms
-                ) VALUES (?, ?, ?, NULL, ?, ?)
-                ON CONFLICT(runtime_key) DO UPDATE SET
-                  owner_id = excluded.owner_id,
-                  lease_generation = excluded.lease_generation,
-                  endpoint = NULL,
-                  lease_expires_at_ms = excluded.lease_expires_at_ms,
-                  heartbeat_at_ms = excluded.heartbeat_at_ms
-                """,
-                (runtime_key, owner_id, generation, lease_until_ms, now_ms),
-            )
-        return RuntimeLease(
-            runtime_key=runtime_key,
-            owner_id=owner_id,
-            generation=generation,
-            endpoint=endpoint,
-            lease_until=_ms_to_datetime(lease_until_ms),
-            heartbeat_at=_ms_to_datetime(now_ms),
-        )
-
-    return _run_immediate(connection, acquire)
-
-
-def _renew_runtime_lease_transaction(
-    connection: sqlite3.Connection,
-    lease: RuntimeLease,
-    lease_until: datetime,
-) -> bool:
-    def renew() -> bool:
-        now_ms = _now_ms()
-        cursor = connection.execute(
-            """
-            UPDATE runtime_leases
-            SET lease_expires_at_ms = ?, heartbeat_at_ms = ?, endpoint = ?
-            WHERE runtime_key = ? AND owner_id = ? AND lease_generation = ?
-              AND lease_expires_at_ms > ?
-            """,
-            (
-                _datetime_to_ms(lease_until),
-                now_ms,
-                lease.endpoint,
-                lease.runtime_key,
-                lease.owner_id,
-                lease.generation,
-                now_ms,
-            ),
-        )
-        return cursor.rowcount == 1
-
-    return _run_immediate(connection, renew)
-
-
-def _release_runtime_lease_transaction(
-    connection: sqlite3.Connection,
-    lease: RuntimeLease,
-) -> None:
-    def release() -> None:
-        now_ms = _now_ms()
-        connection.execute(
-            """
-            UPDATE runtime_leases
-            SET lease_expires_at_ms = 0, heartbeat_at_ms = ?
-            WHERE runtime_key = ? AND owner_id = ? AND lease_generation = ?
-              AND lease_expires_at_ms > ?
-            """,
-            (
-                now_ms,
-                lease.runtime_key,
-                lease.owner_id,
-                lease.generation,
-                now_ms,
-            ),
-        )
-
-    _run_immediate(connection, release)
 
 
 def _prune_transaction(

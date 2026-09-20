@@ -1,6 +1,6 @@
 """Shared behavioral contract for every durable job-store implementation."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 
@@ -15,7 +15,6 @@ from nexus_mcp.jobs.store import (
     CancelledTerminalOutcome,
     PrunePolicy,
     ResolveInputCommand,
-    RuntimeLeaseBusyError,
     SucceededTerminalOutcome,
 )
 from tests.fixtures import make_pending_permission, make_turn_result
@@ -49,56 +48,6 @@ async def test_event_pages_advance_from_committed_sequence(job_store):
     assert first.next_after_sequence == 2
     assert [event.sequence for event in second.events] == [3, 4]
     assert second.has_more is False
-
-
-async def test_runtime_lease_contention_generation_and_endpoint_fencing(job_store):
-    """A live runtime owner excludes contenders and stale generations cannot renew or release."""
-    far_future = datetime(2099, 1, 1, tzinfo=UTC)
-    first = await job_store.acquire_runtime_lease("opencode:ws-test", "process-1", far_future)
-    extended = await job_store.acquire_runtime_lease(
-        "opencode:ws-test", "process-1", far_future + timedelta(minutes=5)
-    )
-    assert extended.generation == first.generation
-
-    with pytest.raises(RuntimeLeaseBusyError):
-        await job_store.acquire_runtime_lease("opencode:ws-test", "process-2", far_future)
-
-    expired = await job_store.acquire_runtime_lease("opencode:expired", "process-1", OLD)
-    current = await job_store.acquire_runtime_lease("opencode:expired", "process-2", far_future)
-    assert current.generation == expired.generation + 1
-    assert await job_store.renew_runtime_lease(expired, far_future) is False
-
-    with_endpoint = extended.model_copy(update={"endpoint": "http://127.0.0.1:4096"})
-    assert (
-        await job_store.renew_runtime_lease(with_endpoint, far_future + timedelta(minutes=10))
-        is True
-    )
-    await job_store.release_runtime_lease(current)
-    assert (
-        await job_store.renew_runtime_lease(with_endpoint, far_future + timedelta(minutes=15))
-        is True
-    )
-    await job_store.release_runtime_lease(with_endpoint)
-    replacement = await job_store.acquire_runtime_lease("opencode:ws-test", "process-3", far_future)
-    assert replacement.generation == first.generation + 1
-
-    abandoned = await job_store.acquire_runtime_lease("opencode:abandoned", "process-1", OLD)
-    assert await job_store.renew_runtime_lease(abandoned, far_future) is False
-    await job_store.release_runtime_lease(abandoned)
-    fenced = await job_store.acquire_runtime_lease("opencode:abandoned", "process-2", far_future)
-    assert fenced.generation == abandoned.generation + 1
-
-    same_owner_old = await job_store.acquire_runtime_lease(
-        "opencode:same-owner", "process-1", far_future
-    )
-    await job_store.release_runtime_lease(same_owner_old)
-    same_owner_current = await job_store.acquire_runtime_lease(
-        "opencode:same-owner", "process-1", far_future
-    )
-    assert same_owner_current.generation == same_owner_old.generation + 1
-    assert await job_store.renew_runtime_lease(same_owner_old, far_future) is False
-    await job_store.release_runtime_lease(same_owner_old)
-    assert await job_store.renew_runtime_lease(same_owner_current, far_future) is True
 
 
 async def test_prune_retains_terminal_jobs_with_unresolved_inputs(job_store):
