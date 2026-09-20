@@ -50,8 +50,6 @@ __all__ = [
     "PrunePolicy",
     "PruneResult",
     "ResolveInputCommand",
-    "RuntimeLease",
-    "RuntimeLeaseBusyError",
     "StoredJobPage",
     "SucceededTerminalOutcome",
     "TerminalOutcome",
@@ -312,35 +310,6 @@ type TerminalOutcome = Annotated[
 ]
 
 
-class RuntimeLease(_StoreModel):
-    """Generation-fenced ownership of one shared managed backend runtime."""
-
-    runtime_key: str = Field(min_length=1, max_length=512)
-    owner_id: str = Field(min_length=1, max_length=256)
-    generation: int = Field(ge=1)
-    lease_until: datetime
-    heartbeat_at: datetime
-    endpoint: str | None = Field(default=None, min_length=1, max_length=4096)
-
-    @field_validator("lease_until", "heartbeat_at", mode="after")
-    @classmethod
-    def normalize_timestamps(cls, value: datetime) -> datetime:
-        """Persist runtime coordination timestamps in UTC."""
-        return _normalize_utc(value)
-
-
-class RuntimeLeaseBusyError(Exception):
-    """Raised when a different process owns an unexpired runtime lease."""
-
-    def __init__(self, runtime_key: str, owner_id: str, lease_until: datetime) -> None:
-        self.runtime_key = runtime_key
-        self.owner_id = owner_id
-        self.lease_until = lease_until
-        super().__init__(
-            f"Runtime {runtime_key} is leased by {owner_id} until {lease_until.isoformat()}"
-        )
-
-
 class PrunePolicy(_StoreModel):
     """Independent retention cutoffs for terminal jobs, events, and raw diagnostics."""
 
@@ -479,13 +448,5 @@ class JobStore(Protocol):
     ) -> AgentJob: ...
 
     async def read_events(self, job_id: str, after_sequence: int, limit: int) -> EventPage: ...
-
-    async def acquire_runtime_lease(
-        self, runtime_key: str, owner_id: str, lease_until: datetime
-    ) -> RuntimeLease: ...
-
-    async def renew_runtime_lease(self, lease: RuntimeLease, lease_until: datetime) -> bool: ...
-
-    async def release_runtime_lease(self, lease: RuntimeLease) -> None: ...
 
     async def prune(self, policy: PrunePolicy, now: datetime) -> PruneResult: ...
