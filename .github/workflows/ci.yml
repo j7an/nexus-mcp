@@ -21,8 +21,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.12", "3.13", "3.14"]
+        # Ubuntu carries the Python-version dimension; Windows carries the platform
+        # dimension, pinned to the requires-python floor because the nt code paths are
+        # version-independent and the floor is the least-tested real configuration.
+        # Move the Windows pin when requires-python leaves 3.12.
+        #
+        # macOS is deliberately absent. Every `sys.platform == "darwin"` branch in src/
+        # is monkeypatch-tested (tests/unit/jobs/test_paths.py, test_configuration.py),
+        # so ubuntu already executes it; everything else darwin does is the shared
+        # `os.name == "posix"` path; and the one darwin-real test (sandbox-exec, in
+        # tests/integration/test_claude_agent_smoke.py) is integration-marked, which the
+        # step below excludes. Windows is not redundant that way: it is the only runner
+        # that reaches _terminate_windows_tree() in process.py and the os.path.normcase
+        # lowercasing that keys workspace identity in jobs/sqlite_store.py.
+        include:
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: ubuntu-latest
+            python-version: "3.14"
+          - os: windows-latest
+            python-version: "3.12"
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
