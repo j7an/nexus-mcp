@@ -199,7 +199,7 @@ async def test_semantic_idempotency_replays_every_service_command_family(
     family: str,
 ):
     """Generated identities and lower capture metadata cannot conflict with the same intent."""
-    service, _, _, _ = real_service_environment
+    service, durable_store, _, _ = real_service_environment
     common = {
         "workspace": WORKSPACE_SELECTOR,
         "access": authorized_access(),
@@ -208,7 +208,7 @@ async def test_semantic_idempotency_replays_every_service_command_family(
     }
     source_session_id = None
     if family not in {"start", "diagnose"}:
-        source_session_id = await _source_session(service)
+        source_session_id = await _source_session(service, durable_store)
 
     async def invoke():
         match family:

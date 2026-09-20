@@ -1,15 +1,18 @@
 """Closed, framework-independent operation contracts."""
 
 from collections.abc import Mapping
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     JsonValue,
+    SerializerFunctionWrapHandler,
     field_serializer,
     field_validator,
+    model_serializer,
+    model_validator,
 )
 
 from nexus_mcp.core._json import freeze_bounded_json_mapping, thaw_json_mapping
@@ -66,6 +69,34 @@ class TurnOperation(_ContextOperation):
 
     kind: Literal["turn"] = "turn"
     prompt: str = Field(min_length=1, max_length=131_072)
+    output_schema: Mapping[str, JsonValue] | None = Field(
+        default=None, max_length=_MAX_CONTEXT_ITEMS
+    )
+
+    @field_validator("output_schema", mode="after")
+    @classmethod
+    def freeze_output_schema(
+        cls, value: Mapping[str, JsonValue] | None
+    ) -> Mapping[str, JsonValue] | None:
+        """Bound and protect a caller-supplied JSON Schema from mutation."""
+        return None if value is None else freeze_bounded_json_mapping(value)
+
+    @field_serializer("output_schema")
+    def serialize_output_schema(
+        self, value: Mapping[str, JsonValue] | None
+    ) -> dict[str, JsonValue] | None:
+        """Restore ordinary JSON containers before model-level omission handling."""
+        return None if value is None else thaw_json_mapping(value)
+
+    @model_serializer(mode="wrap")
+    def omit_absent_output_schema(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Keep serialized turns byte-identical to pre-schema releases when no schema is set."""
+        data: dict[str, Any] = handler(self)
+        if self.output_schema is None:
+            data.pop("output_schema", None)
+        else:
+            data["output_schema"] = thaw_json_mapping(self.output_schema)
+        return data
 
 
 class ForkOperation(_ContextOperation):
@@ -80,6 +111,13 @@ class ReviewTarget(_OperationModel):
 
     kind: ReviewTargetKind
     reference: str | None = Field(default=None, min_length=1, max_length=4096)
+
+    @model_validator(mode="after")
+    def require_named_target_reference(self) -> "ReviewTarget":
+        """A branch or commit review must identify the target it will inspect."""
+        if self.kind in ("branch", "commit") and self.reference is None:
+            raise ValueError("branch and commit review targets require a reference")
+        return self
 
 
 class ReviewOperation(_ContextOperation):

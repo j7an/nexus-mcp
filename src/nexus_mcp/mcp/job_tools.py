@@ -84,6 +84,7 @@ async def agent_start(
     prompt: str,
     context: Mapping[str, JsonValue] | None = None,
     file_refs: list[str] | None = None,
+    output_schema: Mapping[str, JsonValue] | None = None,
     config: ExecutionConfigValues | None = None,
     access_policy: AccessPolicy = "private",
     idempotency_key: str | None = None,
@@ -93,6 +94,7 @@ async def agent_start(
         prompt=prompt,
         context={} if context is None else context,
         file_refs=() if file_refs is None else tuple(file_refs),
+        output_schema=output_schema,
     )
     explicit_config = config or ExecutionConfigValues()
     return await _invoke(
@@ -115,6 +117,7 @@ async def agent_continue(
     prompt: str,
     context: Mapping[str, JsonValue] | None = None,
     file_refs: list[str] | None = None,
+    output_schema: Mapping[str, JsonValue] | None = None,
     config: ExecutionConfigValues | None = None,
     idempotency_key: str | None = None,
 ) -> JobHandle:
@@ -123,6 +126,7 @@ async def agent_continue(
         prompt=prompt,
         context={} if context is None else context,
         file_refs=() if file_refs is None else tuple(file_refs),
+        output_schema=output_schema,
     )
     explicit_config = config or ExecutionConfigValues()
     return await _invoke(

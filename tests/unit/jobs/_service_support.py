@@ -4,8 +4,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from nexus_mcp.core import (
+    BackendEvent,
     ConfigLayerSnapshot,
     ExecutionConfigValues,
+    ProviderReference,
     RequestedExecutionConfig,
     ReviewOperation,
     ReviewTarget,
@@ -13,6 +15,7 @@ from nexus_mcp.core import (
     WorkspaceSelector,
 )
 from nexus_mcp.jobs.service import AgentJobService
+from nexus_mcp.jobs.store import JobStore
 from tests.fixtures import make_access_context
 
 NOW = datetime(2026, 8, 30, 20, 0, tzinfo=UTC)
@@ -31,8 +34,8 @@ def make_review_operation(**overrides: Any) -> ReviewOperation:
     return ReviewOperation(**(defaults | overrides))
 
 
-async def _source_session(service: AgentJobService) -> str:
-    """Create and terminalize one source session for idempotency tests."""
+async def _source_session(service: AgentJobService, store: JobStore) -> str:
+    """Create a terminal source session with a valid provider checkpoint."""
     source = await service.start(
         workspace=WORKSPACE_SELECTOR,
         access=authorized_access(),
@@ -42,6 +45,16 @@ async def _source_session(service: AgentJobService) -> str:
         idempotency_key="source",
     )
     assert source.session_id is not None
+    claimed = await store.claim_next(
+        "source-checkpoint",
+        datetime(2099, 1, 1, tzinfo=UTC),
+        event=BackendEvent(type="progress", occurred_at=NOW),
+    )
+    assert claimed is not None and claimed.job.job_id == source.job_id
+    await store.record_provider_reference(
+        claimed.token,
+        ProviderReference(kind="thread", value="thread-source"),
+    )
     await service.cancel(
         workspace=WORKSPACE_SELECTOR,
         access=authorized_access(),

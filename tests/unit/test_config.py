@@ -14,9 +14,11 @@ from nexus_mcp.config import (
     _read_runner_env_defaults,
     get_agent_env,
     get_agent_fallback_models,
+    get_claude_settings_profile,
     get_cli_detection_timeout,
     get_global_output_limit,
     get_global_timeout,
+    get_legacy_runners_enabled,
     get_retry_base_delay,
     get_retry_max_attempts,
     get_retry_max_delay,
@@ -750,3 +752,30 @@ class TestBackwardCompatGetters:
     def test_zero_delay_preserved_by_getter(self):
         """0.0 is a valid base delay — getter must not coerce to default."""
         assert get_retry_base_delay() == 0.0
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"), [(None, False), ("", False), ("0", False), ("1", True)]
+)
+def test_legacy_runners_flag(monkeypatch, value, expected):
+    monkeypatch.delenv("NEXUS_ENABLE_LEGACY_RUNNERS", raising=False)
+    if value is not None:
+        monkeypatch.setenv("NEXUS_ENABLE_LEGACY_RUNNERS", value)
+    assert get_legacy_runners_enabled() is expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, "isolated"), ("project", "project"), (" Inherit ", "inherit")],
+)
+def test_claude_settings_profile(monkeypatch, value, expected):
+    monkeypatch.delenv("NEXUS_CLAUDE_SETTINGS_PROFILE", raising=False)
+    if value is not None:
+        monkeypatch.setenv("NEXUS_CLAUDE_SETTINGS_PROFILE", value)
+    assert get_claude_settings_profile() == expected
+
+
+def test_claude_settings_profile_rejects_unknown(monkeypatch):
+    monkeypatch.setenv("NEXUS_CLAUDE_SETTINGS_PROFILE", "everything")
+    with pytest.raises(ConfigurationError):
+        get_claude_settings_profile()
