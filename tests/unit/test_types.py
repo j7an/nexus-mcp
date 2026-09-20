@@ -245,22 +245,17 @@ def test_multi_prompt_response_counts():
 # ---------------------------------------------------------------------------
 
 
-def test_prompt_request_max_retries_defaults_to_none():
-    """PromptRequest.max_retries defaults to None (falls back to env default)."""
-    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello")
-    assert req.max_retries is None
-
-
-def test_prompt_request_max_retries_accepts_custom_value():
-    """PromptRequest.max_retries accepts a positive integer."""
-    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", max_retries=5)
-    assert req.max_retries == 5
-
-
-def test_prompt_request_max_retries_accepts_one():
-    """max_retries=1 disables retry (run once, no retry on failure)."""
-    req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", max_retries=1)
-    assert req.max_retries == 1
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_retries", 2),
+        ("retry_base_delay", 0.1),
+        ("retry_max_delay", 1.0),
+    ],
+)
+def test_prompt_request_rejects_runner_retry_knobs(field, value):
+    with pytest.raises(ValidationError):
+        PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", **{field: value})
 
 
 def test_agent_task_max_retries_defaults_to_none():
@@ -273,18 +268,6 @@ def test_agent_task_max_retries_accepts_custom_value():
     """AgentTask.max_retries accepts a positive integer."""
     task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="Hello", max_retries=2)
     assert task.max_retries == 2
-
-
-def test_prompt_request_max_retries_zero_fails():
-    """max_retries=0 is rejected (ge=1); would cause range(0) → unreachable assertion."""
-    with pytest.raises(ValidationError):
-        PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", max_retries=0)
-
-
-def test_prompt_request_max_retries_negative_fails():
-    """Negative max_retries is rejected by ge=1 validator."""
-    with pytest.raises(ValidationError):
-        PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello", max_retries=-1)
 
 
 def test_agent_task_max_retries_zero_fails():
@@ -335,46 +318,6 @@ def test_agent_task_result_error_type_defaults_none():
 
 
 # ---------------------------------------------------------------------------
-# AgentTask.to_request() tests
-# ---------------------------------------------------------------------------
-
-
-def test_agent_task_to_request_maps_all_fields():
-    """to_request() produces a PromptRequest with all AgentTask fields copied."""
-    from nexus_mcp.types import PromptRequest
-
-    task = AgentTask(
-        cli=REPRESENTATIVE_CLI,
-        prompt="Hello",
-        execution_mode="yolo",
-        model="test-model",
-        max_retries=2,
-        output_limit=1024,
-        timeout=30,
-    )
-    req = task.to_request()
-    assert isinstance(req, PromptRequest)
-    assert req.cli == REPRESENTATIVE_CLI
-    assert req.prompt == "Hello"
-    assert req.execution_mode == "yolo"
-    assert req.model == "test-model"
-    assert req.max_retries == 2
-    assert req.output_limit == 1024
-    assert req.timeout == 30
-
-
-def test_agent_task_to_request_defaults():
-    """to_request() preserves default values when optional fields are unset."""
-    task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="Hi")
-    req = task.to_request()
-    assert req.execution_mode == "default"
-    assert req.model is None
-    assert req.max_retries is None
-    assert req.output_limit is None
-    assert req.timeout is None
-    assert req.context == {}
-
-
 def test_prompt_request_output_limit_defaults_to_none():
     """PromptRequest.output_limit defaults to None (falls back to env default)."""
     req = PromptRequest(cli=REPRESENTATIVE_CLI, prompt="Hello")
@@ -660,9 +603,3 @@ class TestAgentTaskOptionalCli:
         """cli='fake' still works as before."""
         task = AgentTask(cli=REPRESENTATIVE_CLI, prompt="Hello")
         assert task.cli == REPRESENTATIVE_CLI
-
-    def test_to_request_with_cli_none_raises_validation_error(self):
-        """to_request() with cli=None raises ValidationError (cli required in PromptRequest)."""
-        task = AgentTask(cli=None, prompt="Hello")
-        with pytest.raises(ValidationError):
-            task.to_request()

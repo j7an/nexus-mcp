@@ -8,7 +8,7 @@ Tests verify:
 - build_command() appends file_refs to prompt
 - execution mode flags: default/yolo (all produce same command structure)
 - parse_output() NDJSON primary path and JSON fallback path
-- error handling: _recover_from_error, _try_extract_error, retry integration
+- error handling: _recover_from_error, _try_extract_error, retryable-error classification
 """
 
 import json
@@ -468,7 +468,7 @@ class TestOpenCodeRunnerErrorHandling:
 
 
 class TestOpenCodeRunnerRetryableErrors:
-    """Test OpenCodeRunner retryable error classification and retry integration."""
+    """Test OpenCodeRunner retryable error classification."""
 
     @pytest.mark.parametrize("code", [429, 503])
     def test_retryable_error_codes_raise_retryable_error(self, code: int):
@@ -487,28 +487,17 @@ class TestOpenCodeRunnerRetryableErrors:
         assert not isinstance(exc_info.value, RetryableError)
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_retry_on_503_full_loop(self, mock_exec):
-        """503 on first attempt, success on second → called twice."""
+    async def test_retryable_error_propagates_after_one_attempt(self, mock_exec):
+        """A structured 503 stops direct runner execution after one subprocess attempt."""
         error_stdout = opencode_error_json("ServiceError", "unavailable", status_code=503)
         mock_exec.side_effect = [
             create_mock_process(stdout=error_stdout, stderr="", returncode=1),
             create_mock_process(stdout=OPENCODE_NDJSON_RESPONSE, returncode=0),
         ]
         runner = make_opencode_runner()
-        result = await runner.run(make_prompt_request(cli="opencode", prompt="test", max_retries=2))
-        assert result.output == "test output"
-        assert mock_exec.await_count == 2
-
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_retry_exhausted_all_503(self, mock_exec):
-        """3x 503 → RetryableError raised, called 3 times."""
-        error_stdout = opencode_error_json("ServiceError", "unavailable", status_code=503)
-        mock_exec.return_value = create_mock_process(stdout=error_stdout, stderr="", returncode=1)
-        runner = make_opencode_runner()
-        request = make_prompt_request(cli="opencode", prompt="test", max_retries=3)
         with pytest.raises(RetryableError):
-            await runner.run(request)
-        assert mock_exec.await_count == 3
+            await runner.run(make_prompt_request(cli="opencode", prompt="test"))
+        assert mock_exec.await_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -572,7 +561,7 @@ class TestOpenCodeRunnerAPIErrorExtraction:
         runner = make_opencode_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(cli="opencode", prompt="x", max_retries=1))
+            await runner.run(make_prompt_request(cli="opencode", prompt="x"))
 
         primary_message = exc_info.value.args[0]
         assert "OpenCode API error" in primary_message
@@ -589,7 +578,7 @@ class TestOpenCodeRunnerAPIErrorExtraction:
         runner = make_opencode_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(cli="opencode", prompt="x", max_retries=1))
+            await runner.run(make_prompt_request(cli="opencode", prompt="x"))
 
         assert exc_info.value.command is not None
         assert "opencode" in exc_info.value.command[0]
@@ -842,7 +831,7 @@ class TestOpenCodeRunnerErrorOnZeroExit:
         runner = make_opencode_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(cli="opencode", prompt="x", max_retries=1))
+            await runner.run(make_prompt_request(cli="opencode", prompt="x"))
 
         assert not isinstance(exc_info.value, ParseError)
         assert "OpenCode API error" in exc_info.value.args[0]
@@ -859,7 +848,7 @@ class TestOpenCodeRunnerErrorOnZeroExit:
         runner = make_opencode_runner()
 
         with pytest.raises(RetryableError):
-            await runner.run(make_prompt_request(cli="opencode", prompt="x", max_retries=1))
+            await runner.run(make_prompt_request(cli="opencode", prompt="x"))
 
     def test_lifecycle_then_error_does_not_parse_as_empty_success(self):
         """Lifecycle event before an error event → ParseError, not empty success.
@@ -885,4 +874,4 @@ class TestOpenCodeRunnerErrorOnZeroExit:
         runner = make_opencode_runner()
 
         with pytest.raises(RetryableError):
-            await runner.run(make_prompt_request(cli="opencode", prompt="x", max_retries=1))
+            await runner.run(make_prompt_request(cli="opencode", prompt="x"))

@@ -1,14 +1,14 @@
 # tests/unit/runners/test_log_emitter.py
 """Tests for LogEmitter integration with runners.
 
-Placed in tests/unit/runners/ so autouse fixtures (mock_cli_detection,
-fast_retry_sleep) from conftest.py apply automatically.
+Placed in tests/unit/runners/ so the autouse CLI-detection fixture from
+conftest.py applies automatically.
 """
 
 import json
 from unittest.mock import patch as sync_patch
 
-from nexus_mcp.exceptions import ParseError, RetryableError
+from nexus_mcp.exceptions import ParseError
 from nexus_mcp.runners.base import AbstractRunner
 from nexus_mcp.types import AgentResponse, PromptRequest
 from tests.fixtures import (
@@ -29,9 +29,6 @@ class EmitterFakeRunner(AbstractRunner):
 
     def __init__(self) -> None:
         self.timeout = 30
-        self.base_delay = 0.01
-        self.max_delay = 0.01
-        self.default_max_attempts = 1
         self.output_limit = 50_000
         self.default_model = None
         self.cli_path = self.AGENT_NAME
@@ -74,33 +71,6 @@ class TestEmitterThreading:
 
         response = await runner.run(make_prompt_request())
         assert response.output == "test output"
-
-
-class TestRetryEmit:
-    """Retry loop emits warning on retryable errors."""
-
-    @sync_patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_retry_emits_warning(self, mock_exec):
-        """Retry loop emits warning before sleeping."""
-        mock_exec.side_effect = [
-            create_mock_process(stdout="", stderr="rate limited", returncode=1),
-            create_mock_process(stdout=fake_json("test output")),
-        ]
-        runner = EmitterFakeRunner()
-        calls: list[tuple[str, str]] = []
-
-        async def collecting_emitter(level: str, message: str) -> None:
-            calls.append((level, message))
-
-        def patched_recover(stdout, stderr, returncode, command=None):
-            raise RetryableError("429 rate limited", stderr=stderr, returncode=returncode)
-
-        runner._recover_from_error = patched_recover
-
-        await runner.run(make_prompt_request(max_retries=2), emitter=collecting_emitter)
-
-        warning_calls = [(lvl, msg) for lvl, msg in calls if lvl == "warning"]
-        assert any("Retryable error (attempt 1/2)" in msg for _, msg in warning_calls)
 
 
 class TestTruncationEmit:

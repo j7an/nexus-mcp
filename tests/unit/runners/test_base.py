@@ -6,7 +6,6 @@ Tests verify:
 - AbstractRunner implements Template Method pattern
 - run() orchestrates: build_command → run_subprocess → parse_output
 - run() raises SubprocessError on non-zero return codes (fail fast)
-- run() retries on RetryableError with exponential backoff
 """
 
 from pathlib import Path
@@ -21,7 +20,6 @@ from nexus_mcp.types import AgentResponse, PromptRequest, SubprocessResult
 from tests.fixtures import (
     assert_owned_subprocess_call,
     create_mock_process,
-    make_agent_response,
     make_prompt_request,
 )
 
@@ -64,6 +62,37 @@ class TestAbstractRunner:
     def runner(self) -> ConcreteRunner:
         """Provide test runner instance."""
         return ConcreteRunner()
+
+    async def test_retryable_failure_is_one_runner_attempt(self, runner):
+        """Retryable failures propagate after the runner's only attempt."""
+        error = RetryableError("rate limited", returncode=429)
+        runner._execute = AsyncMock(side_effect=error)  # type: ignore[method-assign]
+
+        with pytest.raises(RetryableError):
+            await runner.run(make_prompt_request())
+
+        runner._execute.assert_awaited_once()
+
+    async def test_plain_subprocess_error_propagates_after_one_attempt(self, runner):
+        """Non-retryable subprocess errors propagate after one attempt."""
+        runner._execute = AsyncMock(  # type: ignore[method-assign]
+            side_effect=SubprocessError("auth failed", returncode=401)
+        )
+
+        with pytest.raises(SubprocessError) as exc_info:
+            await runner.run(make_prompt_request())
+
+        runner._execute.assert_awaited_once()
+        assert exc_info.value.returncode == 401
+
+    async def test_parse_error_propagates_after_one_attempt(self, runner):
+        """Parse errors propagate after one attempt."""
+        runner._execute = AsyncMock(side_effect=ParseError("bad json"))  # type: ignore[method-assign]
+
+        with pytest.raises(ParseError):
+            await runner.run(make_prompt_request())
+
+        runner._execute.assert_awaited_once()
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_run_success_orchestrates_template_steps(self, mock_exec, runner):
@@ -238,165 +267,6 @@ class TestAbstractRunner:
             command=["test-cli"],
         )
         assert result is None
-
-
-class TestRetryLoop:
-    """Test AbstractRunner retry loop behavior (run() wraps _execute() with backoff)."""
-
-    @pytest.fixture
-    def runner(self) -> ConcreteRunner:
-        """Provide test runner instance."""
-        return ConcreteRunner()
-
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_no_retry_on_success(self, mock_exec, runner):
-        """Successful execution calls subprocess exactly once."""
-        mock_exec.return_value = create_mock_process(stdout="ok output")
-        request = make_prompt_request()
-
-        await runner.run(request)
-
-        assert mock_exec.await_count == 1
-
-    async def test_retries_on_retryable_error_and_succeeds(self, runner):
-        """Retries after RetryableError, returns AgentResponse on success attempt."""
-        # ConcreteRunner has no _try_extract_error override, so returncode=1 raises
-        # plain SubprocessError (non-retryable) from _execute. We need a runner that
-        # raises RetryableError. Use _execute mock instead.
-        success_response = make_agent_response(output="success output")
-        retryable = RetryableError("rate limit", returncode=429)
-
-        runner._execute = AsyncMock(  # type: ignore[method-assign]
-            side_effect=[retryable, retryable, success_response]
-        )
-        request = make_prompt_request(max_retries=3)
-
-        response = await runner.run(request)
-
-        assert response.output == "success output"
-        assert runner._execute.await_count == 3
-
-    async def test_exhausts_attempts_reraises_retryable_error(self, runner):
-        """When all attempts fail with RetryableError, re-raises the last one."""
-        retryable = RetryableError("rate limit", returncode=429)
-        runner._execute = AsyncMock(side_effect=retryable)  # type: ignore[method-assign]
-        request = make_prompt_request(max_retries=3)
-
-        with pytest.raises(RetryableError) as exc_info:
-            await runner.run(request)
-
-        assert exc_info.value.returncode == 429
-        assert runner._execute.await_count == 3
-
-    async def test_no_retry_on_plain_subprocess_error(self, runner):
-        """Non-retryable SubprocessError propagates immediately without retry."""
-        runner._execute = AsyncMock(  # type: ignore[method-assign]
-            side_effect=SubprocessError("auth failed", returncode=401)
-        )
-        request = make_prompt_request(max_retries=3)
-
-        with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(request)
-
-        # Only one attempt — no retry on SubprocessError
-        assert runner._execute.await_count == 1
-        assert exc_info.value.returncode == 401
-
-    async def test_no_retry_on_parse_error(self, runner):
-        """ParseError propagates immediately without retry."""
-        runner._execute = AsyncMock(  # type: ignore[method-assign]
-            side_effect=ParseError("bad json")
-        )
-        request = make_prompt_request(max_retries=3)
-
-        with pytest.raises(ParseError):
-            await runner.run(request)
-
-        assert runner._execute.await_count == 1
-
-    def test_compute_backoff_stays_within_max_delay(self, runner):
-        """Backoff delay never exceeds max_delay regardless of attempt number."""
-        runner.max_delay = 10.0
-        runner.base_delay = 2.0
-
-        # At high attempt numbers, cap = min(10, 2 * 2^100) → cap=10
-        for attempt in range(20):
-            delay = runner._compute_backoff(attempt, retry_after=None)
-            assert delay <= runner.max_delay
-
-    def test_compute_backoff_uses_full_jitter(self, runner):
-        """Backoff uses random.uniform(0, cap) — result is within [0, cap]."""
-        runner.base_delay = 2.0
-        runner.max_delay = 60.0
-
-        # attempt=0: cap = min(60, 2 * 2^0) = 2 → delay in [0, 2]
-        with patch("nexus_mcp.runners.retry.random.uniform", return_value=1.5) as mock_uniform:
-            delay = runner._compute_backoff(0, retry_after=None)
-
-        mock_uniform.assert_called_once_with(0, 2.0)
-        assert delay == 1.5
-
-    def test_compute_backoff_respects_retry_after_hint(self, runner):
-        """retry_after hint is used when larger than computed backoff."""
-        runner.base_delay = 2.0
-        runner.max_delay = 60.0
-
-        with patch("nexus_mcp.runners.retry.random.uniform", return_value=0.5):
-            delay = runner._compute_backoff(0, retry_after=30.0)
-
-        # computed=0.5, retry_after=30 → max(0.5, 30) = 30
-        assert delay == 30.0
-
-    def test_compute_backoff_computed_wins_when_larger_than_retry_after(self, runner):
-        """Computed delay is used when larger than retry_after hint."""
-        runner.base_delay = 2.0
-        runner.max_delay = 60.0
-
-        with patch("nexus_mcp.runners.retry.random.uniform", return_value=1.8):
-            delay = runner._compute_backoff(0, retry_after=0.1)
-
-        # computed=1.8, retry_after=0.1 → max(1.8, 0.1) = 1.8
-        assert delay == 1.8
-
-    async def test_max_retries_1_means_single_attempt(self, runner):
-        """max_retries=1 runs exactly once with no retry on failure."""
-        retryable = RetryableError("rate limit", returncode=429)
-        runner._execute = AsyncMock(side_effect=retryable)  # type: ignore[method-assign]
-        request = make_prompt_request(max_retries=1)
-
-        with pytest.raises(RetryableError):
-            await runner.run(request)
-
-        assert runner._execute.await_count == 1
-
-    async def test_max_retries_none_falls_back_to_env_default(self, runner):
-        """max_retries=None uses runner.default_max_attempts (from env)."""
-        retryable = RetryableError("rate limit")
-        runner._execute = AsyncMock(side_effect=retryable)  # type: ignore[method-assign]
-        runner.default_max_attempts = 4
-        request = make_prompt_request(max_retries=None)
-
-        with pytest.raises(RetryableError):
-            await runner.run(request)
-
-        assert runner._execute.await_count == 4
-
-    async def test_backoff_called_between_attempts(self, runner):
-        """asyncio.sleep is called (max_attempts - 1) times between attempts."""
-        retryable = RetryableError("rate limit")
-        runner._execute = AsyncMock(side_effect=retryable)  # type: ignore[method-assign]
-        request = make_prompt_request(max_retries=3)
-
-        sleep_calls: list[float] = []
-
-        async def capture_sleep(delay: float) -> None:
-            sleep_calls.append(delay)
-
-        with patch("asyncio.sleep", side_effect=capture_sleep), pytest.raises(RetryableError):
-            await runner.run(request)
-
-        # 3 attempts → 2 sleeps (no sleep after the last attempt)
-        assert len(sleep_calls) == 2
 
 
 class TestBuildPrompt:
@@ -619,21 +489,21 @@ class TestRaiseStructuredError:
 
 
 class TestAbstractRunnerSingleAttempt:
-    """Direct tests for the extracted single-attempt helper."""
+    """Direct tests for the default one-attempt implementation."""
 
     @pytest.fixture
     def runner(self) -> ConcreteRunner:
         return ConcreteRunner()
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_execute_single_attempt_recovers_nonzero_exit(self, mock_exec, runner):
+    async def test_execute_recovers_nonzero_exit(self, mock_exec, runner):
         mock_exec.return_value = create_mock_process(
             stdout="success output",
             stderr="minor warning",
             returncode=1,
         )
 
-        response = await runner._execute_single_attempt(
+        response = await runner._execute(
             make_prompt_request(prompt="test"),
             AsyncMock(),
             AsyncMock(),
@@ -642,12 +512,3 @@ class TestAbstractRunnerSingleAttempt:
         assert response.output == "success output"
         assert response.metadata["recovered_from_error"] is True
         assert response.metadata["original_exit_code"] == 1
-
-    async def test_execute_delegates_to_single_attempt(self, runner):
-        expected = make_agent_response(output="ok")
-        runner._execute_single_attempt = AsyncMock(return_value=expected)  # type: ignore[method-assign]
-
-        response = await runner._execute(make_prompt_request(), AsyncMock(), AsyncMock())
-
-        assert response == expected
-        runner._execute_single_attempt.assert_awaited_once()

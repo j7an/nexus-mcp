@@ -597,17 +597,17 @@ class TestClaudeRunnerRetryableErrors:
         assert not isinstance(exc_info.value, RetryableError)
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_retry_integration_429_then_success(self, mock_exec):
-        """Full run() with 429 on first call, success on second → await_count == 2."""
+    async def test_retryable_error_propagates_after_one_attempt(self, mock_exec):
+        """A structured 429 stops direct runner execution after one subprocess attempt."""
         error_stderr = json.dumps({"error": {"code": 429, "message": "rate limited"}})
         mock_exec.side_effect = [
             create_mock_process(stdout="", stderr=error_stderr, returncode=1),
             create_mock_process(stdout=CLAUDE_JSON_RESPONSE, returncode=0),
         ]
         runner = make_claude_runner()
-        result = await runner.run(make_prompt_request(cli="claude", prompt="x", max_retries=2))
-        assert result.output == "test output"
-        assert mock_exec.await_count == 2
+        with pytest.raises(RetryableError):
+            await runner.run(make_prompt_request(cli="claude", prompt="x"))
+        assert mock_exec.await_count == 1
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
     async def test_nonzero_returncode_raises_subprocess_error(self, mock_exec):
@@ -626,17 +626,6 @@ class TestClaudeRunnerRetryableErrors:
         runner = make_claude_runner()
         with pytest.raises(RetryableError):
             runner._try_extract_error(stdout, stderr, 1)
-
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_retry_all_attempts_exhausted(self, mock_exec):
-        """All 3 attempts return 429 → RetryableError raised; subprocess called 3 times."""
-        error_stderr = json.dumps({"error": {"code": 429, "message": "rate limited"}})
-        mock_exec.return_value = create_mock_process(stdout="", stderr=error_stderr, returncode=1)
-        runner = make_claude_runner()
-        request = make_prompt_request(cli="claude", prompt="x", max_retries=3)
-        with pytest.raises(RetryableError):
-            await runner.run(request)
-        assert mock_exec.await_count == 3
 
 
 # ---------------------------------------------------------------------------
@@ -721,7 +710,7 @@ class TestClaudeRunnerAPIErrorExtraction:
         runner = make_claude_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(cli="claude", prompt="x", max_retries=1))
+            await runner.run(make_prompt_request(cli="claude", prompt="x"))
 
         primary_message = exc_info.value.args[0]
         assert "Claude API error" in primary_message
@@ -738,7 +727,7 @@ class TestClaudeRunnerAPIErrorExtraction:
         runner = make_claude_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(cli="claude", prompt="x", max_retries=1))
+            await runner.run(make_prompt_request(cli="claude", prompt="x"))
 
         assert exc_info.value.command is not None
         assert "claude" in exc_info.value.command[0]

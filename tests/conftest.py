@@ -100,21 +100,6 @@ def mock_cli_detection():
 
 
 @pytest.fixture
-def fast_retry_sleep(monkeypatch):
-    """Patch asyncio.sleep to be instant for retry backoff tests.
-
-    NOT autouse — the runners/ conftest wraps this as autouse for unit tests.
-    E2E tests have their own variant that patches _compute_backoff instead
-    (to avoid busy-spinning the Docket worker's 250ms polling loop).
-    """
-
-    async def instant_sleep(_: float) -> None:
-        pass
-
-    monkeypatch.setattr("asyncio.sleep", instant_sleep)
-
-
-@pytest.fixture
 def mock_subprocess():
     """Patch asyncio.create_subprocess_exec at the process module boundary.
 

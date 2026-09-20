@@ -164,7 +164,8 @@ class RetryableError(SubprocessError):
 
     Raised when a CLI subprocess returns an error code indicating a temporary
     condition (e.g., rate limiting HTTP 429, service unavailability HTTP 503).
-    The retry loop in AbstractRunner will catch this and retry with backoff.
+    The legacy backend classifies this as safe to retry; the durable job worker
+    schedules subsequent attempts according to the resolved retry policy.
 
     Attributes:
         retry_after: Suggested wait time in seconds before retrying (None = no hint).

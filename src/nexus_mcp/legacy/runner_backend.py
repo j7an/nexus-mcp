@@ -193,7 +193,6 @@ class LegacyRunnerBackend:
         execution_mode: ExecutionMode,
     ) -> PromptRequest:
         config = context.resolved_config
-        retry_policy = config.retry_policy
         return PromptRequest(
             cli=self._backend_id,
             prompt=operation.prompt,
@@ -201,11 +200,8 @@ class LegacyRunnerBackend:
             file_refs=list(operation.file_refs),
             execution_mode=execution_mode,
             model=config.model,
-            max_retries=1,
             output_limit=config.output_limit_bytes,
             timeout=config.timeout_seconds,
-            retry_base_delay=(None if retry_policy is None else retry_policy.base_delay_seconds),
-            retry_max_delay=(None if retry_policy is None else retry_policy.max_delay_seconds),
             cwd=context.workspace.canonical_path,
         )
 
