@@ -259,31 +259,6 @@ def _forbidden_core_import_violations(files: Iterable[Path]) -> list[str]:
     return sorted(violations)
 
 
-def _static_export_strings(
-    node: ast.AST,
-    bindings: dict[str, tuple[str, ...] | None],
-) -> tuple[str, ...] | None:
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return (node.value,)
-    if isinstance(node, ast.Name):
-        return bindings.get(node.id)
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        left = _static_export_strings(node.left, bindings)
-        right = _static_export_strings(node.right, bindings)
-        return None if left is None or right is None else left + right
-    if not isinstance(node, ast.List | ast.Tuple):
-        return None
-
-    exports: list[str] = []
-    for element in node.elts:
-        value = element.value if isinstance(element, ast.Starred) else element
-        resolved = _static_export_strings(value, bindings)
-        if resolved is None:
-            return None
-        exports.extend(resolved)
-    return tuple(exports)
-
-
 def _target_names(target: ast.AST) -> Iterable[str]:
     if isinstance(target, ast.Name):
         yield target.id
@@ -292,6 +267,28 @@ def _target_names(target: ast.AST) -> Iterable[str]:
     elif isinstance(target, ast.List | ast.Tuple):
         for element in target.elts:
             yield from _target_names(element)
+
+
+def _pattern_bound_names(pattern: ast.pattern) -> Iterable[str]:
+    if isinstance(pattern, ast.MatchAs):
+        if pattern.name is not None:
+            yield pattern.name
+        if pattern.pattern is not None:
+            yield from _pattern_bound_names(pattern.pattern)
+    elif isinstance(pattern, ast.MatchStar):
+        if pattern.name is not None:
+            yield pattern.name
+    elif isinstance(pattern, ast.MatchMapping):
+        if pattern.rest is not None:
+            yield pattern.rest
+        for nested_pattern in pattern.patterns:
+            yield from _pattern_bound_names(nested_pattern)
+    elif isinstance(pattern, ast.MatchClass):
+        for nested_pattern in (*pattern.patterns, *pattern.kwd_patterns):
+            yield from _pattern_bound_names(nested_pattern)
+    elif isinstance(pattern, ast.MatchSequence | ast.MatchOr):
+        for nested_pattern in pattern.patterns:
+            yield from _pattern_bound_names(nested_pattern)
 
 
 def _statement_bound_names(statement: ast.stmt) -> Iterable[str]:
@@ -307,14 +304,22 @@ def _statement_bound_names(statement: ast.stmt) -> Iterable[str]:
             yield alias.asname or alias.name.split(".", maxsplit=1)[0]
     elif isinstance(statement, ast.ImportFrom):
         for alias in statement.names:
-            if alias.name != "*":
-                yield alias.asname or alias.name
+            yield "__all__" if alias.name == "*" else alias.asname or alias.name
     elif isinstance(statement, ast.For | ast.AsyncFor):
         yield from _target_names(statement.target)
     elif isinstance(statement, ast.With | ast.AsyncWith):
         for item in statement.items:
             if item.optional_vars is not None:
                 yield from _target_names(item.optional_vars)
+    elif isinstance(statement, ast.Try | ast.TryStar):
+        for handler in statement.handlers:
+            if handler.name is not None:
+                yield handler.name
+    elif isinstance(statement, ast.Match):
+        for case in statement.cases:
+            yield from _pattern_bound_names(case.pattern)
+    elif isinstance(statement, ast.TypeAlias):
+        yield from _target_names(statement.name)
 
 
 def _nested_statement_groups(statement: ast.stmt) -> Iterable[list[ast.stmt]]:
@@ -347,202 +352,54 @@ def _module_scope_statements(
             yield from _module_scope_statements(group, nested=True)
 
 
-def _is_all_alias(name: str, object_roots: dict[str, str], all_root: str | None) -> bool:
-    return name == "__all__" or (all_root is not None and object_roots.get(name) == all_root)
-
-
-def _target_references_all_alias(
-    target: ast.AST,
-    object_roots: dict[str, str],
-    all_root: str | None,
-    *,
-    direct_alias: bool,
-) -> bool:
-    if isinstance(target, ast.Name):
-        return target.id == "__all__" or (
-            direct_alias and _is_all_alias(target.id, object_roots, all_root)
-        )
-    return any(
-        isinstance(candidate, ast.Name) and _is_all_alias(candidate.id, object_roots, all_root)
-        for candidate in ast.walk(target)
-    )
-
-
-def _target_references_all(target: ast.AST) -> bool:
-    return _target_references_all_alias(target, {}, None, direct_alias=False)
-
-
-def _mutates_all_alias(
-    statement: ast.stmt,
-    object_roots: dict[str, str],
-    all_root: str | None,
-) -> bool:
-    if isinstance(statement, ast.Assign):
-        return any(
-            _target_references_all_alias(target, object_roots, all_root, direct_alias=False)
-            for target in statement.targets
-        )
-    if isinstance(statement, ast.AnnAssign | ast.Delete):
-        targets = statement.targets if isinstance(statement, ast.Delete) else (statement.target,)
-        return any(
-            _target_references_all_alias(target, object_roots, all_root, direct_alias=False)
-            for target in targets
-        )
-    if isinstance(statement, ast.AugAssign):
-        return _target_references_all_alias(
-            statement.target, object_roots, all_root, direct_alias=True
-        )
-    return (
-        isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Attribute)
-        and isinstance(statement.value.func.value, ast.Name)
-        and _is_all_alias(statement.value.func.value.id, object_roots, all_root)
-    )
-
-
 def _explicit_public_exports(
     tree: ast.Module,
 ) -> tuple[tuple[str, ...], list[tuple[int, str]]]:
-    bindings: dict[str, tuple[str, ...] | None] = {}
-    object_roots: dict[str, str] = {}
-    all_root: str | None = None
-    exports: tuple[str, ...] | None = ()
-    dynamic_updates: list[tuple[int, str]] = []
-
-    for statement in tree.body:
-        if isinstance(statement, ast.Assign):
-            resolved = _static_export_strings(statement.value, bindings)
-            value_root = (
-                object_roots.get(statement.value.id, statement.value.id)
-                if isinstance(statement.value, ast.Name)
-                else f"assignment:{statement.lineno}:{statement.col_offset}"
-            )
-            all_targets = [
-                target
-                for target in statement.targets
-                if isinstance(target, ast.Name) and target.id == "__all__"
-            ]
-            if all_targets:
-                all_root = value_root
-                exports = resolved
-                if resolved is None:
-                    dynamic_updates.append((statement.lineno, "non-analyzable __all__ assignment"))
-                bindings["__all__"] = resolved
-            elif any(
-                _target_references_all_alias(target, object_roots, all_root, direct_alias=False)
-                for target in statement.targets
-            ):
-                dynamic_updates.append((statement.lineno, "non-analyzable __all__ target update"))
-
-            for target in statement.targets:
-                if isinstance(target, ast.Name):
-                    object_roots[target.id] = value_root
-                    if target.id != "__all__":
-                        bindings[target.id] = resolved
-                elif not isinstance(target, ast.Name):
-                    for name in _target_names(target):
-                        bindings[name] = None
-                        object_roots[name] = f"binding:{statement.lineno}:{name}"
-        elif isinstance(statement, ast.AnnAssign):
-            resolved = (
-                None
-                if statement.value is None
-                else _static_export_strings(statement.value, bindings)
-            )
-            value_root = (
-                object_roots.get(statement.value.id, statement.value.id)
-                if isinstance(statement.value, ast.Name)
-                else f"assignment:{statement.lineno}:{statement.col_offset}"
-            )
-            if isinstance(statement.target, ast.Name) and statement.target.id == "__all__":
-                if statement.value is not None:
-                    all_root = value_root
-                    exports = resolved
-                    if resolved is None:
-                        dynamic_updates.append(
-                            (statement.lineno, "non-analyzable __all__ assignment")
-                        )
-                    bindings["__all__"] = resolved
-            elif _target_references_all_alias(
-                statement.target, object_roots, all_root, direct_alias=False
-            ):
-                dynamic_updates.append((statement.lineno, "non-analyzable __all__ target update"))
-            else:
-                for name in _target_names(statement.target):
-                    bindings[name] = resolved
-                    object_roots[name] = value_root
-        elif isinstance(statement, ast.AugAssign) and _target_references_all_alias(
-            statement.target, object_roots, all_root, direct_alias=True
-        ):
-            added = _static_export_strings(statement.value, bindings)
-            if (
-                not isinstance(statement.target, ast.Name)
-                or statement.target.id != "__all__"
-                or not isinstance(statement.op, ast.Add)
-                or exports is None
-                or added is None
-            ):
-                exports = None
-                dynamic_updates.append((statement.lineno, "non-analyzable __all__ update"))
-            else:
-                exports += added
-            bindings["__all__"] = exports
-        elif isinstance(statement, ast.Delete) and any(
-            _target_references_all_alias(target, object_roots, all_root, direct_alias=False)
-            for target in statement.targets
-        ):
-            exports = None
-            bindings["__all__"] = None
-            dynamic_updates.append((statement.lineno, "non-analyzable __all__ target update"))
-        elif (
-            isinstance(statement, ast.Expr)
-            and isinstance(statement.value, ast.Call)
-            and isinstance(statement.value.func, ast.Attribute)
-            and isinstance(statement.value.func.value, ast.Name)
-            and (
-                statement.value.func.value.id == "__all__"
-                or (
-                    all_root is not None
-                    and object_roots.get(statement.value.func.value.id) == all_root
-                )
-            )
-        ):
-            call = statement.value
-            method = call.func.attr
-            resolved = (
-                _static_export_strings(call.args[0], bindings)
-                if len(call.args) == 1 and not call.keywords
-                else None
-            )
-            if (
-                exports is None
-                or resolved is None
-                or method not in {"append", "extend"}
-                or (method == "append" and len(resolved) != 1)
-            ):
-                exports = None
-                dynamic_updates.append((statement.lineno, "non-analyzable __all__ method update"))
-            else:
-                exports += resolved
-            for name, root in object_roots.items():
-                if root == all_root:
-                    bindings[name] = exports
-            bindings["__all__"] = exports
-        else:
-            for group in _nested_statement_groups(statement):
-                for nested_statement, _ in _module_scope_statements(group, nested=True):
-                    if _mutates_all_alias(nested_statement, object_roots, all_root):
-                        exports = None
-                        bindings["__all__"] = None
-                        dynamic_updates.append(
-                            (nested_statement.lineno, "conditional __all__ update")
-                        )
-                    for name in _statement_bound_names(nested_statement):
-                        bindings[name] = None
-                        object_roots[name] = f"conditional:{nested_statement.lineno}:{name}"
-
-    return (() if exports is None else exports), dynamic_updates
+    names = [node for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id == "__all__"]
+    bound_statements = [
+        statement
+        for statement, _ in _module_scope_statements(tree.body)
+        if "__all__" in _statement_bound_names(statement)
+    ]
+    imported_all = next(
+        (
+            statement
+            for statement in bound_statements
+            if isinstance(statement, ast.Import | ast.ImportFrom)
+        ),
+        None,
+    )
+    if imported_all is not None:
+        return (), [(imported_all.lineno, "nonliteral __all__ use")]
+    if not names and not bound_statements:
+        return (), []
+    assignments = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets)
+    ]
+    if len(assignments) != 1:
+        anchor = bound_statements[0] if bound_statements else names[0]
+        return (), [(anchor.lineno, "nonliteral __all__ use")]
+    assignment = assignments[0]
+    target = assignment.targets[0]
+    value = assignment.value
+    if (
+        len(assignment.targets) != 1
+        or not isinstance(target, ast.Name)
+        or target.id != "__all__"
+        or not isinstance(value, ast.List | ast.Tuple)
+        or not all(
+            isinstance(item, ast.Constant) and isinstance(item.value, str) for item in value.elts
+        )
+        or len(names) != 1
+        or names[0] is not target
+        or len(bound_statements) != 1
+        or bound_statements[0] is not assignment
+    ):
+        return (), [(assignment.lineno, "nonliteral __all__ use")]
+    return tuple(item.value for item in value.elts), []
 
 
 def _provider_specific_public_bindings(tree: ast.Module) -> Iterable[tuple[str, int]]:
@@ -568,6 +425,24 @@ def _provider_specific_core_exports(files: Iterable[Path]) -> list[str]:
         for binding, line_number in _provider_specific_public_bindings(tree):
             violations.add(f"{relative_path}:{line_number}: provider-specific binding {binding}")
     return sorted(violations)
+
+
+def test_dynamic_core_exports_fail_closed() -> None:
+    sources = (
+        "__all__ = build_exports()",
+        "from .exports import names as __all__",
+        "from .exports import *",
+        '__all__ = ["Safe"]; alias = __all__',
+        '__all__ = ["Safe"]; __all__.append("CodexThing")',
+        'match ["CodexThing"]:\n    case [*__all__]:\n        pass',
+        "def __all__():\n    pass",
+        "class __all__:\n    pass",
+        "type __all__ = str",
+        "try:\n    pass\nexcept Exception as __all__:\n    pass",
+    )
+    for source in sources:
+        _, violations = _explicit_public_exports(ast.parse(source))
+        assert violations, source
 
 
 def test_fastmcp_imports_are_confined_to_mcp_package() -> None:
