@@ -14,6 +14,8 @@ All layers above run for real, including JSON-RPC dispatch.
 """
 
 import os
+import sqlite3
+from contextlib import closing
 
 import pytest
 from fastmcp.exceptions import ToolError
@@ -275,7 +277,7 @@ class TestPromptProtocol:
         error_code,
         error_message,
     ):
-        """Retryable HTTP error triggers retry; second attempt succeeds."""
+        """Retryable HTTP error creates a second durable attempt that succeeds."""
         error_json = codex_error_json(error_code, error_message)
         mock_subprocess.side_effect = [
             create_mock_process(stdout=error_json, returncode=1),
@@ -290,6 +292,13 @@ class TestPromptProtocol:
         assert result.is_error is False
         assert strip_runner_header(result.data) == "pong"
         assert mock_subprocess.call_count == 2
+        with closing(sqlite3.connect(os.environ["NEXUS_DB_PATH"])) as connection, connection:
+            attempts = connection.execute(
+                "SELECT job_id, attempt_number FROM job_attempts ORDER BY attempt_number"
+            ).fetchall()
+        assert len(attempts) == 2
+        assert attempts[0][0] == attempts[1][0]
+        assert [row[1] for row in attempts] == [1, 2]
 
     async def test_opencode_success_returns_parsed_ndjson(self, mock_subprocess, mcp_client):
         """Full success path for OpenCode: subprocess returns NDJSON → parsed output text."""
