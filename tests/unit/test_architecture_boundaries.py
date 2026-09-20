@@ -269,6 +269,28 @@ def _target_names(target: ast.AST) -> Iterable[str]:
             yield from _target_names(element)
 
 
+def _pattern_bound_names(pattern: ast.pattern) -> Iterable[str]:
+    if isinstance(pattern, ast.MatchAs):
+        if pattern.name is not None:
+            yield pattern.name
+        if pattern.pattern is not None:
+            yield from _pattern_bound_names(pattern.pattern)
+    elif isinstance(pattern, ast.MatchStar):
+        if pattern.name is not None:
+            yield pattern.name
+    elif isinstance(pattern, ast.MatchMapping):
+        if pattern.rest is not None:
+            yield pattern.rest
+        for nested_pattern in pattern.patterns:
+            yield from _pattern_bound_names(nested_pattern)
+    elif isinstance(pattern, ast.MatchClass):
+        for nested_pattern in (*pattern.patterns, *pattern.kwd_patterns):
+            yield from _pattern_bound_names(nested_pattern)
+    elif isinstance(pattern, ast.MatchSequence | ast.MatchOr):
+        for nested_pattern in pattern.patterns:
+            yield from _pattern_bound_names(nested_pattern)
+
+
 def _statement_bound_names(statement: ast.stmt) -> Iterable[str]:
     if isinstance(statement, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
         yield statement.name
@@ -282,14 +304,22 @@ def _statement_bound_names(statement: ast.stmt) -> Iterable[str]:
             yield alias.asname or alias.name.split(".", maxsplit=1)[0]
     elif isinstance(statement, ast.ImportFrom):
         for alias in statement.names:
-            if alias.name != "*":
-                yield alias.asname or alias.name
+            yield "__all__" if alias.name == "*" else alias.asname or alias.name
     elif isinstance(statement, ast.For | ast.AsyncFor):
         yield from _target_names(statement.target)
     elif isinstance(statement, ast.With | ast.AsyncWith):
         for item in statement.items:
             if item.optional_vars is not None:
                 yield from _target_names(item.optional_vars)
+    elif isinstance(statement, ast.Try | ast.TryStar):
+        for handler in statement.handlers:
+            if handler.name is not None:
+                yield handler.name
+    elif isinstance(statement, ast.Match):
+        for case in statement.cases:
+            yield from _pattern_bound_names(case.pattern)
+    elif isinstance(statement, ast.TypeAlias):
+        yield from _target_names(statement.name)
 
 
 def _nested_statement_groups(statement: ast.stmt) -> Iterable[list[ast.stmt]]:
@@ -326,18 +356,22 @@ def _explicit_public_exports(
     tree: ast.Module,
 ) -> tuple[tuple[str, ...], list[tuple[int, str]]]:
     names = [node for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id == "__all__"]
+    bound_statements = [
+        statement
+        for statement, _ in _module_scope_statements(tree.body)
+        if "__all__" in _statement_bound_names(statement)
+    ]
     imported_all = next(
         (
             statement
-            for statement, _ in _module_scope_statements(tree.body)
+            for statement in bound_statements
             if isinstance(statement, ast.Import | ast.ImportFrom)
-            and "__all__" in _statement_bound_names(statement)
         ),
         None,
     )
     if imported_all is not None:
         return (), [(imported_all.lineno, "nonliteral __all__ use")]
-    if not names:
+    if not names and not bound_statements:
         return (), []
     assignments = [
         node
@@ -346,7 +380,8 @@ def _explicit_public_exports(
         and any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets)
     ]
     if len(assignments) != 1:
-        return (), [(names[0].lineno, "nonliteral __all__ use")]
+        anchor = bound_statements[0] if bound_statements else names[0]
+        return (), [(anchor.lineno, "nonliteral __all__ use")]
     assignment = assignments[0]
     target = assignment.targets[0]
     value = assignment.value
@@ -360,6 +395,8 @@ def _explicit_public_exports(
         )
         or len(names) != 1
         or names[0] is not target
+        or len(bound_statements) != 1
+        or bound_statements[0] is not assignment
     ):
         return (), [(assignment.lineno, "nonliteral __all__ use")]
     return tuple(item.value for item in value.elts), []
@@ -394,8 +431,14 @@ def test_dynamic_core_exports_fail_closed() -> None:
     sources = (
         "__all__ = build_exports()",
         "from .exports import names as __all__",
+        "from .exports import *",
         '__all__ = ["Safe"]; alias = __all__',
         '__all__ = ["Safe"]; __all__.append("CodexThing")',
+        'match ["CodexThing"]:\n    case [*__all__]:\n        pass',
+        "def __all__():\n    pass",
+        "class __all__:\n    pass",
+        "type __all__ = str",
+        "try:\n    pass\nexcept Exception as __all__:\n    pass",
     )
     for source in sources:
         _, violations = _explicit_public_exports(ast.parse(source))
