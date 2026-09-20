@@ -58,7 +58,7 @@ def _is_read_only_git(tool_input: Mapping[str, Any]) -> bool:
 
 def _inside_workspace(tool: str, workspace: Path, tool_input: Mapping[str, Any]) -> bool:
     raw = tool_input.get("notebook_path" if tool == "NotebookEdit" else "file_path")
-    if not isinstance(raw, str) or not raw:
+    if not isinstance(raw, str) or not raw or "\x00" in raw:
         return False
     try:
         return (workspace / raw).resolve().is_relative_to(workspace.resolve())

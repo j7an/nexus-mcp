@@ -118,6 +118,39 @@ def test_workspace_write_escalates_paths_outside_workspace(tmp_path, tool_input)
     )
 
 
+def test_workspace_write_rejects_nul_even_if_resolve_accepts_it(monkeypatch):
+    """Windows can resolve a NUL-bearing path as an inside-workspace path."""
+    monkeypatch.setattr(Path, "resolve", lambda self: self)
+    assert (
+        decide(
+            "Write",
+            {"file_path": "a\x00b"},
+            sandbox="workspace_write",
+            approval="never",
+            workspace=Path("/workspace"),
+        )
+        == "deny"
+    )
+
+
+@pytest.mark.parametrize("error", [OSError, ValueError])
+def test_workspace_write_denies_path_when_resolution_fails(monkeypatch, error):
+    def cannot_resolve(_path):
+        raise error("bad path")
+
+    monkeypatch.setattr(Path, "resolve", cannot_resolve)
+    assert (
+        decide(
+            "Write",
+            {"file_path": "inside.txt"},
+            sandbox="workspace_write",
+            approval="never",
+            workspace=Path("/workspace"),
+        )
+        == "deny"
+    )
+
+
 def test_notebook_edit_uses_notebook_path_for_workspace_containment(tmp_path):
     workspace = tmp_path / "ws"
     workspace.mkdir()
