@@ -21,6 +21,7 @@ from nexus_mcp.core import (
     JobError,
     ProviderReference,
     RequestedExecutionConfig,
+    ResolvedExecutionConfig,
     RetryPolicy,
     TurnOperation,
     Workspace,
@@ -29,12 +30,12 @@ from nexus_mcp.core import (
 )
 from nexus_mcp.exceptions import ConfigurationError
 from nexus_mcp.jobs.events import EventNotifier
-from nexus_mcp.jobs.store import CreateJobCommand
+from nexus_mcp.jobs.sqlite_store import SQLiteJobStore
+from nexus_mcp.jobs.store import CreateJobCommand, LeaseToken
 from nexus_mcp.jobs.worker import JobWorker, WorkerPolicy, WorkerPool
 from tests.fixtures import make_turn_result
 from tests.job_fakes import (
     EmitEventAction,
-    InMemoryJobStore,
     RaiseFailureAction,
     RecordReferenceAction,
     ReturnReconciliationAction,
@@ -67,7 +68,7 @@ def make_command(
     )
 
 
-async def admit(store: InMemoryJobStore, **overrides: object):
+async def admit(store: SQLiteJobStore, **overrides: object):
     """Persist and return one queued job."""
     command = make_command(**overrides)
     created = await store.create_job(command)
@@ -77,7 +78,7 @@ async def admit(store: InMemoryJobStore, **overrides: object):
 
 
 def make_worker(
-    store: InMemoryJobStore,
+    store: SQLiteJobStore,
     backend: ScriptedBackend,
     notifier: EventNotifier | None = None,
     **overrides: object,
@@ -93,36 +94,56 @@ def make_worker(
     )
 
 
-async def test_worker_freezes_configuration_before_execute():
+class ConfigTraceStore(SQLiteJobStore):
+    """Observe the completed config write before provider execution."""
+
+    def __init__(self, path: Path, trace: list[str]) -> None:
+        super().__init__(path)
+        self.trace = trace
+
+    async def store_resolved_config(
+        self, token: LeaseToken, config: ResolvedExecutionConfig
+    ) -> None:
+        await super().store_resolved_config(token, config)
+        self.trace.append("store_resolved_config")
+
+
+async def test_worker_freezes_configuration_before_execute(tmp_path: Path):
     """Provider execution cannot begin before its effective config is durable."""
-    store = InMemoryJobStore()
     backend = ScriptedBackend()
-    job = await admit(
-        store,
-        requested_config=RequestedExecutionConfig(
-            explicit=ExecutionConfigValues(model="provider/model")
-        ),
-    )
     trace: list[str] = []
-    store.trace = backend.trace = trace
-    backend.queue_execute(ReturnResultAction(make_turn_result()))
+    store = ConfigTraceStore(tmp_path / "config-trace.sqlite3", trace)
+    await store.open()
+    try:
+        job = await admit(
+            store,
+            requested_config=RequestedExecutionConfig(
+                explicit=ExecutionConfigValues(model="provider/model")
+            ),
+        )
+        backend.trace = trace
+        backend.queue_execute(ReturnResultAction(make_turn_result()))
 
-    assert await make_worker(store, backend).run_once() is True
+        assert await make_worker(store, backend).run_once() is True
 
-    persisted = await store.get_job(job.job_id)
-    assert persisted is not None
-    assert persisted.resolved_config is not None
-    assert persisted.resolved_config.model == "provider/model"
-    assert trace.index("store_resolved_config") < trace.index("backend.execute")
-    context = backend.execute_calls[0][1]
-    assert context.attempt.phase == "executing"
-    assert context.job.state == "running"
-    assert context.job.resolved_config == context.resolved_config
+        persisted = await store.get_job(job.job_id)
+        assert persisted is not None
+        assert persisted.resolved_config is not None
+        assert persisted.resolved_config.model == "provider/model"
+        assert trace.index("store_resolved_config") < trace.index("backend.execute")
+        context = backend.execute_calls[0][1]
+        assert context.attempt.phase == "executing"
+        assert context.job.state == "running"
+        assert context.job.resolved_config == context.resolved_config
+    finally:
+        await store.close()
 
 
-async def test_worker_terminalizes_result_and_normalized_events_with_current_fence():
+async def test_worker_terminalizes_result_and_normalized_events_with_current_fence(
+    worker_store: SQLiteJobStore,
+):
     """Semantic event fields survive in order while opaque provider payloads are discarded."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ScriptedBackend()
     job = await admit(store)
     reference = ProviderReference(kind="thread", value="thread-safe")
@@ -183,9 +204,9 @@ async def test_worker_terminalizes_result_and_normalized_events_with_current_fen
     assert "drop" not in str([event.model_dump(mode="json") for event in semantic])
 
 
-async def test_worker_persists_the_complete_final_turn_message():
+async def test_worker_persists_the_complete_final_turn_message(worker_store: SQLiteJobStore):
     """The authoritative final message is not truncated to an incremental chunk size."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ScriptedBackend()
     job = await admit(store)
     complete = "final-" * 1000
@@ -201,9 +222,11 @@ async def test_worker_persists_the_complete_final_turn_message():
     assert dict(messages[-1].payload) == {"text": complete, "final": True}
 
 
-async def test_reasoning_events_persist_metadata_without_reasoning_content():
+async def test_reasoning_events_persist_metadata_without_reasoning_content(
+    worker_store: SQLiteJobStore,
+):
     """Provider reasoning streams retain bounded status metadata but not opaque chain content."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ScriptedBackend()
     job = await admit(store)
     backend.queue_execute(
@@ -232,9 +255,11 @@ async def test_reasoning_events_persist_metadata_without_reasoning_content():
     assert dict(reasoning.payload) == {"stage": "analysis", "status": "active"}
 
 
-async def test_mismatched_backend_result_becomes_internal_error_without_escaping():
+async def test_mismatched_backend_result_becomes_internal_error_without_escaping(
+    worker_store: SQLiteJobStore,
+):
     """An invalid provider result kind cannot leave the claimed job leased forever."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ScriptedBackend()
     job = await admit(store)
     backend.queue_execute(ReturnResultAction(DiagnosticsResult(available=True)))
@@ -259,9 +284,10 @@ async def test_mismatched_backend_result_becomes_internal_error_without_escaping
 async def test_backend_health_failure_becomes_durable_without_unregistering(
     availability: BackendAvailability,
     error_code: str,
+    worker_store: SQLiteJobStore,
 ):
     """Transient availability and auth observations fail only the claimed job."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ScriptedBackend()
     backend.availability = availability
     job = await admit(store)
@@ -282,9 +308,9 @@ async def test_backend_health_failure_becomes_durable_without_unregistering(
     assert backend.execute_calls == []
 
 
-async def test_backend_lookup_error_becomes_typed_durable_failure():
+async def test_backend_lookup_error_becomes_typed_durable_failure(worker_store: SQLiteJobStore):
     """A stale admitted backend id cannot escape run_once or leave the job leased."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ScriptedBackend(backend_id="registered")
     job = await admit(store, backend_id="missing")
 
@@ -296,25 +322,29 @@ async def test_backend_lookup_error_becomes_typed_durable_failure():
     assert backend.execute_calls == []
 
 
-class WorkspaceErrorStore(InMemoryJobStore):
+class WorkspaceErrorStore(SQLiteJobStore):
     """Store that reports a durable workspace resolution failure after claim."""
 
     async def resolve_workspace(self, selector: WorkspaceSelector) -> Workspace:
         raise WorkspaceInvalidError(selector.workspace_id or "unknown", "workspace disappeared")
 
 
-async def test_workspace_resolution_error_becomes_typed_durable_failure():
+async def test_workspace_resolution_error_becomes_typed_durable_failure(tmp_path: Path):
     """A post-admission workspace failure terminalizes under the current fence."""
-    store = WorkspaceErrorStore()
+    store = WorkspaceErrorStore(tmp_path / "workspace-error.sqlite3")
+    await store.open()
     backend = ScriptedBackend()
-    job = await admit(store)
+    try:
+        job = await admit(store)
 
-    await make_worker(store, backend).run_once()
+        await make_worker(store, backend).run_once()
 
-    result = await store.get_job_result(job.job_id)
-    assert isinstance(result, JobError)
-    assert result.code == "workspace_invalid"
-    assert backend.execute_calls == []
+        result = await store.get_job_result(job.job_id)
+        assert isinstance(result, JobError)
+        assert result.code == "workspace_invalid"
+        assert backend.execute_calls == []
+    finally:
+        await store.close()
 
 
 class AvailabilityErrorBackend(ScriptedBackend):
@@ -324,9 +354,11 @@ class AvailabilityErrorBackend(ScriptedBackend):
         raise RuntimeError("secret availability diagnostic")
 
 
-async def test_availability_exception_becomes_sanitized_internal_error():
+async def test_availability_exception_becomes_sanitized_internal_error(
+    worker_store: SQLiteJobStore,
+):
     """Unexpected health-probe failure is durable and does not disclose raw diagnostics."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = AvailabilityErrorBackend()
     job = await admit(store)
 
@@ -358,9 +390,11 @@ class ConfigurationErrorOnceBackend(ScriptedBackend):
         return await super().resolve_execution_config(requested, workspace)
 
 
-async def test_config_exception_terminalizes_and_pool_continues_to_next_job():
+async def test_config_exception_terminalizes_and_pool_continues_to_next_job(
+    worker_store: SQLiteJobStore,
+):
     """A pre-provider config failure cannot terminate the worker loop or block later work."""
-    store = InMemoryJobStore()
+    store = worker_store
     notifier = EventNotifier()
     backend = ConfigurationErrorOnceBackend()
     first = await admit(store, session_id="session-config-first")
@@ -388,9 +422,11 @@ async def test_config_exception_terminalizes_and_pool_continues_to_next_job():
     assert len(backend.execute_calls) == 1
 
 
-async def test_reconcile_required_imports_completion_without_replaying_execute():
+async def test_reconcile_required_imports_completion_without_replaying_execute(
+    worker_store: SQLiteJobStore,
+):
     """Once a provider reference exists, only reconciliation may finish the operation."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ScriptedBackend()
     job = await admit(store)
     reference = ProviderReference(kind="thread", value="thread-reconcile")
@@ -420,9 +456,11 @@ async def test_reconcile_required_imports_completion_without_replaying_execute()
     assert backend.reconcile_calls[0][0] == (reference,)
 
 
-async def test_unknown_reconciliation_terminalizes_outcome_unknown_without_replay():
+async def test_unknown_reconciliation_terminalizes_outcome_unknown_without_replay(
+    worker_store: SQLiteJobStore,
+):
     """An unknowable provider outcome is terminal rather than an implicit second execution."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ScriptedBackend()
     job = await admit(store)
     reference = ProviderReference(kind="thread", value="thread-unknown")
@@ -445,9 +483,11 @@ async def test_unknown_reconciliation_terminalizes_outcome_unknown_without_repla
     assert len(backend.reconcile_calls) == 1
 
 
-async def test_mismatched_reconciliation_result_terminalizes_internal_error_without_replay():
+async def test_mismatched_reconciliation_result_terminalizes_internal_error_without_replay(
+    worker_store: SQLiteJobStore,
+):
     """Imported completion must match the admitted operation before output or terminal commit."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ScriptedBackend()
     job = await admit(store)
     reference = ProviderReference(kind="thread", value="thread-mismatch")
@@ -478,9 +518,11 @@ async def test_mismatched_reconciliation_result_terminalizes_internal_error_with
     assert all(event.type not in {"message", "job_completed"} for event in events)
 
 
-async def test_active_reconciliation_continues_on_current_generation_without_execute_replay():
+async def test_active_reconciliation_continues_on_current_generation_without_execute_replay(
+    worker_store: SQLiteJobStore,
+):
     """An active provider operation stays observed under one fence until it completes."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ScriptedBackend()
     job = await admit(store)
     reference = ProviderReference(kind="thread", value="thread-active")
@@ -510,14 +552,14 @@ async def test_active_reconciliation_continues_on_current_generation_without_exe
     assert terminal is not None and terminal.state == "completed"
 
 
-class RenewalTrackingStore(InMemoryJobStore):
+class RenewalTrackingStore(SQLiteJobStore):
     """Record that an active reconciliation observation keeps heartbeating its fence."""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
         self.renewed = asyncio.Event()
 
-    async def renew_lease(self, token, lease_until):  # type: ignore[no-untyped-def]
+    async def renew_lease(self, token: LeaseToken, lease_until):  # type: ignore[no-untyped-def]
         renewed = await super().renew_lease(token, lease_until)
         if renewed:
             self.renewed.set()
@@ -541,46 +583,54 @@ class ActiveThenGatedCompletionBackend(ScriptedBackend):
         return CompletedReconciliationOutcome(result=make_turn_result(message="Observed"))
 
 
-async def test_active_reconciliation_renews_current_lease_until_terminal_progression():
+async def test_active_reconciliation_renews_current_lease_until_terminal_progression(
+    tmp_path: Path,
+):
     """Active observation cannot return while leaving a phantom unrenewed lease behind."""
-    store = RenewalTrackingStore()
+    store = RenewalTrackingStore(tmp_path / "renewal-tracking.sqlite3")
+    await store.open()
     backend = ActiveThenGatedCompletionBackend()
-    job = await admit(store)
-    reference = ProviderReference(kind="thread", value="thread-current-owner")
-    failure = JobError(
-        code="process_lost",
-        message="Lost observation",
-        retry_disposition="reconcile_required",
-    )
-    backend.queue_execute(
-        RecordReferenceAction(reference),
-        RaiseFailureAction(BackendFailure(failure, "reconcile_required")),
-    )
-    policy = WorkerPolicy(
-        lease_seconds=0.1,
-        heartbeat_seconds=0.02,
-        idle_poll_seconds=0.001,
-        reconciliation_timeout_seconds=0.2,
-    )
-    worker_task = asyncio.create_task(make_worker(store, backend, policy=policy).run_once())
-    await asyncio.wait_for(backend.second_observation.wait(), timeout=0.2)
-    await asyncio.wait_for(store.renewed.wait(), timeout=0.2)
+    try:
+        job = await admit(store)
+        reference = ProviderReference(kind="thread", value="thread-current-owner")
+        failure = JobError(
+            code="process_lost",
+            message="Lost observation",
+            retry_disposition="reconcile_required",
+        )
+        backend.queue_execute(
+            RecordReferenceAction(reference),
+            RaiseFailureAction(BackendFailure(failure, "reconcile_required")),
+        )
+        policy = WorkerPolicy(
+            lease_seconds=0.1,
+            heartbeat_seconds=0.02,
+            idle_poll_seconds=0.001,
+            reconciliation_timeout_seconds=0.2,
+        )
+        worker_task = asyncio.create_task(make_worker(store, backend, policy=policy).run_once())
+        await asyncio.wait_for(backend.second_observation.wait(), timeout=0.2)
+        await asyncio.wait_for(store.renewed.wait(), timeout=0.2)
 
-    current = await store.get_job(job.job_id)
-    assert current is not None and current.state == "running"
-    assert current.lease_owner_id == "worker-1"
-    assert current.lease_generation == 1
-    assert worker_task.done() is False
+        current = await store.get_job(job.job_id)
+        assert current is not None and current.state == "running"
+        assert current.lease_owner_id == "worker-1"
+        assert current.lease_generation == 1
+        assert worker_task.done() is False
 
-    backend.release.set()
-    await worker_task
-    terminal = await store.get_job(job.job_id)
-    assert terminal is not None and terminal.state == "completed"
+        backend.release.set()
+        await worker_task
+        terminal = await store.get_job(job.job_id)
+        assert terminal is not None and terminal.state == "completed"
+    finally:
+        await store.close()
 
 
-async def test_safe_retry_reexecutes_only_after_persisted_retry_schedule():
+async def test_safe_retry_reexecutes_only_after_persisted_retry_schedule(
+    worker_store: SQLiteJobStore,
+):
     """A backend-classified pre-reference failure creates a new attempt before replay."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ScriptedBackend()
     retry_policy = RetryPolicy(max_attempts=2, base_delay_seconds=0, max_delay_seconds=0)
     job = await admit(
@@ -617,9 +667,11 @@ async def test_safe_retry_reexecutes_only_after_persisted_retry_schedule():
     assert attempts[0].retry_classification == "safe_to_retry"
 
 
-async def test_safe_retry_classification_cannot_replay_after_provider_reference():
+async def test_safe_retry_classification_cannot_replay_after_provider_reference(
+    worker_store: SQLiteJobStore,
+):
     """A provider identity upgrades even a safe classification to reconciliation-only handling."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ScriptedBackend()
     job = await admit(store)
     reference = ProviderReference(kind="thread", value="started-already")
@@ -653,9 +705,9 @@ def test_worker_policy_defaults_keep_heartbeat_safely_inside_lease():
     assert policy.heartbeat_seconds * 2 < policy.lease_seconds
 
 
-async def test_worker_exposes_job_session_on_context():
+async def test_worker_exposes_job_session_on_context(worker_store: SQLiteJobStore):
     """Fork-capable backends need the Nexus session to build a ForkResult."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ScriptedBackend()
     job = await admit(store)
     backend.queue_execute(ReturnResultAction(make_turn_result()))

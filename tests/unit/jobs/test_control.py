@@ -14,10 +14,10 @@ from nexus_mcp.core import (
 )
 from nexus_mcp.jobs.control import OutputChunker, StoreBackedExecutionContext
 from nexus_mcp.jobs.events import EventNotifier
+from nexus_mcp.jobs.sqlite_store import SQLiteJobStore
 from nexus_mcp.jobs.store import ControlSnapshot, CreateJobCommand
 from nexus_mcp.jobs.worker import ExponentialRetryDelay, WorkerPolicy
 from tests.fixtures import make_pending_permission, make_workspace
-from tests.job_fakes import InMemoryJobStore
 
 
 def test_worker_policy_requires_two_heartbeats_inside_every_lease():
@@ -89,9 +89,11 @@ async def test_output_chunker_flushes_before_a_nonmessage_boundary():
     assert [event.type for event in emitted] == ["message", "command"]
 
 
-async def test_store_context_persists_adapter_progress_with_bounded_sanitization():
+async def test_store_context_persists_adapter_progress_with_bounded_sanitization(
+    worker_store: SQLiteJobStore,
+):
     """Adapter progress values survive the fence while opaque and oversized data do not."""
-    store = InMemoryJobStore()
+    store = worker_store
     workspace = make_workspace()
     created = await store.create_job(
         CreateJobCommand(
