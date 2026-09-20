@@ -29,6 +29,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk._cli_version import __cli_version__
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 from pydantic import ValidationError
+from referencing.exceptions import Unresolvable
 
 from nexus_mcp.backends.base import (
     BackendExecutionContext,
@@ -144,9 +145,8 @@ def _classify_result(final: ResultMessage, assistant_error: str | None) -> Backe
 
 
 def _truncate(message: str, limit: int | None) -> str:
-    if limit is None:
-        return message
-    return message.encode()[:limit].decode(errors="ignore")
+    encoded = message.encode("utf-8", errors="replace")
+    return encoded[:limit].decode(errors="ignore") if limit is not None else encoded.decode()
 
 
 def _with_file_refs(prompt: str, file_refs: tuple[str, ...]) -> str:
@@ -276,6 +276,12 @@ class ClaudeAgentBackend:
             review = isinstance(operation, ReviewOperation)
             sandbox: SandboxMode = "read_only" if review else (config.sandbox or "read_only")
             self._require_sandbox_platform(sandbox)
+            if (
+                isinstance(operation, ReviewOperation)
+                and operation.target.kind in ("branch", "commit")
+                and not operation.target.reference
+            ):
+                raise _failure("unsupported_capability", "This review target requires a reference")
             session_id = next(
                 (ref.value for ref in context.job.source_checkpoint if ref.kind == _SESSION), None
             )
@@ -364,7 +370,7 @@ class ClaudeAgentBackend:
                 )
             try:
                 jsonschema.validate(final.structured_output, schema)
-            except (jsonschema.ValidationError, jsonschema.SchemaError):
+            except (jsonschema.ValidationError, jsonschema.SchemaError, Unresolvable):
                 raise self._observe(
                     context,
                     _failure(

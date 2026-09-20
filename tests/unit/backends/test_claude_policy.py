@@ -101,6 +101,7 @@ def test_workspace_write_table(tmp_path, approval, escalated):
         {},
         {"file_path": 7},
         {"file_path": ""},
+        {"file_path": "a\x00b"},
     ],
 )
 def test_workspace_write_escalates_paths_outside_workspace(tmp_path, tool_input):

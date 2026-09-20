@@ -195,6 +195,23 @@ async def test_structured_output_conforming_to_the_schema_is_returned(tmp_path):
     assert outcome.structured_output == {"n": 1}
 
 
+async def test_structured_output_with_unresolved_schema_reference_is_invalid(tmp_path):
+    schema = {"type": "object", "properties": {"n": {"$ref": "#/$defs/SECRET-missing"}}}
+    backend = ClaudeAgentBackend(factory([result(structured_output={"n": 1})], []))
+    context = FakeContext(workspace_path=tmp_path)
+
+    with pytest.raises(BackendFailure) as raised:
+        await backend.execute(TurnOperation(prompt="x", output_schema=schema), context)
+
+    assert raised.value.error.code == "structured_output_invalid"
+    assert raised.value.retry_disposition == "terminal"
+    assert "SECRET" not in raised.value.error.model_dump_json()
+    assert raised.value.__cause__ is None
+    observed = await backend.reconcile((), context)
+    assert isinstance(observed, FailedReconciliationOutcome)
+    assert observed.error.code == "structured_output_invalid"
+
+
 async def test_message_is_truncated_to_output_limit(tmp_path):
     backend = ClaudeAgentBackend(factory([result(result="é" * 10)], []))
     context = FakeContext(
@@ -202,6 +219,18 @@ async def test_message_is_truncated_to_output_limit(tmp_path):
     )
     outcome = await backend.execute(TurnOperation(prompt="x"), context)
     assert outcome.message == "éé"
+
+
+@pytest.mark.parametrize("limit", [7, None])
+async def test_final_message_replaces_lone_surrogate(tmp_path, limit):
+    backend = ClaudeAgentBackend(factory([result(result="ok\ud800tail")], []))
+    context = FakeContext(
+        workspace_path=tmp_path, resolved_config=ResolvedExecutionConfig(output_limit_bytes=limit)
+    )
+
+    outcome = await backend.execute(TurnOperation(prompt="x"), context)
+
+    assert outcome.message == "ok?tail"
 
 
 def _hook_input(tool, tool_input):
@@ -684,6 +713,22 @@ async def test_inline_review_without_provider_checkpoint_fails_before_client_cre
     assert created == []
 
 
+@pytest.mark.parametrize("kind", ["branch", "commit"])
+async def test_review_requires_reference_for_branch_and_commit(tmp_path, kind):
+    created: list[FakeClient] = []
+    backend = ClaudeAgentBackend(factory([result(structured_output=REVIEW_JSON)], created))
+
+    with pytest.raises(BackendFailure) as raised:
+        await backend.execute(
+            ReviewOperation(target=ReviewTarget(kind=kind)),
+            FakeContext(workspace_path=tmp_path, source_checkpoint=PARENT),
+        )
+
+    assert raised.value.error.code == "unsupported_capability"
+    assert raised.value.retry_disposition == "terminal"
+    assert created == []
+
+
 async def test_review_with_malformed_output_is_invalid(tmp_path):
     with pytest.raises(BackendFailure) as raised:
         await ClaudeAgentBackend(
@@ -745,6 +790,25 @@ async def test_failure_table(tmp_path, script, code, disposition):
         )
     assert raised.value.error.code == code
     assert raised.value.retry_disposition == disposition
+
+
+@pytest.mark.parametrize(
+    ("overrides", "details"),
+    [
+        ({"subtype": "error_max_turns"}, {"subtype": "error_max_turns"}),
+        (
+            {"subtype": "error_during_execution", "api_error_status": 429},
+            {"subtype": "error_during_execution", "status": 429},
+        ),
+    ],
+)
+async def test_error_result_keeps_safe_subtype_and_status_details(tmp_path, overrides, details):
+    backend = ClaudeAgentBackend(factory([result(is_error=True, **overrides)], []))
+
+    with pytest.raises(BackendFailure) as raised:
+        await backend.execute(TurnOperation(prompt="x"), FakeContext(workspace_path=tmp_path))
+
+    assert raised.value.error.details == details
 
 
 async def test_connection_error_after_messages_is_unknown(tmp_path):

@@ -60,7 +60,10 @@ def _inside_workspace(tool: str, workspace: Path, tool_input: Mapping[str, Any])
     raw = tool_input.get("notebook_path" if tool == "NotebookEdit" else "file_path")
     if not isinstance(raw, str) or not raw:
         return False
-    return (workspace / raw).resolve().is_relative_to(workspace.resolve())
+    try:
+        return (workspace / raw).resolve().is_relative_to(workspace.resolve())
+    except (OSError, ValueError):
+        return False
 
 
 def decide(
