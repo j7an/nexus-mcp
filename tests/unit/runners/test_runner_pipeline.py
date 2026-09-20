@@ -25,9 +25,6 @@ class PipelineFakeRunner(AbstractRunner):
 
     def __init__(self) -> None:
         self.timeout = 30
-        self.base_delay = 0.01
-        self.max_delay = 0.01
-        self.default_max_attempts = 1
         self.output_limit = int(os.environ.get("NEXUS_OUTPUT_LIMIT_BYTES", "50000"))
         self.default_model = None
         self.cli_path = self.AGENT_NAME
@@ -107,7 +104,7 @@ async def test_retry_and_output_truncation_together(mock_exec):
     ]
 
     runner = PipelineFakeRunner()
-    request = make_prompt_request(prompt="test", max_retries=2)
+    request = make_prompt_request(prompt="test")
 
     response = await runner.run(request)
 

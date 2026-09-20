@@ -107,6 +107,8 @@ MAX_PROMPT_LENGTH = 131072  # 128KB character limit — conservative guard again
 
 
 class PromptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     cli: str = Field(..., min_length=1)
     prompt: str = Field(..., min_length=1, max_length=MAX_PROMPT_LENGTH)
     context: dict[str, Any] = Field(default_factory=dict)
@@ -138,10 +140,6 @@ class PromptRequest(BaseModel):
                 )
         return v
 
-    max_retries: MaxRetries = Field(
-        default=None,
-        description="Max retry attempts for transient errors (None uses NEXUS_RETRY_MAX_ATTEMPTS)",
-    )
     output_limit: OutputLimit = Field(
         default=None,
         description="Max output bytes (None uses NEXUS_OUTPUT_LIMIT_BYTES)",
@@ -149,14 +147,6 @@ class PromptRequest(BaseModel):
     timeout: Timeout = Field(
         default=None,
         description="Subprocess timeout seconds (None uses NEXUS_TIMEOUT_SECONDS)",
-    )
-    retry_base_delay: Delay = Field(
-        default=None,
-        description="Base delay seconds for exponential backoff (None uses NEXUS_RETRY_BASE_DELAY)",
-    )
-    retry_max_delay: Delay = Field(
-        default=None,
-        description="Max delay cap for backoff in seconds (None uses NEXUS_RETRY_MAX_DELAY)",
     )
 
 
@@ -197,24 +187,6 @@ class AgentTask(BaseModel):
     timeout: Timeout = None
     retry_base_delay: Delay = None
     retry_max_delay: Delay = None
-
-    def to_request(self) -> "PromptRequest":
-        """Convert this task to a PromptRequest for runner execution.
-
-        Raises ValidationError if cli is None (caller must resolve CLI before converting).
-        """
-        return PromptRequest(
-            cli=self.cli,  # type: ignore[arg-type]  # intentional: None → Pydantic ValidationError
-            prompt=self.prompt,
-            context=self.context,
-            execution_mode=self.execution_mode or "default",  # safety net: None → "default"
-            model=self.model,
-            max_retries=self.max_retries,
-            output_limit=self.output_limit,
-            timeout=self.timeout,
-            retry_base_delay=self.retry_base_delay,
-            retry_max_delay=self.retry_max_delay,
-        )
 
 
 class AgentTaskResult(BaseModel):

@@ -364,28 +364,17 @@ class TestCodexRunnerRetryableErrors:
         assert not isinstance(exc_info.value, RetryableError)
 
     @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_retry_on_503_full_loop(self, mock_exec):
-        """503 on first attempt, success on second → called twice."""
+    async def test_retryable_error_propagates_after_one_attempt(self, mock_exec):
+        """A structured 503 stops direct runner execution after one subprocess attempt."""
         error_stderr = json.dumps({"error": {"code": 503, "message": "Service unavailable"}})
         mock_exec.side_effect = [
             create_mock_process(stdout="", stderr=error_stderr, returncode=1),
             create_mock_process(stdout=CODEX_NDJSON_RESPONSE, returncode=0),
         ]
         runner = make_codex_runner()
-        result = await runner.run(make_prompt_request(cli="codex", prompt="test", max_retries=2))
-        assert result.output == "pong"
-        assert mock_exec.await_count == 2
-
-    @patch("nexus_mcp.process.asyncio.create_subprocess_exec")
-    async def test_retry_exhausted_all_503(self, mock_exec):
-        """3x 503 → RetryableError raised, called 3 times."""
-        error_stderr = json.dumps({"error": {"code": 503, "message": "Service unavailable"}})
-        mock_exec.return_value = create_mock_process(stdout="", stderr=error_stderr, returncode=1)
-        runner = make_codex_runner()
-        request = make_prompt_request(cli="codex", prompt="test", max_retries=3)
         with pytest.raises(RetryableError):
-            await runner.run(request)
-        assert mock_exec.await_count == 3
+            await runner.run(make_prompt_request(cli="codex", prompt="test"))
+        assert mock_exec.await_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -449,7 +438,7 @@ class TestCodexRunnerAPIErrorExtraction:
         runner = make_codex_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(cli="codex", prompt="x", max_retries=1))
+            await runner.run(make_prompt_request(cli="codex", prompt="x"))
 
         primary_message = exc_info.value.args[0]
         assert "Codex API error" in primary_message
@@ -466,7 +455,7 @@ class TestCodexRunnerAPIErrorExtraction:
         runner = make_codex_runner()
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(cli="codex", prompt="x", max_retries=1))
+            await runner.run(make_prompt_request(cli="codex", prompt="x"))
 
         assert exc_info.value.command is not None
         assert "codex" in exc_info.value.command[0]

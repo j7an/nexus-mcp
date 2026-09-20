@@ -111,7 +111,7 @@ class TestRunProgress:
     async def test_single_attempt_reports_attempt_progress(self, mock_exec, runner):
         """Single successful attempt reports attempt 1/1."""
         mock_exec.return_value = create_mock_process(stdout="ok", returncode=0)
-        request = make_prompt_request(max_retries=1)
+        request = make_prompt_request()
         progress = AsyncMock()
 
         await runner.run(request, progress=progress)

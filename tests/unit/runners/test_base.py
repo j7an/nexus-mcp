@@ -81,7 +81,7 @@ class TestAbstractRunner:
         )
 
         with pytest.raises(SubprocessError) as exc_info:
-            await runner.run(make_prompt_request(max_retries=3))
+            await runner.run(make_prompt_request())
 
         runner._execute.assert_awaited_once()
         assert exc_info.value.returncode == 401
@@ -91,7 +91,7 @@ class TestAbstractRunner:
         runner._execute = AsyncMock(side_effect=ParseError("bad json"))  # type: ignore[method-assign]
 
         with pytest.raises(ParseError):
-            await runner.run(make_prompt_request(max_retries=3))
+            await runner.run(make_prompt_request())
 
         runner._execute.assert_awaited_once()
 

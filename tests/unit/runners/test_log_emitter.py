@@ -29,9 +29,6 @@ class EmitterFakeRunner(AbstractRunner):
 
     def __init__(self) -> None:
         self.timeout = 30
-        self.base_delay = 0.01
-        self.max_delay = 0.01
-        self.default_max_attempts = 1
         self.output_limit = 50_000
         self.default_model = None
         self.cli_path = self.AGENT_NAME
@@ -97,7 +94,7 @@ class TestRetryEmit:
 
         runner._recover_from_error = patched_recover
 
-        await runner.run(make_prompt_request(max_retries=2), emitter=collecting_emitter)
+        await runner.run(make_prompt_request(), emitter=collecting_emitter)
 
         warning_calls = [(lvl, msg) for lvl, msg in calls if lvl == "warning"]
         assert any("Retryable error (attempt 1/2)" in msg for _, msg in warning_calls)
