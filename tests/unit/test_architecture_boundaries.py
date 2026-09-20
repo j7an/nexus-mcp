@@ -326,6 +326,17 @@ def _explicit_public_exports(
     tree: ast.Module,
 ) -> tuple[tuple[str, ...], list[tuple[int, str]]]:
     names = [node for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id == "__all__"]
+    imported_all = next(
+        (
+            statement
+            for statement, _ in _module_scope_statements(tree.body)
+            if isinstance(statement, ast.Import | ast.ImportFrom)
+            and "__all__" in _statement_bound_names(statement)
+        ),
+        None,
+    )
+    if imported_all is not None:
+        return (), [(imported_all.lineno, "nonliteral __all__ use")]
     if not names:
         return (), []
     assignments = [
@@ -382,6 +393,7 @@ def _provider_specific_core_exports(files: Iterable[Path]) -> list[str]:
 def test_dynamic_core_exports_fail_closed() -> None:
     sources = (
         "__all__ = build_exports()",
+        "from .exports import names as __all__",
         '__all__ = ["Safe"]; alias = __all__',
         '__all__ = ["Safe"]; __all__.append("CodexThing")',
     )
