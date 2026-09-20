@@ -35,9 +35,6 @@ class OpenCodeServerRunner(AbstractRunner):
         """
         defaults = get_runner_defaults(self.AGENT_NAME)
         self.timeout: int = defaults.timeout  # type: ignore[assignment]
-        self.base_delay: float = defaults.retry_base_delay  # type: ignore[assignment]
-        self.max_delay: float = defaults.retry_max_delay  # type: ignore[assignment]
-        self.default_max_attempts: int = defaults.max_retries  # type: ignore[assignment]
         self.output_limit: int = defaults.output_limit  # type: ignore[assignment]
         self.default_model: str | None = defaults.model
         self.cli_path: str = "http"

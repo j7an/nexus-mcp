@@ -12,10 +12,6 @@ Template Method pattern in AbstractRunner._execute():
 4. parse_output(stdout, stderr) → AgentResponse
 5. _apply_output_limit(response) → AgentResponse (truncate if needed)
 
-Retry logic lives in RetryMixin (runners/retry.py):
-- Retries on RetryableError with exponential backoff + full jitter
-- Non-retryable errors (SubprocessError, ParseError) propagate immediately
-- max_attempts from request.max_retries or NEXUS_RETRY_MAX_ATTEMPTS env var
 """
 
 __all__ = ["CLIRunner", "AbstractRunner"]
@@ -34,18 +30,25 @@ from nexus_mcp.cli_detector import (
 from nexus_mcp.config import get_runner_defaults
 from nexus_mcp.exceptions import CLINotFoundError, ParseError, RetryableError, SubprocessError
 from nexus_mcp.process import run_subprocess
-from nexus_mcp.runners.retry import RetryMixin
-from nexus_mcp.runners.retry import _default_log_emitter as _default_log_emitter  # re-export
-from nexus_mcp.runners.retry import _noop_progress as _noop_progress  # re-export
 from nexus_mcp.types import (
     AgentResponse,
     ExecutionMode,
     LogEmitter,
+    LogLevel,
     ProgressEmitter,
     PromptRequest,
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _default_log_emitter(level: LogLevel, message: str) -> None:
+    """Fallback emitter for direct runner usage and tests."""
+    getattr(logger, level)(message)
+
+
+async def _noop_progress(progress: float, total: float, message: str) -> None:
+    """No-op progress emitter for direct runner usage and tests."""
 
 
 class CLIRunner(Protocol):
@@ -78,7 +81,7 @@ class CLIRunner(Protocol):
         ...
 
 
-class AbstractRunner(RetryMixin, ABC):
+class AbstractRunner(ABC):
     """Abstract base class implementing Template Method pattern for CLI runners.
 
     Subclasses must define:
@@ -113,23 +116,23 @@ class AbstractRunner(RetryMixin, ABC):
         self.capabilities: CLICapabilities = get_cli_capabilities(self.AGENT_NAME, version)
         defaults = get_runner_defaults(self.AGENT_NAME)
         self.timeout: int = defaults.timeout  # type: ignore[assignment]
-        self.base_delay: float = defaults.retry_base_delay  # type: ignore[assignment]
-        self.max_delay: float = defaults.retry_max_delay  # type: ignore[assignment]
-        self.default_max_attempts: int = defaults.max_retries  # type: ignore[assignment]
         self.output_limit: int = defaults.output_limit  # type: ignore[assignment]
         self.default_model: str | None = defaults.model
         self.cli_path: str = self.AGENT_NAME
 
-    async def _execute(
-        self, request: PromptRequest, emit: LogEmitter, progress: ProgressEmitter
+    async def run(
+        self,
+        request: PromptRequest,
+        emitter: LogEmitter | None = None,
+        progress: ProgressEmitter | None = None,
     ) -> AgentResponse:
-        """Execute one runner-level attempt.
+        """Execute the request with exactly one runner attempt."""
+        emit = emitter or _default_log_emitter
+        report = progress or _noop_progress
+        await report(1, 1, "Attempt 1/1")
+        return await self._execute(request, emit, report)
 
-        The default implementation is exactly one subprocess/parse/recovery pass.
-        """
-        return await self._execute_single_attempt(request, emit, progress)
-
-    async def _execute_single_attempt(
+    async def _execute(
         self, request: PromptRequest, emit: LogEmitter, progress: ProgressEmitter
     ) -> AgentResponse:
         """Execute exactly one subprocess attempt for the given request.
