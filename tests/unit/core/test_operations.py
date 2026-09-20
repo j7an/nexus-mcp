@@ -136,6 +136,13 @@ def test_review_operation_defaults_to_inline_and_round_trips_delivery():
     assert detached.target.reference == "abc123"
 
 
+@pytest.mark.parametrize("kind", ["branch", "commit"])
+def test_review_operation_rejects_named_target_without_reference(kind):
+    """An underspecified review target cannot be admitted as a job."""
+    with pytest.raises(ValidationError):
+        ReviewOperation.model_validate({"target": {"kind": kind}})
+
+
 def test_backend_capabilities_advertise_review_delivery_and_dormant_structured_output():
     """Admission can distinguish supported review delivery without inventing a request schema."""
     capabilities = BackendCapabilities(

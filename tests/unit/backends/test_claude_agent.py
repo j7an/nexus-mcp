@@ -713,22 +713,6 @@ async def test_inline_review_without_provider_checkpoint_fails_before_client_cre
     assert created == []
 
 
-@pytest.mark.parametrize("kind", ["branch", "commit"])
-async def test_review_requires_reference_for_branch_and_commit(tmp_path, kind):
-    created: list[FakeClient] = []
-    backend = ClaudeAgentBackend(factory([result(structured_output=REVIEW_JSON)], created))
-
-    with pytest.raises(BackendFailure) as raised:
-        await backend.execute(
-            ReviewOperation(target=ReviewTarget(kind=kind)),
-            FakeContext(workspace_path=tmp_path, source_checkpoint=PARENT),
-        )
-
-    assert raised.value.error.code == "unsupported_capability"
-    assert raised.value.retry_disposition == "terminal"
-    assert created == []
-
-
 async def test_review_with_malformed_output_is_invalid(tmp_path):
     with pytest.raises(BackendFailure) as raised:
         await ClaudeAgentBackend(

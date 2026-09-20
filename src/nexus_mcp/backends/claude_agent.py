@@ -276,12 +276,6 @@ class ClaudeAgentBackend:
             review = isinstance(operation, ReviewOperation)
             sandbox: SandboxMode = "read_only" if review else (config.sandbox or "read_only")
             self._require_sandbox_platform(sandbox)
-            if (
-                isinstance(operation, ReviewOperation)
-                and operation.target.kind in ("branch", "commit")
-                and not operation.target.reference
-            ):
-                raise _failure("unsupported_capability", "This review target requires a reference")
             session_id = next(
                 (ref.value for ref in context.job.source_checkpoint if ref.kind == _SESSION), None
             )

@@ -12,6 +12,7 @@ from pydantic import (
     field_serializer,
     field_validator,
     model_serializer,
+    model_validator,
 )
 
 from nexus_mcp.core._json import freeze_bounded_json_mapping, thaw_json_mapping
@@ -110,6 +111,13 @@ class ReviewTarget(_OperationModel):
 
     kind: ReviewTargetKind
     reference: str | None = Field(default=None, min_length=1, max_length=4096)
+
+    @model_validator(mode="after")
+    def require_named_target_reference(self) -> "ReviewTarget":
+        """A branch or commit review must identify the target it will inspect."""
+        if self.kind in ("branch", "commit") and self.reference is None:
+            raise ValueError("branch and commit review targets require a reference")
+        return self
 
 
 class ReviewOperation(_ContextOperation):
