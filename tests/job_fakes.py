@@ -3,7 +3,6 @@
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Self
 
 from nexus_mcp.backends import (
@@ -36,16 +35,6 @@ __all__ = [
     "ReturnResultAction",
     "ScriptedBackend",
 ]
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
-
-
-def _normalize_utc(value: datetime) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError("must be a timezone-aware UTC datetime")
-    return value.astimezone(UTC)
 
 
 @dataclass(frozen=True)
