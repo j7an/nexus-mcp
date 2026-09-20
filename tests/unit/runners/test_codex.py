@@ -337,7 +337,7 @@ class TestCodexRunnerErrorHandling:
 
 
 class TestCodexRunnerRetryableErrors:
-    """Test CodexRunner retryable error classification and retry integration."""
+    """Test CodexRunner retryable error classification."""
 
     @pytest.mark.parametrize("code", [429, 503])
     def test_retryable_error_codes_raise_retryable_error(self, code: int):

@@ -6,7 +6,6 @@ Tests verify:
 - AbstractRunner implements Template Method pattern
 - run() orchestrates: build_command → run_subprocess → parse_output
 - run() raises SubprocessError on non-zero return codes (fail fast)
-- run() retries on RetryableError with exponential backoff
 """
 
 from pathlib import Path

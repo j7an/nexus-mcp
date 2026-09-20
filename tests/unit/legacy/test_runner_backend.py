@@ -97,7 +97,7 @@ def test_legacy_backends_and_default_manager_are_deterministic():
     assert [manager.get(backend_id).descriptor.backend_id for backend_id in expected] == expected
 
 
-async def test_legacy_backend_maps_turn_and_retains_job_retry_policy():
+async def test_legacy_backend_maps_turn_without_runner_retry_fields():
     retry_policy = RetryPolicy(max_attempts=8, base_delay_seconds=2, max_delay_seconds=7)
     resolved = ResolvedExecutionConfig(
         model="model-test",
@@ -127,7 +127,9 @@ async def test_legacy_backend_maps_turn_and_retains_job_retry_policy():
     assert request.output_limit == 4096
     assert request.cwd == context.workspace.canonical_path
     assert request.execution_mode == "default"
-    assert context.resolved_config.retry_policy is retry_policy
+    assert set(request.model_dump()).isdisjoint(
+        {"max_retries", "retry_base_delay", "retry_max_delay"}
+    )
     assert result.message == "done"
 
 

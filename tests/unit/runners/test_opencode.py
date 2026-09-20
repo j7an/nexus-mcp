@@ -8,7 +8,7 @@ Tests verify:
 - build_command() appends file_refs to prompt
 - execution mode flags: default/yolo (all produce same command structure)
 - parse_output() NDJSON primary path and JSON fallback path
-- error handling: _recover_from_error, _try_extract_error, retry integration
+- error handling: _recover_from_error, _try_extract_error, retryable-error classification
 """
 
 import json
@@ -468,7 +468,7 @@ class TestOpenCodeRunnerErrorHandling:
 
 
 class TestOpenCodeRunnerRetryableErrors:
-    """Test OpenCodeRunner retryable error classification and retry integration."""
+    """Test OpenCodeRunner retryable error classification."""
 
     @pytest.mark.parametrize("code", [429, 503])
     def test_retryable_error_codes_raise_retryable_error(self, code: int):
