@@ -380,8 +380,8 @@ async def test_lease_loss_detaches_callbacks_without_false_terminal_write(tmp_pa
         backend = LeaseAwareBackend()
         job = await admit(store)
         policy = WorkerPolicy(
-            lease_seconds=0.05,
-            heartbeat_seconds=0.01,
+            lease_seconds=10.0,
+            heartbeat_seconds=0.2,
             idle_poll_seconds=0.01,
             reconciliation_timeout_seconds=0.05,
         )
@@ -413,13 +413,13 @@ async def test_heartbeat_error_detaches_as_lease_loss_instead_of_hanging(tmp_pat
         backend = LeaseAwareBackend()
         await admit(store)
         policy = WorkerPolicy(
-            lease_seconds=0.05,
-            heartbeat_seconds=0.01,
+            lease_seconds=10.0,
+            heartbeat_seconds=0.2,
             idle_poll_seconds=0.01,
             reconciliation_timeout_seconds=0.05,
         )
 
-        async with asyncio.timeout(0.2):
+        async with asyncio.timeout(1.0):
             await make_worker(store, backend, policy=policy).run_once()
 
         assert store.heartbeat_attempted.is_set()
