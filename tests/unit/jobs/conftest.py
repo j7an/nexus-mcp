@@ -34,18 +34,14 @@ from tests.fixtures import (
     make_job_handle,
     make_workspace,
 )
-from tests.job_fakes import InMemoryJobStore, ScriptedBackend
+from tests.job_fakes import ScriptedBackend
 from tests.unit.jobs._service_support import NOW, _ChangingCaptureResolver
 
 
-@pytest.fixture(params=["memory", "sqlite"], ids=["memory", "sqlite"])
-async def admission_store(request: pytest.FixtureRequest, tmp_path: Path):
-    """Run admission, identity, and query assertions against every implementation."""
-    store = (
-        SQLiteJobStore(tmp_path / "jobs.sqlite3")
-        if request.param == "sqlite"
-        else InMemoryJobStore()
-    )
+@pytest.fixture
+async def admission_store(tmp_path: Path):
+    """Run admission, identity, and query assertions against SQLite."""
+    store = SQLiteJobStore(tmp_path / "jobs.sqlite3")
     await store.open()
     try:
         yield store
@@ -53,14 +49,10 @@ async def admission_store(request: pytest.FixtureRequest, tmp_path: Path):
         await store.close()
 
 
-@pytest.fixture(params=["memory", "sqlite"], ids=["memory", "sqlite"])
-async def job_store(request: pytest.FixtureRequest, tmp_path: Path):
-    """Run the complete lifecycle contract against every store implementation."""
-    store = (
-        SQLiteJobStore(tmp_path / "jobs.sqlite3")
-        if request.param == "sqlite"
-        else InMemoryJobStore()
-    )
+@pytest.fixture
+async def job_store(tmp_path: Path):
+    """Run the complete lifecycle contract against SQLite."""
+    store = SQLiteJobStore(tmp_path / "jobs.sqlite3")
     await store.open()
     try:
         yield store
@@ -160,17 +152,10 @@ def service(
     )
 
 
-@pytest.fixture(params=["memory", "sqlite"], ids=["memory", "sqlite"])
-async def real_service_environment(
-    request: pytest.FixtureRequest,
-    tmp_path: Path,
-):
-    """Run application idempotency behavior against both complete store implementations."""
-    durable_store: JobStore = (
-        SQLiteJobStore(tmp_path / "service.sqlite3")
-        if request.param == "sqlite"
-        else InMemoryJobStore()
-    )
+@pytest.fixture
+async def real_service_environment(tmp_path: Path):
+    """Run application idempotency behavior against SQLite."""
+    durable_store: JobStore = SQLiteJobStore(tmp_path / "service.sqlite3")
     await durable_store.open()
     workspace = make_workspace(canonical_path=tmp_path, created_at=NOW, updated_at=NOW)
     seed = await durable_store.create_job(
@@ -223,3 +208,14 @@ async def real_service_environment(
         yield service, durable_store, backend, notifier
     finally:
         await durable_store.close()
+
+
+@pytest.fixture
+async def worker_store(tmp_path: Path):
+    """Provide an opened SQLite store for worker contracts."""
+    store = SQLiteJobStore(tmp_path / "worker.sqlite3")
+    await store.open()
+    try:
+        yield store
+    finally:
+        await store.close()
