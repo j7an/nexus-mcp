@@ -3,6 +3,7 @@
 import asyncio
 import sqlite3
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -30,6 +31,7 @@ from nexus_mcp.core import (
     StaleLeaseError,
 )
 from nexus_mcp.jobs.events import EventNotifier
+from nexus_mcp.jobs.sqlite_store import SQLiteJobStore
 from nexus_mcp.jobs.store import (
     CancelJobCommand,
     LeaseToken,
@@ -40,7 +42,6 @@ from nexus_mcp.jobs.worker import WorkerPolicy, WorkerPool
 from tests.fixtures import make_pending_permission, make_turn_result
 from tests.job_fakes import (
     EmitOutputAction,
-    InMemoryJobStore,
     RequestInputAction,
     ReturnReconciliationAction,
     ReturnResultAction,
@@ -66,9 +67,11 @@ def cancel_command(job_id: str) -> CancelJobCommand:
     )
 
 
-async def test_request_input_flushes_output_and_returns_cross_task_response():
+async def test_request_input_flushes_output_and_returns_cross_task_response(
+    worker_store: SQLiteJobStore,
+):
     """Input resumes from the committed response rather than notifier-local payload state."""
-    store = InMemoryJobStore()
+    store = worker_store
     notifier = EventNotifier()
     backend = ScriptedBackend()
     job = await admit(store)
@@ -82,7 +85,9 @@ async def test_request_input_flushes_output_and_returns_cross_task_response():
     worker_task = asyncio.create_task(make_worker(store, backend, notifier).run_once())
 
     await wait_until(lambda: bool(backend.input_requests))
-    pending = await store.get_pending_inputs(job.job_id)
+    async with asyncio.timeout(1.0):
+        while not (pending := await store.get_pending_inputs(job.job_id)):
+            await asyncio.sleep(0)
     assert len(pending) == 1
     response = QuestionResponse(answer="yes")
     await store.resolve_input(
@@ -120,9 +125,11 @@ class MultiControlBackend(ScriptedBackend):
         return make_turn_result(message="controls observed")
 
 
-async def test_wait_for_control_observes_multiple_persisted_responses_once_each():
+async def test_wait_for_control_observes_multiple_persisted_responses_once_each(
+    worker_store: SQLiteJobStore,
+):
     """Notifier wakes are hints while fenced snapshots define exact resolved input identities."""
-    store = InMemoryJobStore()
+    store = worker_store
     notifier = EventNotifier()
     backend = MultiControlBackend()
     job = await admit(store)
@@ -175,9 +182,11 @@ class CompletionGateBackend(ScriptedBackend):
         return make_turn_result(message="won the race")
 
 
-async def test_completion_wins_race_with_active_cancellation_intent():
+async def test_completion_wins_race_with_active_cancellation_intent(
+    worker_store: SQLiteJobStore,
+):
     """A committed provider completion remains truthful even when cancel intent arrived first."""
-    store = InMemoryJobStore()
+    store = worker_store
     notifier = EventNotifier()
     backend = CompletionGateBackend()
     job = await admit(store)
@@ -212,9 +221,11 @@ class CancelAwareBackend(ScriptedBackend):
         raise asyncio.CancelledError
 
 
-async def test_active_cancellation_delivers_cancel_signal_and_terminalizes_cancelled():
+async def test_active_cancellation_delivers_cancel_signal_and_terminalizes_cancelled(
+    worker_store: SQLiteJobStore,
+):
     """User cancellation is distinct from lease loss and becomes terminal only after cleanup."""
-    store = InMemoryJobStore()
+    store = worker_store
     notifier = EventNotifier()
     backend = CancelAwareBackend()
     job = await admit(store)
@@ -233,9 +244,9 @@ async def test_active_cancellation_delivers_cancel_signal_and_terminalizes_cance
     assert dict(events[-2].payload) == {"text": "before cancellation"}
 
 
-async def test_queued_cancellation_prevents_worker_execution():
+async def test_queued_cancellation_prevents_worker_execution(worker_store: SQLiteJobStore):
     """A queued cancellation is already terminal and cannot later be claimed."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ScriptedBackend()
     job = await admit(store)
 
@@ -263,9 +274,9 @@ class HangingBackend(ScriptedBackend):
             raise
 
 
-async def test_execution_timeout_is_a_truthful_terminal_timeout():
+async def test_execution_timeout_is_a_truthful_terminal_timeout(worker_store: SQLiteJobStore):
     """A pre-reference timeout fails durably with code=timeout and cancels local observation."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = HangingBackend()
     job = await admit(
         store,
@@ -297,9 +308,11 @@ class ReferencedHangingBackend(HangingBackend):
             raise
 
 
-async def test_timeout_after_provider_reference_reconciles_without_replay():
+async def test_timeout_after_provider_reference_reconciles_without_replay(
+    worker_store: SQLiteJobStore,
+):
     """Timeout uncertainty after provider start imports completion instead of executing twice."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ReferencedHangingBackend()
     job = await admit(
         store,
@@ -321,11 +334,11 @@ async def test_timeout_after_provider_reference_reconciles_without_replay():
     assert result is not None and result.payload.message == "after timeout"  # type: ignore[union-attr]
 
 
-class LeaseLosingStore(InMemoryJobStore):
+class LeaseLosingStore(SQLiteJobStore):
     """Store that rejects the first heartbeat while leaving old state inspectable."""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
         self.heartbeat_attempted = asyncio.Event()
 
     async def renew_lease(self, token: LeaseToken, lease_until: datetime) -> bool:
@@ -333,8 +346,12 @@ class LeaseLosingStore(InMemoryJobStore):
         return False
 
 
-class HeartbeatErrorStore(LeaseLosingStore):
+class HeartbeatErrorStore(SQLiteJobStore):
     """Store whose renewal error makes continued ownership uncertain."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
+        self.heartbeat_attempted = asyncio.Event()
 
     async def renew_lease(self, token: LeaseToken, lease_until: datetime) -> bool:
         self.heartbeat_attempted.set()
@@ -355,51 +372,60 @@ class LeaseAwareBackend(ScriptedBackend):
         return make_turn_result(message="must not commit")
 
 
-async def test_lease_loss_detaches_callbacks_without_false_terminal_write():
+async def test_lease_loss_detaches_callbacks_without_false_terminal_write(tmp_path: Path):
     """A stale generation observes lease_lost and cannot commit output or a terminal result."""
-    store = LeaseLosingStore()
-    backend = LeaseAwareBackend()
-    job = await admit(store)
-    policy = WorkerPolicy(
-        lease_seconds=0.05,
-        heartbeat_seconds=0.01,
-        idle_poll_seconds=0.01,
-        reconciliation_timeout_seconds=0.05,
-    )
-    worker = make_worker(store, backend, policy=policy)
+    store = LeaseLosingStore(tmp_path / "lease-loss.sqlite3")
+    await store.open()
+    try:
+        backend = LeaseAwareBackend()
+        job = await admit(store)
+        policy = WorkerPolicy(
+            lease_seconds=0.05,
+            heartbeat_seconds=0.01,
+            idle_poll_seconds=0.01,
+            reconciliation_timeout_seconds=0.05,
+        )
+        worker = make_worker(store, backend, policy=policy)
 
-    await worker.run_once()
+        await worker.run_once()
 
-    assert store.heartbeat_attempted.is_set()
-    assert backend.signal == LeaseLost()
-    saved_context = backend.execute_calls[0][1]
-    with pytest.raises(StaleLeaseError):
-        await saved_context.emit(BackendEvent(type="progress"))
-    persisted = await store.get_job(job.job_id)
-    assert persisted is not None and persisted.state == "running"
-    assert await store.get_job_result(job.job_id) is None
-    events = (await store.read_events(job.job_id, 0, 100)).events
-    assert all(
-        event.type not in {"job_completed", "job_failed", "job_cancelled"} for event in events
-    )
+        assert store.heartbeat_attempted.is_set()
+        assert backend.signal == LeaseLost()
+        saved_context = backend.execute_calls[0][1]
+        with pytest.raises(StaleLeaseError):
+            await saved_context.emit(BackendEvent(type="progress"))
+        persisted = await store.get_job(job.job_id)
+        assert persisted is not None and persisted.state == "running"
+        assert await store.get_job_result(job.job_id) is None
+        events = (await store.read_events(job.job_id, 0, 100)).events
+        assert all(
+            event.type not in {"job_completed", "job_failed", "job_cancelled"} for event in events
+        )
+    finally:
+        await store.close()
 
 
-async def test_heartbeat_error_detaches_as_lease_loss_instead_of_hanging():
+async def test_heartbeat_error_detaches_as_lease_loss_instead_of_hanging(tmp_path: Path):
     """A renewal error cannot leave callbacks authoritative after lease ownership is uncertain."""
-    store = HeartbeatErrorStore()
-    backend = LeaseAwareBackend()
-    await admit(store)
-    policy = WorkerPolicy(
-        lease_seconds=0.05,
-        heartbeat_seconds=0.01,
-        idle_poll_seconds=0.01,
-        reconciliation_timeout_seconds=0.05,
-    )
+    store = HeartbeatErrorStore(tmp_path / "heartbeat-error.sqlite3")
+    await store.open()
+    try:
+        backend = LeaseAwareBackend()
+        await admit(store)
+        policy = WorkerPolicy(
+            lease_seconds=0.05,
+            heartbeat_seconds=0.01,
+            idle_poll_seconds=0.01,
+            reconciliation_timeout_seconds=0.05,
+        )
 
-    async with asyncio.timeout(0.2):
-        await make_worker(store, backend, policy=policy).run_once()
+        async with asyncio.timeout(0.2):
+            await make_worker(store, backend, policy=policy).run_once()
 
-    assert backend.signal == LeaseLost()
+        assert store.heartbeat_attempted.is_set()
+        assert backend.signal == LeaseLost()
+    finally:
+        await store.close()
 
 
 class InputRequiredThenControlBackend(ScriptedBackend):
@@ -419,9 +445,11 @@ class InputRequiredThenControlBackend(ScriptedBackend):
         return CompletedReconciliationOutcome(result=make_turn_result(message="resumed"))
 
 
-async def test_input_required_reconciliation_preserves_state_and_progresses_on_control():
+async def test_input_required_reconciliation_preserves_state_and_progresses_on_control(
+    worker_store: SQLiteJobStore,
+):
     """Recovered input waits stay fenced, never replay execute, and consume durable control."""
-    store = InMemoryJobStore()
+    store = worker_store
     notifier = EventNotifier()
     backend = InputRequiredThenControlBackend()
     job = await admit(store)
@@ -485,9 +513,11 @@ async def test_input_required_reconciliation_preserves_state_and_progresses_on_c
     assert terminal is not None and terminal.state == "completed"
 
 
-async def test_output_deltas_are_bounded_coalesced_and_followed_by_complete_message():
+async def test_output_deltas_are_bounded_coalesced_and_followed_by_complete_message(
+    worker_store: SQLiteJobStore,
+):
     """High-frequency deltas do not create one journal row each or lose final output."""
-    store = InMemoryJobStore()
+    store = worker_store
     backend = ScriptedBackend()
     job = await admit(store)
     complete = "🙂alpha-" * 8
@@ -510,9 +540,11 @@ async def test_output_deltas_are_bounded_coalesced_and_followed_by_complete_mess
     assert dict(messages[-1].payload) == {"text": complete, "final": True}
 
 
-async def test_worker_pool_runs_until_idle_and_stops_interruptible_loops():
+async def test_worker_pool_runs_until_idle_and_stops_interruptible_loops(
+    worker_store: SQLiteJobStore,
+):
     """Pool compatibility draining and background shutdown leave no worker loop running."""
-    store = InMemoryJobStore()
+    store = worker_store
     notifier = EventNotifier()
     backend = ScriptedBackend()
     job = await admit(store)
@@ -558,9 +590,11 @@ class CapacityGateBackend(ScriptedBackend):
             self.active -= 1
 
 
-async def test_bounded_worker_pool_refuses_capacity_above_configured_maximum():
+async def test_bounded_worker_pool_refuses_capacity_above_configured_maximum(
+    worker_store: SQLiteJobStore,
+):
     """Direct growth cannot create a ninth worker in an eight-worker pool."""
-    store = InMemoryJobStore()
+    store = worker_store
     notifier = EventNotifier()
     backend = CapacityGateBackend()
     for index in range(9):
@@ -586,11 +620,11 @@ async def test_bounded_worker_pool_refuses_capacity_above_configured_maximum():
         await pool.stop()
 
 
-class OneShotTerminalizationErrorStore(InMemoryJobStore):
+class OneShotTerminalizationErrorStore(SQLiteJobStore):
     """Store that injects one escaped SQLite failure after provider execution."""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
         self.failure_injected = asyncio.Event()
 
     async def terminalize(
@@ -606,54 +640,63 @@ class OneShotTerminalizationErrorStore(InMemoryJobStore):
         return await super().terminalize(token, outcome, event=event)
 
 
-async def test_worker_loop_survives_terminalization_error_without_replaying_provider():
+async def test_worker_loop_survives_terminalization_error_without_replaying_provider(
+    tmp_path: Path,
+):
     """One escaped store error keeps the same loop alive for later work and reconciliation."""
-    store = OneShotTerminalizationErrorStore()
-    notifier = EventNotifier()
-    backend = ScriptedBackend()
-    first = await admit(store)
-    first_result = make_turn_result(message="first result")
-    backend.queue_execute(ReturnResultAction(first_result))
-    backend.queue_reconcile(
-        ReturnReconciliationAction(CompletedReconciliationOutcome(result=first_result))
-    )
-    pool = WorkerPool(
-        store=store,
-        backends=BackendManager([backend]),
-        notifier=notifier,
-        worker_count=1,
-        worker_id_prefix="survivor",
-        policy=WorkerPolicy(
-            lease_seconds=0.03,
-            heartbeat_seconds=0.01,
-            idle_poll_seconds=0.001,
-            reconciliation_timeout_seconds=1.0,
-        ),
-    )
-    await pool.start()
+    store = OneShotTerminalizationErrorStore(tmp_path / "terminalization-error.sqlite3")
+    await store.open()
     try:
-        await asyncio.wait_for(store.failure_injected.wait(), timeout=1.0)
-        later = await admit(store, session_id="session-later")
-        backend.queue_execute(ReturnResultAction(make_turn_result(message="later result")))
+        notifier = EventNotifier()
+        backend = ScriptedBackend()
+        first = await admit(store)
+        first_result = make_turn_result(message="first result")
+        backend.queue_execute(ReturnResultAction(first_result))
+        backend.queue_reconcile(
+            ReturnReconciliationAction(CompletedReconciliationOutcome(result=first_result))
+        )
+        pool = WorkerPool(
+            store=store,
+            backends=BackendManager([backend]),
+            notifier=notifier,
+            worker_count=1,
+            worker_id_prefix="survivor",
+            policy=WorkerPolicy(
+                lease_seconds=0.03,
+                heartbeat_seconds=0.01,
+                idle_poll_seconds=0.001,
+                reconciliation_timeout_seconds=1.0,
+            ),
+        )
+        await pool.start()
+        try:
+            await asyncio.wait_for(store.failure_injected.wait(), timeout=1.0)
+            later = await admit(store, session_id="session-later")
+            backend.queue_execute(ReturnResultAction(make_turn_result(message="later result")))
 
-        async with asyncio.timeout(1.0):
-            while True:
-                persisted = (await store.get_job(first.job_id), await store.get_job(later.job_id))
-                if all(job is not None and job.state == "completed" for job in persisted):
-                    break
-                await asyncio.sleep(0)
+            async with asyncio.timeout(1.0):
+                while True:
+                    persisted = (
+                        await store.get_job(first.job_id),
+                        await store.get_job(later.job_id),
+                    )
+                    if all(job is not None and job.state == "completed" for job in persisted):
+                        break
+                    await asyncio.sleep(0)
 
-        assert pool.running is True
-        assert [context.job.job_id for _, context in backend.execute_calls] == [
-            first.job_id,
-            later.job_id,
-        ]
-        assert len(backend.reconcile_calls) == 1
+            assert pool.running is True
+            assert [context.job.job_id for _, context in backend.execute_calls] == [
+                first.job_id,
+                later.job_id,
+            ]
+            assert len(backend.reconcile_calls) == 1
+        finally:
+            async with asyncio.timeout(0.1):
+                await pool.stop()
+
+        assert pool.running is False
     finally:
-        async with asyncio.timeout(0.1):
-            await pool.stop()
-
-    assert pool.running is False
+        await store.close()
 
 
 class ShutdownAwareBackend(ScriptedBackend):
@@ -672,11 +715,11 @@ class ShutdownAwareBackend(ScriptedBackend):
         await asyncio.Event().wait()
 
 
-class BlockingRenewalStore(InMemoryJobStore):
+class BlockingRenewalStore(SQLiteJobStore):
     """Store whose in-flight lease renewal remains blocked until cancelled or released."""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
         self.renewal_started = asyncio.Event()
         self.release_renewal = asyncio.Event()
         self.renewal_cancelled = asyncio.Event()
@@ -691,9 +734,11 @@ class BlockingRenewalStore(InMemoryJobStore):
         return await super().renew_lease(token, lease_until)
 
 
-async def test_worker_pool_stop_flushes_and_delivers_runtime_shutdown():
+async def test_worker_pool_stop_flushes_and_delivers_runtime_shutdown(
+    worker_store: SQLiteJobStore,
+):
     """Pool shutdown detaches shared observation without a false provider terminal state."""
-    store = InMemoryJobStore()
+    store = worker_store
     notifier = EventNotifier()
     backend = ShutdownAwareBackend()
     job = await admit(store)
@@ -716,38 +761,42 @@ async def test_worker_pool_stop_flushes_and_delivers_runtime_shutdown():
     }
 
 
-async def test_worker_pool_stop_cancels_and_awaits_blocked_heartbeat_renewal():
+async def test_worker_pool_stop_cancels_and_awaits_blocked_heartbeat_renewal(tmp_path: Path):
     """Pool shutdown cannot wait for an external lease-renewal operation to release."""
-    store = BlockingRenewalStore()
-    notifier = EventNotifier()
-    backend = ShutdownAwareBackend()
-    await admit(store)
-    pool = WorkerPool(
-        store=store,
-        backends=BackendManager([backend]),
-        notifier=notifier,
-        policy=WorkerPolicy(
-            lease_seconds=0.05,
-            heartbeat_seconds=0.01,
-            idle_poll_seconds=0.01,
-            reconciliation_timeout_seconds=0.05,
-        ),
-    )
-    await pool.start()
-    await backend.started.wait()
-    await store.renewal_started.wait()
-    stop_task = asyncio.create_task(pool.stop())
-
+    store = BlockingRenewalStore(tmp_path / "blocked-renewal.sqlite3")
+    await store.open()
     try:
-        async with asyncio.timeout(0.1):
-            await asyncio.shield(stop_task)
-    except TimeoutError:
-        store.release_renewal.set()
-        await stop_task
-        pytest.fail("pool.stop() waited for blocked heartbeat renewal")
+        notifier = EventNotifier()
+        backend = ShutdownAwareBackend()
+        await admit(store)
+        pool = WorkerPool(
+            store=store,
+            backends=BackendManager([backend]),
+            notifier=notifier,
+            policy=WorkerPolicy(
+                lease_seconds=0.05,
+                heartbeat_seconds=0.01,
+                idle_poll_seconds=0.01,
+                reconciliation_timeout_seconds=0.05,
+            ),
+        )
+        await pool.start()
+        await backend.started.wait()
+        await store.renewal_started.wait()
+        stop_task = asyncio.create_task(pool.stop())
 
-    assert store.renewal_cancelled.is_set()
-    assert pool.running is False
+        try:
+            async with asyncio.timeout(0.1):
+                await asyncio.shield(stop_task)
+        except TimeoutError:
+            store.release_renewal.set()
+            await stop_task
+            pytest.fail("pool.stop() waited for blocked heartbeat renewal")
+
+        assert store.renewal_cancelled.is_set()
+        assert pool.running is False
+    finally:
+        await store.close()
 
 
 class AvailabilityGateBackend(ScriptedBackend):
@@ -764,9 +813,11 @@ class AvailabilityGateBackend(ScriptedBackend):
         return self.availability
 
 
-async def test_worker_pool_stop_interrupts_pre_context_preparation():
+async def test_worker_pool_stop_interrupts_pre_context_preparation(
+    worker_store: SQLiteJobStore,
+):
     """Pool shutdown does not wait indefinitely for availability before context creation."""
-    store = InMemoryJobStore()
+    store = worker_store
     notifier = EventNotifier()
     backend = AvailabilityGateBackend()
     job = await admit(store)
