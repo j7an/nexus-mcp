@@ -135,8 +135,7 @@ class TestAbstractRunner:
 
         request = make_prompt_request(prompt="test")
 
-        with patch("nexus_mcp.config.get_global_output_limit", return_value=50_000):
-            response = await runner.run(request)
+        response = await runner.run(request)
 
         # Output should be truncated
         assert len(response.output.encode("utf-8")) <= 50_000
@@ -152,8 +151,7 @@ class TestAbstractRunner:
 
         request = make_prompt_request(prompt="test")
 
-        with patch("nexus_mcp.config.get_global_output_limit", return_value=50_000):
-            response = await runner.run(request)
+        response = await runner.run(request)
 
         # Output should be preserved
         assert response.output == small_output
@@ -461,8 +459,7 @@ class TestTruncationBehavior:
         mock_exec.return_value = create_mock_process(stdout=large_output)
         request = make_prompt_request(prompt="test")
 
-        with patch("nexus_mcp.config.get_global_output_limit", return_value=50_000):
-            response = await runner.run(request)
+        response = await runner.run(request)
 
         expected_suffix = "\n\n[Output truncated: 100000 bytes exceeds 50000 byte limit]"
         assert response.output.endswith(expected_suffix)
@@ -474,8 +471,7 @@ class TestTruncationBehavior:
         mock_exec.return_value = create_mock_process(stdout=exact_output)
         request = make_prompt_request(prompt="test")
 
-        with patch("nexus_mcp.config.get_global_output_limit", return_value=50_000):
-            response = await runner.run(request)
+        response = await runner.run(request)
 
         assert response.output == exact_output
         assert "truncated" not in response.metadata
@@ -493,8 +489,7 @@ class TestTruncationBehavior:
         mock_exec.return_value = create_mock_process(stdout=full_output)
         request = make_prompt_request(prompt="test")
 
-        with patch("nexus_mcp.config.get_global_output_limit", return_value=50_000):
-            response = await runner.run(request)
+        response = await runner.run(request)
 
         # Must not raise and result must be valid UTF-8
         response.output.encode("utf-8")
