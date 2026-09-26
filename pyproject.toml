@@ -122,6 +122,7 @@ warn_return_any = true
 warn_unused_configs = true
 
 [tool.pytest.ini_options]
+addopts = "-m 'not integration'"
 asyncio_mode = "auto"  # Recommended by FastMCP: eliminates need for @pytest.mark.asyncio decorators
 asyncio_default_fixture_loop_scope = "function"  # Avoids deprecation warning in pytest-asyncio 1.x (will be default in v2.0)
 testpaths = ["tests"]  # Explicit test discovery
