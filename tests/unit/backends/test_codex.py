@@ -277,8 +277,11 @@ async def test_info_lists_models(monkeypatch, created):
     )
 
 
-async def test_info_survives_launch_failure(monkeypatch, created):
-    install(monkeypatch, created, [], enter_error=FileNotFoundError("x"))
+@pytest.mark.parametrize(
+    "error", [FileNotFoundError("x"), TransportClosedError("x"), CodexError("x")]
+)
+async def test_info_survives_launch_failure(monkeypatch, created, error):
+    install(monkeypatch, created, [], enter_error=error)
     got = await codex.info()
     assert got.installed is True and got.models is None and "could not start" in got.hint.lower()
 
