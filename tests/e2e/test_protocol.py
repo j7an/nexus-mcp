@@ -52,7 +52,8 @@ async def test_unknown_profile_rejected_by_schema(client, tmp_path):
 async def test_backends_resource(client):
     contents = await client.read_resource("nexus://backends")
     assert json.loads(contents[0].text) == [
-        {"name": "claude", "installed": True, "models": None, "hint": None}
+        {"name": "claude", "installed": True, "models": None, "hint": None},
+        {"name": "claude", "installed": True, "models": None, "hint": None},
     ]
 
 

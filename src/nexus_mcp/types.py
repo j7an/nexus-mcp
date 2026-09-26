@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 __all__ = ["BackendInfo", "BackendName", "Profile", "PromptRequest", "PromptResult"]
 
 type Profile = Literal["read_only", "workspace_write", "full_access"]
-type BackendName = Literal["claude"]
+type BackendName = Literal["claude", "codex"]
 
 
 class PromptRequest(BaseModel):
