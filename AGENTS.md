@@ -2,28 +2,26 @@
 
 ## Project Overview
 
-Nexus MCP is a Python 3.12+ MCP server that enables AI models to invoke agent
-runners and integrations (Claude Code, Codex, OpenCode, OpenCode server) as tools.
-Built with FastMCP 4.0+.
-
-OpenCode Gemini-family model names are OpenCode provider/model configuration, not
-support for a separate command-line runner.
+Nexus MCP is a Python 3.12+ stdio MCP server (FastMCP 4.0.x) exposing one tool, `prompt`, and
+one resource, `nexus://backends`. Each `prompt` call runs one synchronous agent turn through a
+backend: Claude via the Claude Agent SDK. Backends are optional extras. There is no nexus
+persistence: conversations persist in each agent's own storage and are resumed by `session_id`.
 
 ## Build, Lint, Test Commands
 
 ```bash
 # Setup (first time)
-uv sync
+uv sync --all-extras --all-groups
 uv run pre-commit install
 
 # Run all tests (unit + e2e, fast)
 uv run pytest
 
 # Run single test file
-uv run pytest tests/unit/test_types.py
+uv run pytest tests/unit/test_server.py
 
 # Run single test function
-uv run pytest tests/unit/test_types.py::test_prompt_request_valid
+uv run pytest tests/unit/test_server.py::test_prompt_dispatches_validated_request
 
 # Run with coverage (threshold: 90%)
 uv run pytest --cov=nexus_mcp -v
@@ -108,14 +106,7 @@ docstrings when they clarify intent.
 ## Imports
 
 ```python
-import asyncio
-from contextlib import contextmanager
-from typing import Any
-
-from pydantic import BaseModel, Field
-
-from nexus_mcp.exceptions import SubprocessError
-from nexus_mcp.types import AgentResponse
+from nexus_mcp.types import PromptResult
 ```
 
 Public modules use `__all__` for re-exports.
@@ -129,61 +120,35 @@ Public modules use `__all__` for re-exports.
 
 ## Error Handling
 
-Use exceptions from `exceptions.py`:
-
-- `NexusMCPError`
-- `SubprocessError`
-- `SubprocessTimeoutError`
-- `RetryableError`
-- `ParseError`
-- `CLINotFoundError`
-- `UnsupportedAgentError`
-- `ConfigurationError`
-
-Include context in error messages and let exceptions propagate to the MCP boundary.
+Raise `fastmcp.exceptions.ToolError` with actionable text built from fixed strings and safe
+enumerated fields (result subtype from a known set, HTTP status, exception class name). Never
+copy provider free text into error messages.
 
 ## Testing
 
-- `tests/unit/` - fast, isolated unit tests
-- `tests/e2e/` - in-process MCP protocol tests via `Client(mcp)`
-- `tests/integration/` - slow, real CLI calls
-- `tests/fixtures.py` - shared test factories
+- `tests/unit/` — fast, isolated unit tests
+- `tests/e2e/` — in-process MCP protocol tests via `Client(mcp)` in both protocol eras
+- `tests/integration/` — slow, real CLI calls (`-m integration`)
 
-Test files mirror source modules as `test_<module_name>.py`.
-
-Mock at the subprocess boundary (`asyncio.create_subprocess_exec`), not runner methods, unless
-testing server-level orchestration.
-
-Use factory helpers from `tests/fixtures.py`:
-
-```python
-req = make_prompt_request()
-resp = make_agent_response(output="custom")
-task = make_agent_task(cli="codex", prompt="X")
-```
+Mock at the SDK boundary: patch `nexus_mcp.backends.claude.ClaudeSDKClient` (see
+`tests/unit/backends/claude_fakes.py`). Server tests patch `backends.installed` / `backends.get`.
 
 `asyncio_mode = "auto"` is configured, so async tests do not need
 `@pytest.mark.asyncio`.
 
 Run targeted tests after code changes when practical.
 
-## Architecture Patterns
-
-- Template Method: `AbstractRunner._execute()` defines the execution skeleton.
-- Strategy: execution modes vary runner behavior.
-- Factory: `RunnerFactory` creates runner instances.
-- Chain of Responsibility: parser fallback chain handles output variants.
-
 ## Module Responsibilities
 
-- `server.py` - FastMCP tool definitions, MCP boundary
-- `types.py` - Pydantic models, type aliases
-- `exceptions.py` - exception hierarchy
-- `process.py` - subprocess wrapper
-- `parser.py` - output parsing helpers
-- `config.py` / `config_resolver.py` - configuration resolution
-- `cli_detector.py` - runtime CLI detection
-- `runners/` - CLI-specific implementations
+- `server.py` — FastMCP instance, `prompt` tool, `nexus://backends`, input validation, timeout
+- `types.py` — `PromptRequest`, `PromptResult`, `BackendInfo`, `Profile`, `BackendName`
+- `backends/__init__.py` — registry: name → module; installed = SDK extra importable
+- `backends/claude.py` — Claude Agent SDK turn (`run`, `info`)
+- `backends/claude_policy.py` — permission profiles (`decide`) and SDK options
+
+A backend module defines `async def run(req: PromptRequest, on_session=...) -> PromptResult`
+(calling `on_session(session_id)` once the provider reports it) and
+`async def info() -> BackendInfo`, plus an entry in `backends._SDK_PACKAGES`.
 
 ## Search
 
