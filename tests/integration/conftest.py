@@ -9,3 +9,9 @@ from nexus_mcp import backends
 def claude_installed() -> None:
     if not backends.installed("claude"):
         pytest.skip("claude extra not installed")
+
+
+@pytest.fixture
+def codex_installed() -> None:
+    if not backends.installed("codex"):
+        pytest.skip("codex extra not installed")

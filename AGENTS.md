@@ -4,7 +4,8 @@
 
 Nexus MCP is a Python 3.12+ stdio MCP server (FastMCP 4.0.x) exposing one tool, `prompt`, and
 one resource, `nexus://backends`. Each `prompt` call runs one synchronous agent turn through a
-backend: Claude via the Claude Agent SDK. Backends are optional extras. There is no nexus
+backend: Claude via the Claude Agent SDK, Codex via the Codex App Server (`openai-codex`).
+Backends are optional extras. There is no nexus
 persistence: conversations persist in each agent's own storage and are resumed by `session_id`.
 
 ## Build, Lint, Test Commands
@@ -132,6 +133,8 @@ copy provider free text into error messages.
 
 Mock at the SDK boundary: patch `nexus_mcp.backends.claude.ClaudeSDKClient` (see
 `tests/unit/backends/claude_fakes.py`). Server tests patch `backends.installed` / `backends.get`.
+Codex tests patch `nexus_mcp.backends.codex.AsyncCodex` (see
+`tests/unit/backends/codex_fakes.py`).
 
 `asyncio_mode = "auto"` is configured, so async tests do not need
 `@pytest.mark.asyncio`.
@@ -144,6 +147,7 @@ Run targeted tests after code changes when practical.
 - `types.py` — `PromptRequest`, `PromptResult`, `BackendInfo`, `Profile`, `BackendName`
 - `backends/__init__.py` — registry: name → module; installed = SDK extra importable
 - `backends/claude.py` — Claude Agent SDK turn (`run`, `info`)
+- `backends/codex.py` — Codex App Server turn via `AsyncCodex` (`run`, `info`)
 - `backends/claude_policy.py` — permission profiles (`decide`) and SDK options
 
 A backend module defines `async def run(req: PromptRequest, on_session=...) -> PromptResult`
