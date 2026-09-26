@@ -175,6 +175,8 @@ def test_instructions_list_installed_backends(monkeypatch):
     text = server.build_instructions()
     assert "Installed backends: claude." in text
     assert "`cwd` is required" in text
+    assert server.mcp.instructions is not None
+    assert "`cwd` is required" in server.mcp.instructions
     monkeypatch.setattr(backends, "installed", lambda name: False)
     assert "Installed backends: none" in server.build_instructions()
 
