@@ -70,7 +70,7 @@ async def test_prompt_passes_session_fork_model_profile(fake, tmp_path):
     )
 
 
-@pytest.mark.parametrize("make_cwd", ["relative", "file", "missing", "nul"])
+@pytest.mark.parametrize("make_cwd", ["relative", "file", "missing", "nul", "too_long"])
 async def test_rejects_bad_cwd(fake, tmp_path, make_cwd):
     (tmp_path / "f.txt").write_text("x")
     cwd = {
@@ -78,6 +78,7 @@ async def test_rejects_bad_cwd(fake, tmp_path, make_cwd):
         "file": str(tmp_path / "f.txt"),
         "missing": str(tmp_path / "nope"),
         "nul": str(tmp_path) + "\x00x",
+        "too_long": str(tmp_path / ("a" * 300)),
     }[make_cwd]
     with pytest.raises(ToolError, match="cwd"):
         await server.run_prompt(backend="claude", prompt="hi", cwd=cwd)
@@ -197,3 +198,16 @@ async def test_timeout_omits_invalid_backend_session_id(monkeypatch, tmp_path):
     assert "timed out after 1s" in str(info.value)
     assert "session_id" not in str(info.value)
     assert "provider detail" not in str(info.value)
+
+
+@pytest.mark.parametrize("operation", ["is_dir", "resolve"])
+@pytest.mark.parametrize("error", [PermissionError, ValueError])
+async def test_cwd_filesystem_errors_are_sanitized(fake, tmp_path, monkeypatch, operation, error):
+    def fail(_path):
+        raise error("PRIVATE filesystem detail")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(type(tmp_path), operation, fail)
+        with pytest.raises(ToolError, match="^cwd must be an existing directory$"):
+            await server.run_prompt(backend="claude", prompt="hi", cwd=str(tmp_path))
+    assert fake.requests == []

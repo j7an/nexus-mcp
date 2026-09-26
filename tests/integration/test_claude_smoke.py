@@ -90,3 +90,36 @@ async def test_workspace_write_allows_writes_inside_cwd(claude_installed: None, 
         )
     )
     assert (tmp_path / "allowed.txt").read_text().strip() == "hi"
+
+
+async def test_workspace_write_allows_editor_config_inside_cwd(
+    claude_installed: None, tmp_path, monkeypatch
+):
+    """A bundled CLI safety prompt must use the same workspace policy as the hook."""
+    (tmp_path / ".vscode").mkdir()
+    calls: list[tuple[str, str]] = []
+    real_build = claude.build_options
+
+    def build_with_recording_callback(**kwargs):
+        options = real_build(**kwargs)
+        real_callback = options.can_use_tool
+
+        async def recording_callback(tool, tool_input, context):
+            result = await real_callback(tool, tool_input, context)
+            calls.append((tool, result.behavior))
+            return result
+
+        options.can_use_tool = recording_callback
+        return options
+
+    monkeypatch.setattr(claude, "build_options", build_with_recording_callback)
+    await claude.run(
+        PromptRequest(
+            prompt="Use Write to create .vscode/settings.json containing exactly {}. Then stop.",
+            cwd=tmp_path,
+            model=MODEL,
+            profile="workspace_write",
+        )
+    )
+    assert ("Write", "allow") in calls
+    assert (tmp_path / ".vscode/settings.json").read_text().strip() == "{}"

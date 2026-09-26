@@ -1,4 +1,5 @@
 # nexus-mcp
+<!-- mcp-name: io.github.j7an/nexus-mcp -->
 
 MCP server that delegates tasks to coding agents — [Claude Code](https://code.claude.com)
 via the Claude Agent SDK (and Codex in a later release) — from any MCP client.

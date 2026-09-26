@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from claude_agent_sdk import PermissionResultDeny, ToolPermissionContext
+from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny, ToolPermissionContext
 from fastmcp.exceptions import ToolError
 
 from nexus_mcp.backends.claude_policy import (
@@ -215,7 +215,28 @@ async def test_hook_denies_malformed_input(tmp_path):
     assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
-async def test_can_use_tool_backstop_denies(tmp_path):
-    options = _options(tmp_path, profile="full_access")
-    result = await options.can_use_tool("Read", {}, ToolPermissionContext())
-    assert isinstance(result, PermissionResultDeny)
+@pytest.mark.parametrize(
+    ("profile", "tool", "tool_input", "expected"),
+    [
+        ("read_only", "Read", {}, PermissionResultAllow),
+        ("read_only", "Write", {"file_path": ".vscode/settings.json"}, PermissionResultDeny),
+        ("read_only", "Bash", {"command": f"git diff {SAFE}"}, PermissionResultAllow),
+        ("read_only", "Bash", {"command": "touch forbidden.txt"}, PermissionResultDeny),
+        ("workspace_write", "Write", {"file_path": ".vscode/settings.json"}, PermissionResultAllow),
+        (
+            "workspace_write",
+            "Edit",
+            {"file_path": ".pre-commit-config.yaml"},
+            PermissionResultAllow,
+        ),
+        ("workspace_write", "Write", {"file_path": "../outside.txt"}, PermissionResultDeny),
+        ("workspace_write", "WebFetch", {"url": "https://example.com"}, PermissionResultDeny),
+        ("full_access", "Write", {"file_path": "/etc/hosts"}, PermissionResultAllow),
+        ("full_access", "Bash", {"command": "touch allowed.txt"}, PermissionResultAllow),
+    ],
+)
+async def test_can_use_tool_matches_profile_decision(tmp_path, profile, tool, tool_input, expected):
+    options = _options(tmp_path, profile=profile)
+    result = await options.can_use_tool(tool, tool_input, ToolPermissionContext())
+    assert isinstance(result, expected)
+    assert result.behavior == decide(tool, tool_input, profile=profile, cwd=tmp_path)

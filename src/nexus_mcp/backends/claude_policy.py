@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from claude_agent_sdk import (
+    CanUseTool,
     ClaudeAgentOptions,
     HookCallback,
     HookMatcher,
+    PermissionResultAllow,
     PermissionResultDeny,
     ToolPermissionContext,
 )
@@ -125,12 +127,16 @@ def _gate(profile: Profile, cwd: Path) -> HookCallback:
     return cast("HookCallback", gate)
 
 
-async def _deny_all(
-    tool: str, tool_input: dict[str, Any], context: ToolPermissionContext
-) -> PermissionResultDeny:
-    """Backstop: the PreToolUse hook decides every call; anything reaching here is denied."""
-    del tool, tool_input, context
-    return PermissionResultDeny(message=_DENY_MESSAGE)
+def _permission_gate(profile: Profile, cwd: Path) -> CanUseTool:
+    async def check(
+        tool: str, tool_input: dict[str, Any], context: ToolPermissionContext
+    ) -> PermissionResultAllow | PermissionResultDeny:
+        del context
+        if decide(tool, tool_input, profile=profile, cwd=cwd) == "allow":
+            return PermissionResultAllow()
+        return PermissionResultDeny(message=_DENY_MESSAGE)
+
+    return check
 
 
 def build_options(
@@ -143,7 +149,7 @@ def build_options(
         strict_mcp_config=True,
         mcp_servers={},
         disallowed_tools=["AskUserQuestion"],
-        can_use_tool=_deny_all,
+        can_use_tool=_permission_gate(profile, cwd),
         hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[_gate(profile, cwd)])]},
         setting_sources=cast("Any", setting_sources()),
         sandbox=(

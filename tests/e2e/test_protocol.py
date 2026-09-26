@@ -54,3 +54,13 @@ async def test_backends_resource(client):
     assert json.loads(contents[0].text) == [
         {"name": "claude", "installed": True, "models": None, "hint": None}
     ]
+
+
+async def test_overlong_cwd_is_a_sanitized_tool_error(client, tmp_path):
+    result = await client.call_tool(
+        "prompt",
+        {"backend": "claude", "prompt": "hi", "cwd": str(tmp_path / ("a" * 300))},
+        raise_on_error=False,
+    )
+    assert result.is_error is True
+    assert result.content[0].text == "cwd must be an existing directory"

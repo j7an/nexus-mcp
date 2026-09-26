@@ -50,9 +50,12 @@ def _resolve_cwd(cwd: str) -> Path:
     path = Path(cwd)
     if not path.is_absolute():
         raise ToolError("cwd must be an absolute path")
-    if not path.is_dir():
-        raise ToolError("cwd must be an existing directory")
-    return path.resolve()
+    try:
+        if path.is_dir():
+            return path.resolve()
+    except (OSError, ValueError):
+        pass
+    raise ToolError("cwd must be an existing directory")
 
 
 def _check_session(session_id: str | None, fork: bool) -> None:
