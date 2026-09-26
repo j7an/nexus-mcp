@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.j7an/nexus-mcp",
   "description": "Delegate tasks to coding agents (Claude, Codex) from any MCP client",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "repository": {
     "url": "https://github.com/j7an/nexus-mcp",
     "source": "github"
@@ -11,7 +11,7 @@
     {
       "registryType": "pypi",
       "identifier": "nexus-mcp",
-      "version": "2.0.0",
+      "version": "2.0.1",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         {
