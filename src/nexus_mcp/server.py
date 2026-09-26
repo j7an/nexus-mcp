@@ -69,7 +69,9 @@ def _timeout_message(
     backend: BackendName, timeout: int, request: PromptRequest, acquired: list[str]
 ) -> str:
     message = f"{backend} timed out after {timeout}s"
-    session = acquired[-1] if acquired else (None if request.fork else request.session_id)
+    session = acquired[-1] if acquired and _SESSION_ID.fullmatch(acquired[-1]) else None
+    if session is None and not request.fork:
+        session = request.session_id
     if session is not None:
         message += f"; continue with session_id={session}"
     return message

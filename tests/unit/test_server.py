@@ -184,3 +184,14 @@ def test_installed_reflects_sdk_importability(monkeypatch):
     assert backends.installed("claude") is False
     monkeypatch.setattr(backends, "find_spec", lambda name: SimpleNamespace())
     assert backends.installed("claude") is True
+
+
+async def test_timeout_omits_invalid_backend_session_id(monkeypatch, tmp_path):
+    slow = FakeBackend(delay=5, announce="sid-acquired\nprovider detail")
+    monkeypatch.setattr(backends, "installed", lambda name: True)
+    monkeypatch.setattr(backends, "get", lambda name: slow)
+    with pytest.raises(ToolError) as info:
+        await server.run_prompt(backend="claude", prompt="hi", cwd=str(tmp_path), timeout=1)
+    assert "timed out after 1s" in str(info.value)
+    assert "session_id" not in str(info.value)
+    assert "provider detail" not in str(info.value)
