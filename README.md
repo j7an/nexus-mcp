@@ -2,7 +2,8 @@
 <!-- mcp-name: io.github.j7an/nexus-mcp -->
 
 MCP server that delegates tasks to coding agents — [Claude Code](https://code.claude.com)
-via the Claude Agent SDK (and Codex in a later release) — from any MCP client.
+via the Claude Agent SDK and [Codex](https://developers.openai.com/codex) via the Codex App Server —
+from any MCP client.
 
 ## Install
 
@@ -11,11 +12,13 @@ Backends are optional extras; install the ones you use.
 | Extra | Backend | Adds |
 |---|---|---|
 | `claude` | Claude Agent SDK | `claude-agent-sdk` (bundles the Claude Code CLI, ~100 MB) |
+| `codex` | Codex App Server | `openai-codex` (bundles the Codex CLI, ~120–150 MB) |
 | `all` | every backend | |
 
 ```bash
 uvx --with 'nexus-mcp[all]' nexus-mcp          # run directly
 pip install 'nexus-mcp[claude]'                 # or install
+pip install 'nexus-mcp[codex]'                  # Codex only
 ```
 
 Claude Code MCP config:
@@ -24,7 +27,8 @@ Claude Code MCP config:
 { "mcpServers": { "nexus": { "command": "uvx", "args": ["--with", "nexus-mcp[all]", "nexus-mcp"] } } }
 ```
 
-Authentication is the agent's own: log in with `claude`, or set `ANTHROPIC_API_KEY`.
+Authentication is the agent's own: log in with `claude`, or set `ANTHROPIC_API_KEY`; for Codex,
+log in with `codex login` (credentials in `~/.codex` are shared).
 
 **Windows:** recent `claude-agent-sdk` releases ship no Windows wheel with a bundled CLI;
 install Claude Code so `claude` is on `PATH`.
@@ -35,7 +39,7 @@ Runs one agent turn and returns its final answer.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `backend` | required | `claude` |
+| `backend` | required | `claude` or `codex` |
 | `prompt` | required | Task for the agent |
 | `cwd` | required | Absolute project directory |
 | `profile` | `read_only` | Permission profile (below) |
@@ -45,7 +49,8 @@ Runs one agent turn and returns its final answer.
 | `timeout` | `600` | Seconds before the turn is cancelled |
 
 Returns `{backend, session_id, output, usage}`. Conversations are stored by the agent itself
-(`~/.claude/projects`), so a `session_id` keeps working after nexus-mcp restarts.
+(`~/.claude/projects`, `$CODEX_HOME/sessions`), so a `session_id` keeps working after nexus-mcp
+restarts.
 
 ### Permission profiles
 
@@ -57,10 +62,13 @@ Actions outside the chosen profile are denied automatically — nobody is prompt
 | `workspace_write` | Plus file edits inside `cwd` and Bash inside the OS sandbox |
 | `full_access` | Everything |
 
+Codex enforces profiles with its OS sandbox (`read-only`, `workspace-write`, `danger-full-access`)
+and never asks for approval.
+
 ## Resource: `nexus://backends`
 
 JSON list of `{name, installed, models, hint}`; `hint` gives the install command for a
-missing extra.
+missing extra. Codex lists its models; Claude reports `null` (any id or alias the CLI accepts).
 
 ## Configuration
 
@@ -72,6 +80,7 @@ missing extra.
 
 | v1 | v2 |
 |---|---|
+| `prompt(cli="codex")` (`codex exec`) | `prompt(backend="codex", cwd=…)` (App Server) |
 | `prompt(cli=…, execution_mode="yolo")` | `prompt(backend=…, profile="full_access", cwd=…)` |
 | `batch_prompt` | Parallel `prompt` calls from the client |
 | `agent_start` / `agent_status` / `agent_result` | `prompt` (synchronous) |
