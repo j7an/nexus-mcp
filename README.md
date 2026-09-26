@@ -1,727 +1,96 @@
-# Nexus MCP
+# nexus-mcp
 <!-- mcp-name: io.github.j7an/nexus-mcp -->
 
-[![PyPI](https://img.shields.io/pypi/v/nexus-mcp)](https://pypi.org/project/nexus-mcp/)
-[![Python 3.13+](https://img.shields.io/pypi/pyversions/nexus-mcp)](https://www.python.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![type-checked: mypy](https://img.shields.io/badge/type--checked-mypy-blue.svg)](https://mypy-lang.org/)
-[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://pre-commit.com/)
-[![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io/)
+MCP server that delegates tasks to coding agents — [Claude Code](https://code.claude.com)
+via the Claude Agent SDK (and Codex in a later release) — from any MCP client.
 
-An MCP server that enables AI models to invoke AI CLI agents (Codex, Claude Code, OpenCode) as
-tools. Provides durable workspace-scoped jobs, parallel execution, automatic retries with
-exponential backoff, JSON-first response parsing, discoverable prompt templates, model tier
-classification, and persistent preferences through MCP tools, resources, and prompts.
+## Install
 
-## Use Cases
+Backends are optional extras; install the ones you use.
 
-Nexus MCP is useful whenever a task benefits from querying multiple AI agents in
-parallel rather than sequentially:
-
-- **Research & summarization** — fan out a topic to multiple agents, then
-  synthesize their responses into a single summary with diverse perspectives
-- **Code review** — send different files or review angles (security, correctness,
-  style) to separate agents simultaneously
-- **Multi-model comparison** — prompt the same question to different models and
-  compare outputs side-by-side for quality or consistency
-- **Bulk content generation** — generate multiple test cases, translations, or
-  documentation pages concurrently instead of one at a time
-- **Second-opinion workflows** — get independent answers from separate agents
-  before making a decision, reducing single-model bias
-
-## Features
-
-- **Parallel execution** — `batch_prompt` fans out tasks with `asyncio.gather` and a configurable
-  semaphore (default concurrency: 3)
-- **Durable jobs** — start, observe, cancel, and resume normalized agent work through stable job and
-  session identities backed by a private per-user SQLite database
-- **Automatic retries** — exponential backoff with full jitter for transient errors (HTTP 429/503)
-- **Output handling** — JSON-first parsing, brace-depth fallback for noisy stdout, temp-file
-  spillover for outputs exceeding 50 KB
-- **Execution modes** — `default` (safe, no auto-approve), `yolo` (full auto-approve)
-- **CLI detection** — auto-detects binary path, version, and JSON output capability at startup
-- **Persistent preferences** — set defaults for execution mode, model, retries, output limit, and timeout; preferences persist across MCP sessions for the lifetime of the server process
-- **Prompt templates** — 10 discoverable workflow scaffolds (code review, debug, research, implement feature, etc.) via `list_prompts`/`get_prompt`; each returns structured messages with expert framing the client can use or ignore
-- **Model tier classification** — heuristic-based model classification into quick/standard/thorough tiers; clients can override with sampling or live benchmarks. The `nexus://runners` resource includes tier data per model
-- **Tool timeouts** — configurable safety timeout (default 15 min) cancels long-running tool calls to prevent the server from blocking indefinitely
-- **Client-visible logging** — runner events (retries, output truncation, error recovery) are sent to MCP clients via protocol notifications, not just server stderr
-- **Elicitation** — interactive parameter resolution via MCP elicitation; disambiguates missing CLI, offers model selection, confirms YOLO mode, and prompts for elaboration on vague prompts. Auto-detects client support and skips gracefully when unavailable. Suppression flags prevent repeat prompts within a session
-- **Benchmark data sources** — server instructions include URLs for Artificial Analysis, OpenRouter, Chatbot Arena, and LLM Stats so clients can fetch live model benchmarks without API keys
-- **Extensible** — implement `build_command` + `parse_output`, register in `RunnerFactory`
-
-| Agent | Status |
-|-------|--------|
-| Codex | Supported |
-| Claude Code | Supported |
-| OpenCode | Supported |
-
-## Installation
-
-### Run with uvx (recommended)
+| Extra | Backend | Adds |
+|---|---|---|
+| `claude` | Claude Agent SDK | `claude-agent-sdk` (bundles the Claude Code CLI, ~100 MB) |
+| `all` | every backend | |
 
 ```bash
-uvx nexus-mcp
+uvx --with 'nexus-mcp[all]' nexus-mcp          # run directly
+pip install 'nexus-mcp[claude]'                 # or install
 ```
 
-`uvx` installs the package in an ephemeral virtual environment and runs it — no cloning required.
-
-To check the installed version:
-
-```bash
-uvx nexus-mcp --version
-```
-
-To update to the latest version:
-
-```bash
-uvx --reinstall nexus-mcp
-```
-
-<details>
-<summary><h3>MCP Client Configuration</h3></summary>
-
-**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+Claude Code MCP config:
 
 ```json
-{
-  "mcpServers": {
-    "nexus-mcp": {
-      "command": "uvx",
-      "args": ["nexus-mcp"],
-      "env": {
-        "NEXUS_CODEX_MODEL": "gpt-5.2",
-        "NEXUS_CODEX_MODELS": "gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.2-codex,gpt-5.2,gpt-5.1-codex-max,gpt-5.1-codex-mini",
-        "NEXUS_CLAUDE_MODEL": "claude-sonnet-4-6",
-        "NEXUS_CLAUDE_MODELS": "claude-sonnet-4-6,claude-haiku-4-5-20251001",
-        "NEXUS_OPENCODE_MODEL": "ollama-cloud/kimi-k2.5",
-        "NEXUS_OPENCODE_MODELS": "ollama-cloud/glm-5,ollama-cloud/kimi-k2.5,ollama-cloud/qwen3-coder-next,ollama-cloud/minimax-m2.5,ollama/gemini-3-flash-preview"
-      }
-    }
-  }
-}
+{ "mcpServers": { "nexus": { "command": "uvx", "args": ["--with", "nexus-mcp[all]", "nexus-mcp"] } } }
 ```
 
-**Cursor** (`.cursor/mcp.json` in your project or `~/.cursor/mcp.json` globally):
+Authentication is the agent's own: log in with `claude`, or set `ANTHROPIC_API_KEY`.
 
-```json
-{
-  "mcpServers": {
-    "nexus-mcp": {
-      "command": "uvx",
-      "args": ["nexus-mcp"],
-      "env": {
-        "NEXUS_CODEX_MODEL": "gpt-5.2",
-        "NEXUS_CODEX_MODELS": "gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.2-codex,gpt-5.2,gpt-5.1-codex-max,gpt-5.1-codex-mini",
-        "NEXUS_CLAUDE_MODEL": "claude-sonnet-4-6",
-        "NEXUS_CLAUDE_MODELS": "claude-sonnet-4-6,claude-haiku-4-5-20251001",
-        "NEXUS_OPENCODE_MODEL": "ollama-cloud/kimi-k2.5",
-        "NEXUS_OPENCODE_MODELS": "ollama-cloud/glm-5,ollama-cloud/kimi-k2.5,ollama-cloud/qwen3-coder-next,ollama-cloud/minimax-m2.5,ollama/gemini-3-flash-preview"
-      }
-    }
-  }
-}
-```
+**Windows:** recent `claude-agent-sdk` releases ship no Windows wheel with a bundled CLI;
+install Claude Code so `claude` is on `PATH`.
 
-**Claude Code** (CLI):
+## Tool: `prompt`
 
-```bash
-claude mcp add nexus-mcp \
-  -e NEXUS_CODEX_MODEL=gpt-5.2 \
-  -e NEXUS_CODEX_MODELS=gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.2-codex,gpt-5.2,gpt-5.1-codex-max,gpt-5.1-codex-mini \
-  -e NEXUS_CLAUDE_MODEL=claude-sonnet-4-6 \
-  -e NEXUS_CLAUDE_MODELS=claude-sonnet-4-6,claude-haiku-4-5-20251001 \
-  -e NEXUS_OPENCODE_MODEL=ollama-cloud/kimi-k2.5 \
-  -e NEXUS_OPENCODE_MODELS=ollama-cloud/glm-5,ollama-cloud/kimi-k2.5,ollama-cloud/qwen3-coder-next,ollama-cloud/minimax-m2.5,ollama/gemini-3-flash-preview \
-  -- uvx nexus-mcp
-```
+Runs one agent turn and returns its final answer.
 
-**Generic stdio config** (any MCP-compatible client):
+| Parameter | Default | Meaning |
+|---|---|---|
+| `backend` | required | `claude` |
+| `prompt` | required | Task for the agent |
+| `cwd` | required | Absolute project directory |
+| `profile` | `read_only` | Permission profile (below) |
+| `session_id` | — | Continue this conversation |
+| `fork` | `false` | Branch `session_id` into a new conversation |
+| `model` | provider default | Model id or alias |
+| `timeout` | `600` | Seconds before the turn is cancelled |
 
-```json
-{
-  "command": "uvx",
-  "args": ["nexus-mcp"],
-  "transport": "stdio",
-  "env": {
-    "NEXUS_CODEX_MODEL": "gpt-5.2",
-    "NEXUS_CLAUDE_MODEL": "claude-sonnet-4-6",
-    "NEXUS_OPENCODE_MODEL": "ollama-cloud/kimi-k2.5"
-  }
-}
-```
+Returns `{backend, session_id, output, usage}`. Conversations are stored by the agent itself
+(`~/.claude/projects`), so a `session_id` keeps working after nexus-mcp restarts.
 
-All `env` keys are optional — see [Configuration](#configuration) for the full list.
+### Permission profiles
 
-</details>
+Actions outside the chosen profile are denied automatically — nobody is prompted.
 
-<details>
-<summary><h3>Setup for Development</h3></summary>
-
-**Prerequisites:**
-- **Python 3.12+** ([download](https://www.python.org/downloads/))
-- **uv** dependency manager ([install guide](https://github.com/astral-sh/uv))
-  ```bash
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  ```
-
-**Optional (for integration tests):**
-- **Codex** — check with `codex --version`
-- **Claude Code** — check with `claude --version`
-- **OpenCode** — check with `opencode --version`
-
-> **Claude Code note:** `claude -p` is available only through the legacy
-> `NEXUS_ENABLE_LEGACY_RUNNERS=1` compatibility flag.
-> Anthropic says `claude -p` and Agent SDK usage draw from separate monthly Agent SDK
-> credits starting 2026-06-15, while interactive Claude Code usage remains on plan usage
-> limits:
-> https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan
-
-> **Note:** Integration tests are optional. Unit tests run without CLI dependencies via subprocess mocking.
-
-```bash
-# 1. Clone the repository
-git clone <repository-url>
-cd nexus-mcp
-
-# 2. Install dependencies
-uv sync
-
-# 3. Install pre-commit hooks (runs linting/formatting on commit)
-uv run pre-commit install
-
-# 4. Verify installation
-uv run pytest                    # Run tests
-uv run mypy src/nexus_mcp        # Type checking
-uv run ruff check .              # Linting
-
-# 5. Run the MCP server
-uv run python -m nexus_mcp
-```
-
-</details>
-
-<details>
-<summary><h3>OpenCode Server (Docker) — experimental</h3></summary>
-
-> ⚠️ **Experimental** — This integration has not been validated end-to-end by the maintainer. Expect rough edges in setup and auth. Feedback and bug reports are welcome.
-
-Run an isolated [OpenCode](https://opencode.ai) server for HTTP-based agent execution alongside the CLI runner. Nexus always lists its OpenCode tools and resources; calls return an explicit configuration error until the server password is set, and request errors while the server is unavailable.
-
-**Quick start:**
-
-1. Copy `.env.example` to `.env` and set `PROJECT_DIR` to your project path:
-   ```bash
-   cp .env.example .env
-   # Edit .env: set PROJECT_DIR=/path/to/your/project
-   ```
-2. Start the server:
-   ```bash
-   docker compose up -d
-   ```
-3. Authenticate with your provider:
-   ```bash
-   docker exec -it opencode-server opencode auth login
-   ```
-4. Verify the server is healthy:
-   ```bash
-   curl -u opencode:nexus http://localhost:4096/global/health
-   ```
-
-The server binds to `127.0.0.1` (localhost only) by default for security. See [docs/opencode-server-setup.md](docs/opencode-server-setup.md) for the full guide including remote access, multi-project setup, and network security.
-
-</details>
-
-## Usage
-
-Once nexus-mcp is configured in your MCP client, your AI assistant automatically sees its tools.
-The reliable trigger is **explicitly asking for output from an external AI agent** (e.g. Codex, Claude Code, OpenCode).
-Generic "do this in parallel" prompts may be handled by the host AI's own capabilities instead.
-The `cli` parameter is optional — if omitted and the client supports MCP elicitation, the server will
-ask which runner to use. The server provides runner metadata (names, models, availability,
-execution modes) in its connection instructions — no discovery call needed. The `cli` parameter
-includes a JSON schema enum listing valid runner names.
-
-<details>
-<summary><h3>Usage Examples</h3></summary>
-
-#### Fan out a research question (batch_prompt)
-
-**You say:** "Get perspectives from Codex, Claude Code, and OpenCode on transformer architectures."
-
-```json
-{
-  "tasks": [
-    { "cli": "codex", "prompt": "Summarize the key findings of the Attention Is All You Need paper", "label": "codex-summary" },
-    { "cli": "claude", "prompt": "What are the main limitations of transformer architectures?", "label": "claude-limitations" },
-    { "cli": "opencode", "prompt": "List 3 real-world applications of transformers beyond NLP", "label": "opencode-applications" }
-  ]
-}
-```
-
-#### Code review from multiple angles (batch_prompt)
-
-**You say:** "Have Codex, Claude Code, and OpenCode each review this diff in parallel."
-
-```json
-{
-  "tasks": [
-    { "cli": "codex", "prompt": "Review this diff for security vulnerabilities:\n\n<paste diff>", "label": "codex-security-review" },
-    { "cli": "claude", "prompt": "Review this diff for correctness and edge cases:\n\n<paste diff>", "label": "claude-correctness-review" },
-    { "cli": "opencode", "prompt": "Review this diff for style and maintainability:\n\n<paste diff>", "label": "opencode-review" }
-  ]
-}
-```
-
-#### Single-agent prompt
-
-**You say:** "Ask Codex to explain the difference between TCP and UDP."
-
-```json
-{ "cli": "codex", "prompt": "Explain the difference between TCP and UDP in simple terms", "model": "gpt-5.2" }
-```
-
-#### Elicitation (server picks the runner)
-
-**You say:** "Explain the CAP theorem using one of the available agents."
-
-```json
-{ "prompt": "Explain the CAP theorem in simple terms" }
-```
-
-If the client supports MCP elicitation, the server asks which runner to use. Pass `"elicit": false` to skip.
-
-#### Persistent preferences
-
-**You say:** "Use YOLO mode with Codex from now on."
-
-```json
-{ "execution_mode": "yolo", "model": "gpt-5.2", "max_retries": 5 }
-```
-
-Subsequent calls inherit these settings. Preferences persist across MCP sessions for the lifetime of the server process, until explicitly cleared.
-
-Fallback chain: **explicit parameter → saved preference → per-runner env → global env → hardcoded default**.
-
-</details>
-
-## MCP Tools
-
-Nexus exposes a durable `agent_*` surface and the original compatibility prompt surface. Every
-durable tool requires an explicit `workspace` selector containing exactly one of an existing
-`workspace_id` or a filesystem `path`; Nexus never infers a durable workspace from the server's
-current directory. A path is resolved to one canonical workspace identity before admission.
-
-Execution-starting durable tools return a `JobHandle` immediately. Clients use the observation and
-control tools to follow the normalized job independently of an MCP request lifetime.
-
-| Tool | Description |
-|------|-------------|
-| `agent_start` | Create a durable session and queue its first turn |
-| `agent_continue` | Queue another turn on an existing session |
-| `agent_fork` | Create a child session when the backend supports forking |
-| `agent_review` | Queue a typed review operation on an existing session |
-| `agent_diagnose` | Queue a sessionless backend diagnostic job |
-| `agent_status` | Read the current normalized status of one job |
-| `agent_result` | Read the pending or terminal typed result of one job |
-| `agent_list` | Page through authorized jobs in one workspace |
-| `agent_backends` | List backend capabilities and current availability for one workspace |
-| `agent_cancel` | Request idempotent cancellation of a queued or active job |
-| `agent_respond` | Resolve a pending approval, permission, question, or form input |
-
-The compatibility `prompt` and `batch_prompt` tools retain their background-task behavior. They
-return FastMCP task IDs so clients can poll without holding a long-running MCP request open.
-Per-call concurrency defaults to 3. The shared process runtime starts with 3 workers and grows to
-a high-water maximum of 8; one call whose effective demand exceeds 8 is rejected explicitly,
-while concurrent calls share the process ceiling and may queue.
-
-| Tool | Task? | Description |
-|------|-------|-------------|
-| `batch_prompt` | Yes | Fan out prompts to multiple runners in parallel; returns `MultiPromptResponse` |
-| `prompt` | Yes | Single-runner convenience wrapper; routes to `batch_prompt` |
-| `set_preferences` | No | Set or selectively clear persistent defaults for execution mode, model, retries, timeouts, elicitation, and trigger suppression |
-| `get_preferences` | No | Retrieve current preferences |
-| `clear_preferences` | No | Reset all preferences |
-| `set_model_tiers` | No | Save model tier classifications (client sends sampling/benchmark results; server persists) |
-| `get_model_tiers` | No | Retrieve saved model tier classifications |
-
-<details>
-<summary><h3>Tool API Reference</h3></summary>
-
-#### `batch_prompt`
-
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `tasks` | Yes | — | List of task objects (see below) |
-| `max_concurrency` | No | `3` | Max parallel agent invocations for this call; effective demand above the process worker maximum of 8 is rejected |
-| `elicit` | No | pref or `true` | Enable/disable interactive elicitation for this call |
-
-**Task object fields:**
-
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `cli` | No | — | Runner name (e.g. `"codex"`); if omitted, elicitation asks which runner to use |
-| `prompt` | Yes | — | Prompt text |
-| `label` | No | auto | Display label for results |
-| `context` | No | `{}` | Optional context metadata dict |
-| `execution_mode` | No | pref or `"default"` | `"default"` or `"yolo"` |
-| `model` | No | pref or CLI default | Model name override |
-| `max_retries` | No | pref or env default | Max retry attempts for transient errors |
-| `output_limit` | No | pref or env default | Max output bytes |
-| `timeout` | No | pref or env default | Subprocess timeout in seconds |
-| `retry_base_delay` | No | pref or env default | Base delay for exponential backoff |
-| `retry_max_delay` | No | pref or env default | Max delay cap for backoff |
-
-> **Note:** `elicit` is a batch-level parameter. When enabled, the server runs a single upfront elicitation pass across all tasks rather than prompting per-task.
-
-#### `prompt`
-
-Same parameters as a single task object in `batch_prompt`, plus `elicit` (batch-level in `batch_prompt`, per-call here).
-
-#### `set_preferences`
-
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `execution_mode` | No | — | `"default"` or `"yolo"` |
-| `model` | No | — | Model name (e.g. `"gpt-5.2"`) |
-| `max_retries` | No | — | Max total attempts (≥1; 1 = no retries) |
-| `output_limit` | No | — | Max output bytes (≥1) |
-| `timeout` | No | — | Subprocess timeout seconds (≥1) |
-| `retry_base_delay` | No | — | Backoff base delay seconds (≥0) |
-| `retry_max_delay` | No | — | Backoff max delay seconds (≥0) |
-| `elicit` | No | `true` | Enable/disable elicitation |
-| `confirm_yolo` | No | `true` | Prompt before YOLO mode (auto-suppressed after first accept) |
-| `confirm_vague_prompt` | No | `true` | Prompt on very short prompts |
-| `confirm_high_retries` | No | `true` | Prompt when max_retries > 5 |
-| `confirm_large_batch` | No | `true` | Prompt when batch > 5 tasks |
-| `clear_*` | No | `false` | Clear any field individually (e.g. `clear_model: true`) |
-
-#### `get_preferences` / `clear_preferences`
-
-`get_preferences` — no parameters, returns all fields (`null` when unset).
-`clear_preferences` — no parameters, resets all to `null`. Does **not** clear model tiers.
-
-#### `set_model_tiers`
-
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `tiers` | Yes | — | Dict mapping model names to tiers (`"quick"`, `"standard"`, `"thorough"`) |
-
-Persists tier classifications. Clients typically call once via sampling or benchmark fetch.
-
-#### `get_model_tiers`
-
-No parameters. Returns saved tiers as `dict[str, str]`, or `{}` if none saved.
-
-</details>
-
-### Managing Preferences
-
-| Operation | Tool | Notes |
-|-----------|------|-------|
-| Set fields | `set_preferences` | Persists across sessions |
-| Read values | `get_preferences` | `null` for unset fields |
-| Clear all | `clear_preferences` | Does not clear model tiers |
-| Clear one field | `set_preferences` with `clear_*: true` | Others preserved |
-| Suppress elicitation | `set_preferences` with `confirm_*: false` | YOLO/batch/retry auto-suppress after accept |
-| Re-enable prompt | `set_preferences` with `clear_confirm_*: true` | Resets to default |
-| Save/read tiers | `set_model_tiers` / `get_model_tiers` | Persists across sessions |
-
-## Durable Job Architecture
-
-The framework-independent core separates normalized domain contracts from concrete backends,
-storage, and the MCP transport. A **job** is one admitted operation and owns its retry attempts,
-events, controls, and terminal result. A **session** is a durable conversation identity bound to one
-workspace and backend; `agent_start` creates it, `agent_continue` reuses it, and `agent_fork`
-creates a child when supported. Diagnostic jobs may be sessionless. A session and a job are not MCP
-client sessions or FastMCP background-task IDs.
-
-Jobs and sessions use `private | workspace` access policies:
-
-- `private` (the default) is visible only to the owning principal.
-- `workspace` is visible to the owner and to callers explicitly authorized for that same workspace.
-  It never grants cross-workspace access. For the local MCP adapter, the operating-system user is
-  the principal and the private database permissions form the trust boundary.
-
-The SQLite database contains sensitive prompts, normalized events, provider references, and
-results. Set `NEXUS_DB_PATH` to override its location. Otherwise Nexus uses these per-user paths:
-
-- macOS: `~/Library/Application Support/nexus-mcp/nexus.sqlite3`
-- Windows: `%LOCALAPPDATA%\nexus-mcp\nexus.sqlite3` (falling back to
-  `~/AppData/Local/nexus-mcp/nexus.sqlite3`)
-- Linux and other Unix platforms:
-  `${XDG_DATA_HOME:-~/.local/share}/nexus-mcp/nexus.sqlite3`
-
-On POSIX systems Nexus removes group and other access from the database directory and SQLite files.
-Normalized job, session, event, and result records are retained indefinitely by default; Nexus does
-not schedule automatic pruning. Applying retention cutoffs is an explicit store operation, and no
-public MCP pruning tool is currently exposed.
-
-Codex, Claude Code, and OpenCode execution currently passes through the temporary
-`LegacyRunnerBackend` bridge while native backends are developed. The bridge supports normalized
-turns only: it does not provide backend cancellation, graceful interruption, session forking, or
-safe reconciliation after an interrupted attempt. These are legacy-backend limitations, not core
-job-model promises; clients should inspect `agent_backends` capabilities before selecting an
-operation.
-
-## MCP Prompts
-
-Nexus MCP provides 10 discoverable prompt templates that clients can browse via `list_prompts()` and render via `get_prompt(name, args)`. Each prompt returns structured messages with expert framing — the client decides how (or whether) to use them.
-
-**Design principle:** Server informs, client decides. Prompts provide the scaffold (role, structure, methodology); the client decides runner, model, depth, and orchestration. Prompts are completely optional — existing `prompt`/`batch_prompt` tools work exactly as before.
-
-| Prompt | Tags | Parameters | Purpose |
-|--------|------|------------|---------|
-| `code_review` | analysis | `file`, `instructions` | Structured code review with findings by severity |
-| `debug` | analysis | `error`, `context`, `file` | Systematic diagnosis: reproduce, isolate, root cause, fix |
-| `quick_triage` | analysis | `description`, `file` | Fast assessment: what's wrong, severity, next step |
-| `research` | analysis | `topic`, `scope` | Structured research with source citations |
-| `second_opinion` | analysis | `original_output`, `question` | Independent review of another AI's output |
-| `implement_feature` | generation | `description`, `language`, `constraints` | Feature implementation with quality checklist |
-| `refactor` | generation | `file`, `goal`, `constraints` | Behavior-preserving restructuring |
-| `bulk_generate` | generation | `template`, `variables` | Expand template across variable sets |
-| `write_tests` | testing | `file`, `framework`, `coverage_goal` | Test generation with configurable coverage approach |
-| `compare_models` | comparison | `prompt`, `criteria` | Multi-runner comparison framework |
-
-<details>
-<summary><strong>Example — using a prompt template</strong></summary>
-
-```
-# 1. Client discovers available prompts
-list_prompts() → sees "code_review", "debug", "compare_models", etc.
-
-# 2. Client renders a prompt with arguments
-get_prompt("code_review", {file: "src/auth.py", instructions: "security vulnerabilities"})
-
-# 3. Server returns structured messages
-→ PromptResult(
-    messages=[
-      Message("You are a senior code reviewer...", role="assistant"),
-      Message("Review the file `src/auth.py`...\nFocus: security vulnerabilities\n...", role="user"),
-    ],
-    description="Code review of src/auth.py"
-  )
-
-# 4. Client feeds messages into prompt/batch_prompt with chosen runner+model
-prompt(cli="claude", prompt=<rendered messages>)
-```
-
-</details>
-
-## MCP Resources
-
-Read-only data endpoints that clients query for runner metadata, configuration, and preferences.
-
-| Resource URI | Description |
+| Profile | Allows |
 |---|---|
-| `nexus://runners` | All registered CLI runners with models (enriched with tier data), modes, availability |
-| `nexus://runners/{cli}` | Single runner details by name (URI template) |
-| `nexus://config` | Resolved operational config defaults (timeouts, retries, output limits) |
-| `nexus://preferences` | Current preferences with config fallback |
+| `read_only` | Read/Glob/Grep; `git diff`/`log`/`show` with `--no-ext-diff --no-textconv` |
+| `workspace_write` | Plus file edits inside `cwd` and Bash inside the OS sandbox |
+| `full_access` | Everything |
 
-Models in `nexus://runners` include tier data: `{"name": "gpt-5.4-mini", "tier": "quick"}`. Tiers are `quick` (fast/cheap), `standard` (balanced), or `thorough` (max quality). Models with only heuristic tiers appear in `unclassified_models` — calling `set_model_tiers` moves them out.
+## Resource: `nexus://backends`
 
-<details>
-<summary><strong>Model tier enrichment examples</strong></summary>
+JSON list of `{name, installed, models, hint}`; `hint` gives the install command for a
+missing extra.
 
-**Before `set_model_tiers`** — all tiers are heuristic guesses, all models are unclassified:
+## Configuration
 
-```json
-{
-  "models": [
-    {"name": "gpt-5.1-codex-max", "tier": "thorough"},
-    {"name": "gpt-5.4-mini", "tier": "quick"},
-    {"name": "claude-sonnet-4-6", "tier": "standard"}
-  ],
-  "unclassified_models": ["gpt-5.1-codex-max", "gpt-5.4-mini", "claude-sonnet-4-6"]
-}
-```
+| Variable | Default | Meaning |
+|---|---|---|
+| `NEXUS_CLAUDE_SETTINGS_PROFILE` | `isolated` | Claude settings to load: `isolated` (none), `project` (project `.claude/`), `inherit` (all, including user settings). Profiles still bound every tool call. |
 
-**After `set_model_tiers`** — saved tiers replace heuristics, classified models leave the list:
+## Migrating from v1
 
-```json
-{
-  "models": [
-    {"name": "gpt-5.1-codex-max", "tier": "thorough"},
-    {"name": "gpt-5.4-mini", "tier": "quick"},
-    {"name": "claude-sonnet-4-6", "tier": "standard"}
-  ],
-  "unclassified_models": []
-}
-```
+| v1 | v2 |
+|---|---|
+| `prompt(cli=…, execution_mode="yolo")` | `prompt(backend=…, profile="full_access", cwd=…)` |
+| `batch_prompt` | Parallel `prompt` calls from the client |
+| `agent_start` / `agent_status` / `agent_result` | `prompt` (synchronous) |
+| `agent_continue` / `agent_fork` | `prompt(session_id=…)` / `prompt(session_id=…, fork=true)` |
+| `agent_review` | `prompt(profile="read_only", prompt="Review …")` |
+| `agent_cancel` | Cancel the tool call in the client |
+| `agent_respond`, elicitation | Removed — choose a profile instead |
+| Preferences, model tiers, MCP prompts | Removed |
+| OpenCode runners and tools | Removed |
+| `NEXUS_*` variables | Removed except `NEXUS_CLAUDE_SETTINGS_PROFILE` |
 
-</details>
-
-<details>
-<summary><h2>Configuration</h2></summary>
-
-### Global Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NEXUS_DB_PATH` | Platform per-user data directory | Durable SQLite job database; contains sensitive prompts and results |
-| `NEXUS_OUTPUT_LIMIT_BYTES` | `50000` | Max output size in bytes before temp-file spillover |
-| `NEXUS_TIMEOUT_SECONDS` | `600` | Subprocess timeout in seconds (10 minutes) |
-| `NEXUS_TOOL_TIMEOUT_SECONDS` | `900` | Tool-level timeout in seconds (15 minutes); set to `0` to disable |
-| `NEXUS_RETRY_MAX_ATTEMPTS` | `3` | Max attempts including the first (set to 1 to disable retries) |
-| `NEXUS_RETRY_BASE_DELAY` | `2.0` | Base seconds for exponential backoff |
-| `NEXUS_RETRY_MAX_DELAY` | `60.0` | Maximum seconds to wait between retries |
-| `NEXUS_CLI_DETECTION_TIMEOUT` | `30` | Timeout in seconds for CLI binary version detection at startup |
-| `NEXUS_EXECUTION_MODE` | `default` | Global execution mode (`default` or `yolo`) |
-| `NEXUS_ENABLE_LEGACY_RUNNERS` | Unset | `1` restores the deprecated `claude -p` CLI runner for the `claude` backend. By default, Nexus uses the Claude Agent SDK. The legacy runner will be removed in a future release. |
-
-### Per-Runner Environment Variables
-
-Pattern: `NEXUS_{AGENT}_{KEY}` (agent name uppercased). Per-runner values override global values.
-
-Valid `{AGENT}` values: `CLAUDE`, `CODEX`, `OPENCODE`, `OPENCODE_SERVER`
-
-| Variable pattern | Example | Description |
-|----------|---------|-------------|
-| `NEXUS_{AGENT}_MODEL` | `NEXUS_CODEX_MODEL=gpt-5.2` | Default model for this runner |
-| `NEXUS_{AGENT}_MODELS` | `NEXUS_CODEX_MODELS=gpt-5.2,gpt-5.4-mini` | Comma-separated model list (surfaced in server instructions) |
-| `NEXUS_{AGENT}_TIMEOUT` | `NEXUS_CODEX_TIMEOUT=900` | Subprocess timeout override |
-| `NEXUS_{AGENT}_OUTPUT_LIMIT` | `NEXUS_CODEX_OUTPUT_LIMIT=100000` | Output limit override |
-| `NEXUS_{AGENT}_MAX_RETRIES` | `NEXUS_CLAUDE_MAX_RETRIES=5` | Max retry attempts override |
-| `NEXUS_{AGENT}_RETRY_BASE_DELAY` | `NEXUS_CLAUDE_RETRY_BASE_DELAY=1.0` | Backoff base delay override |
-| `NEXUS_{AGENT}_RETRY_MAX_DELAY` | `NEXUS_OPENCODE_RETRY_MAX_DELAY=30.0` | Backoff max delay override |
-| `NEXUS_{AGENT}_EXECUTION_MODE` | `NEXUS_CODEX_EXECUTION_MODE=yolo` | Execution mode override |
-
-Invalid per-runner values are silently ignored (the global or hardcoded default is used instead).
-
-### Claude Agent Configuration
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NEXUS_CLAUDE_SETTINGS_PROFILE` | `isolated` | Settings profile: `isolated`, `project`, or `inherit`. With the default `isolated` profile, the Claude backend does not load `CLAUDE.md`, project settings, or hooks; set `project` for trusted local repositories. |
-| `NEXUS_CLAUDE_PATH` | Unset | Optional CLI override. The Claude Agent SDK bundles its own CLI. |
-
-### Claude Agent
-
-The `claude` backend is named **Claude Agent** and uses the Claude Agent SDK. It authenticates
-through the host's existing Claude login or `ANTHROPIC_API_KEY` in Nexus's environment; Nexus
-stores no credentials. Its default sandbox is `read_only`; `workspace_write` requires macOS or
-Linux. Pass `output_schema` to `agent_start` or `agent_continue` for structured results. The SDK
-dependency adds roughly 90–100 MB to the installation.
-
-</details>
-
-<details>
-<summary><h2>Development</h2></summary>
-
-### Testing
-
-This project follows **Test-Driven Development (TDD)** with strict Red→Green→Refactor cycles.
+## Development
 
 ```bash
-# Run all tests
-uv run pytest
-
-# Run with coverage report
-uv run pytest --cov=nexus_mcp --cov-report=term-missing
-
-# Run specific test types
-uv run pytest -m integration           # Integration tests (requires CLIs)
-uv run pytest -m "not integration"     # Unit tests only
-uv run pytest -m "not slow"            # Skip slow tests
-
-# Run specific test file
-uv run pytest tests/unit/runners/test_codex.py
+uv sync --all-extras --all-groups
+uv run pytest                    # unit + e2e
+uv run pytest -m integration     # real CLI (slow, makes model calls)
+uv run mypy src/nexus_mcp && uv run ruff check . && uv run ruff format --check .
 ```
-
-**Test markers:**
-- `@pytest.mark.integration` — requires real CLI installations
-- `@pytest.mark.slow` — tests taking >1 second
-
-### Code Quality
-
-All quality checks run automatically via pre-commit hooks. Run manually:
-
-```bash
-# Lint and format
-uv run ruff check .              # Check for issues
-uv run ruff check --fix .        # Auto-fix issues
-uv run ruff format .             # Format code
-
-# Type checking (strict mode)
-uv run mypy src/nexus_mcp
-
-# Run all pre-commit hooks manually
-uv run pre-commit run --all-files
-```
-
-### Adding Dependencies
-
-```bash
-uv add <package>              # Production dependency
-uv add --dev <package>        # Development dependency
-uv sync                       # Sync environment after changes
-```
-
-### Tool Configuration
-
-- **Ruff:** line length 100, 17 rule sets (E/F/I/W + UP/FA/B/C4/SIM/RET/ICN/TID/TC/ISC/PTH/TD/NPY) — `pyproject.toml → [tool.ruff]`
-- **Mypy:** strict mode, all type annotations required — `pyproject.toml → [tool.mypy]`
-- **Pytest:** `asyncio_mode = "auto"`, no `@pytest.mark.asyncio` needed — `pyproject.toml → [tool.pytest.ini_options]`
-- **Pre-commit:** ruff-check, ruff-format, mypy, trailing-whitespace, end-of-file-fixer — `.pre-commit-config.yaml`
-
-### Python 3.12+ Syntax
-
-- `type` keyword for type aliases: `type AgentName = str`
-- Union syntax: `str | None` (not `Optional[str]`)
-- `match` statements for complex conditionals
-- **NO** `from __future__ import annotations`
-
-### Project Structure
-
-```
-nexus-mcp/
-├── src/nexus_mcp/
-│   ├── __main__.py          # Entry point
-│   ├── core/                # Framework- and provider-independent domain contracts
-│   ├── backends/            # Typed backend protocols and runtime registry
-│   ├── jobs/                # Job service, worker, SQLite store, and migrations
-│   ├── legacy/              # Temporary adapter over existing CLI runners
-│   ├── mcp/                 # FastMCP transport adapter
-│   │   ├── server.py        # Server, compatibility tools, and registration
-│   │   ├── job_tools.py     # Typed durable agent_* tools
-│   │   ├── runtime.py       # MCP lifespan ownership for job runtime services
-│   │   └── prompts/         # Discoverable prompt templates
-│   ├── server.py            # Compatibility re-export for the MCP server
-│   ├── types.py             # Compatibility request and response models
-│   ├── exceptions.py        # Exception hierarchy
-│   ├── config.py            # Legacy environment configuration
-│   ├── process.py           # Legacy subprocess wrapper
-│   ├── parser.py            # Legacy JSON-to-text output parsing
-│   ├── cli_detector.py      # CLI binary detection and version checks
-│   └── runners/
-│       ├── base.py          # Legacy runner protocol and template method
-│       ├── factory.py       # RunnerFactory
-│       ├── claude.py        # ClaudeRunner
-│       ├── codex.py         # CodexRunner
-│       ├── opencode.py      # OpenCodeRunner
-│       └── opencode_server.py # OpenCode server runner
-├── tests/
-│   ├── unit/               # Fast, mocked tests
-│   │   └── prompts/        # Prompt template tests
-│   ├── e2e/                # End-to-end MCP protocol tests
-│   ├── integration/        # Real CLI tests
-│   └── fixtures.py         # Shared test utilities
-├── .github/
-│   └── workflows/          # CI, security, dependabot
-├── pyproject.toml          # Dependencies + tool config
-└── .pre-commit-config.yaml # Git hooks configuration
-```
-
-</details>
-
-## Releases
-
-Stable releases are cut by running the **Tag Release** workflow from the Actions
-tab and choosing a bump (`auto` infers it from Conventional Commits since the
-last tag). Pre-releases are tagged manually. See [RELEASE.md](RELEASE.md) for
-the full maintainer workflow, recovery steps, and notes on `server.json`
-placeholder fields.
 
 ## License
 

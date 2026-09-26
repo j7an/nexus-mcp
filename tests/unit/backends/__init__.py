@@ -1,1 +1,1 @@
-"""Unit tests for framework-independent backend contracts."""
+"""Backend unit tests."""

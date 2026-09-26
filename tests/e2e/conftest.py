@@ -1,110 +1,40 @@
-# tests/e2e/conftest.py
-"""Shared fixtures for E2E MCP protocol tests.
-
-All tests in this directory call the server via FastMCP's in-process Client
-(FastMCPTransport — no network). Mocking is done only at the subprocess
-boundary, letting all layers above run for real:
-
-    Client (JSON-RPC) → FastMCP server → tool functions → RunnerFactory
-        → runner → build_command → [MOCK subprocess]
-"""
+"""In-process MCP clients against the real server with a fake backend."""
 
 import pytest
 from fastmcp import Client
 
-from nexus_mcp.cli_detector import CLIInfo
-from nexus_mcp.runners.factory import RunnerFactory
+from nexus_mcp import backends
 from nexus_mcp.server import mcp
-from tests.fakes import FakeRunner
+from nexus_mcp.types import BackendInfo, PromptRequest, PromptResult
 
 
-@pytest.fixture(autouse=True)
-def _auto_mock_cli_detection(mock_cli_detection, monkeypatch):
-    """Auto-activate CLI detection mocking for all E2E tests.
+class FakeBackend:
+    def __init__(self) -> None:
+        self.requests: list[PromptRequest] = []
 
-    Prevents tests from requiring real CLI binaries. RunnerFactory cache
-    is cleared on teardown (via cli_detection_mocks in the root fixture).
-    """
-    monkeypatch.setattr(
-        "nexus_mcp.legacy.runner_backend.detect_cli",
-        lambda _backend: CLIInfo(found=True, path="/test/cli"),
-    )
-    monkeypatch.setattr("nexus_mcp.legacy.runner_backend.get_cli_version", lambda _backend: "test")
-    yield mock_cli_detection
+    async def run(self, req: PromptRequest, on_session) -> PromptResult:
+        self.requests.append(req)
+        return PromptResult(
+            backend="claude",
+            session_id="sid-1",
+            output=f"echo: {req.prompt}",
+            usage={"n": 1},
+        )
+
+    async def info(self) -> BackendInfo:
+        return BackendInfo(name="claude", installed=True)
+
+
+@pytest.fixture
+def fake_backend(monkeypatch):
+    fake = FakeBackend()
+    monkeypatch.setattr(backends, "installed", lambda name: True)
+    monkeypatch.setattr(backends, "get", lambda name: fake)
+    return fake
 
 
 @pytest.fixture(params=["auto", "legacy"])
-def protocol_mode(request) -> str:
-    """Exercise shared clients with modern and legacy protocol negotiation."""
-    return request.param
-
-
-@pytest.fixture
-async def mcp_client(request, protocol_mode):
-    """In-process MCP client using FastMCPTransport (no network).
-
-    Provides a connected Client instance backed by the real FastMCP server.
-    All JSON-RPC serialization, FastMCP DI injection of Progress/Context,
-    and tool dispatch happen for real.
-
-    """
-    needs_fake_backend = (
-        "fake_runner_registry" in request.fixturenames
-        or request.node.path.name == "test_middleware_integration.py"
-    )
-    original_registry = RunnerFactory._REGISTRY.copy()
-    if needs_fake_backend:
-        RunnerFactory.clear_cache()
-        RunnerFactory._REGISTRY[FakeRunner.AGENT_NAME] = FakeRunner
-    try:
-        async with Client(mcp, mode=protocol_mode) as client:
-            yield client
-    finally:
-        RunnerFactory._REGISTRY = original_registry
-        RunnerFactory.clear_cache()
-
-
-@pytest.fixture
-async def job_mcp_client(fake_runner_registry, fast_job_runtime, monkeypatch, protocol_mode):
-    """Connected client whose lifespan sees the registered fake legacy runner."""
-    from nexus_mcp.legacy import runner_backend
-
-    original_detect = runner_backend.detect_cli
-    original_version = runner_backend.get_cli_version
-    monkeypatch.setattr(
-        runner_backend,
-        "detect_cli",
-        lambda backend: (
-            CLIInfo(found=True, path="/test/fake")
-            if backend == fake_runner_registry
-            else original_detect(backend)
-        ),
-    )
-    monkeypatch.setattr(
-        runner_backend,
-        "get_cli_version",
-        lambda backend: "test" if backend == fake_runner_registry else original_version(backend),
-    )
-    del fast_job_runtime
-    async with Client(mcp, mode=protocol_mode) as client:
-        yield client
-
-
-@pytest.fixture
-def fast_job_mcp_client(fast_job_runtime, mcp_client):
-    """Install fast durable-job tuning before the ordinary client enters lifespan."""
-    del fast_job_runtime
-    return mcp_client
-
-
-@pytest.fixture
-async def progress_mcp_client(fast_job_runtime, protocol_mode):
-    """Connected client that records compatibility progress notifications."""
-    del fast_job_runtime
-    progress_events: list[tuple[float, float | None, str | None]] = []
-
-    async def record_progress(progress: float, total: float | None, message: str | None) -> None:
-        progress_events.append((progress, total, message))
-
-    async with Client(mcp, mode=protocol_mode, progress_handler=record_progress) as client:
-        yield client, progress_events
+async def client(request, fake_backend):
+    """Exercise both modern and legacy handshake protocol eras."""
+    async with Client(mcp, mode=request.param) as connected:
+        yield connected

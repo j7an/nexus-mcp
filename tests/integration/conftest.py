@@ -1,83 +1,11 @@
-# tests/integration/conftest.py
-"""Shared fixtures for integration tests.
-
-No CLI mocking — all fixtures use real CLI binaries.
-The root tests/conftest.py provides the shared `progress` fixture.
-"""
-
-import shutil
+"""Real-CLI fixtures; every test here is marked `integration` and is skipped in CI."""
 
 import pytest
 
-from nexus_mcp.runners.claude import ClaudeRunner
-from nexus_mcp.runners.codex import CodexRunner
-from nexus_mcp.runners.opencode import OpenCodeRunner
-
-
-@pytest.fixture(scope="session")
-def codex_cli_available() -> str:
-    """Skip all dependent tests if Codex CLI is not installed.
-
-    Returns:
-        Full path to the codex binary.
-    """
-    path = shutil.which("codex")
-    if path is None:
-        pytest.skip("Codex CLI not found in PATH — install to run integration tests")
-    return path  # type: ignore[return-value]
+from nexus_mcp import backends
 
 
 @pytest.fixture
-def codex_runner(codex_cli_available: str) -> CodexRunner:  # noqa: ARG001
-    """Create a real CodexRunner per test.
-
-    Fresh instance per test to avoid state leakage between tests.
-    Depends on codex_cli_available to skip if CLI is absent.
-    """
-    return CodexRunner()
-
-
-@pytest.fixture(scope="session")
-def opencode_cli_available() -> str:
-    """Skip all dependent tests if OpenCode CLI is not installed.
-
-    Returns:
-        Full path to the opencode binary.
-    """
-    path = shutil.which("opencode")
-    if path is None:
-        pytest.skip("OpenCode CLI not found in PATH — install to run integration tests")
-    return path  # type: ignore[return-value]
-
-
-@pytest.fixture
-def opencode_runner(opencode_cli_available: str) -> OpenCodeRunner:  # noqa: ARG001
-    """Create a real OpenCodeRunner per test.
-
-    Fresh instance per test to avoid state leakage between tests.
-    Depends on opencode_cli_available to skip if CLI is absent.
-    """
-    return OpenCodeRunner()
-
-
-@pytest.fixture(scope="session")
-def claude_cli_available() -> str:
-    """Skip all dependent tests if Claude CLI is not installed.
-
-    Returns:
-        Full path to the claude binary.
-    """
-    path = shutil.which("claude")
-    if path is None:
-        pytest.skip("Claude CLI not found in PATH — install to run integration tests")
-    return path  # type: ignore[return-value]
-
-
-@pytest.fixture
-def claude_runner(claude_cli_available: str) -> ClaudeRunner:  # noqa: ARG001
-    """Create a real ClaudeRunner per test.
-
-    Fresh instance per test to avoid state leakage between tests.
-    Depends on claude_cli_available to skip if CLI is absent.
-    """
-    return ClaudeRunner()
+def claude_installed() -> None:
+    if not backends.installed("claude"):
+        pytest.skip("claude extra not installed")

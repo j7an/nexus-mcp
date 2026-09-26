@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,3 +35,9 @@ def test_mcp_publisher_download_is_pinned_and_checksum_verified() -> None:
     assert "releases/latest" not in install_step
     assert "releases/download/" in install_step
     assert "sha256sum --check" in install_step
+
+
+def test_readme_has_registry_ownership_marker() -> None:
+    server_name = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))["name"]
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert f"<!-- mcp-name: {server_name} -->" in readme
