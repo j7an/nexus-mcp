@@ -34,6 +34,30 @@ def _ignore_session(_session_id: str) -> None:
     return None
 
 
+def _close_sdk_pipes(client: AsyncCodex) -> None:
+    """Close SDK-owned pipes after shutdown, including on startup failure.
+
+    Remove when openai-codex closes its stdout/stderr pipes in CodexClient.close().
+    """
+    sync = client._client._sync
+    original_close = sync.close
+
+    def close_with_pipes() -> None:
+        proc = sync._proc  # SDK clears this before its public close returns.
+        try:
+            original_close()
+        finally:
+            if proc is not None:
+                # The SDK kills after a timed-out wait but does not reap that killed process.
+                proc.wait(timeout=2)
+                if proc.stdout is not None:
+                    proc.stdout.close()
+                if proc.stderr is not None:
+                    proc.stderr.close()
+
+    sync.close = close_with_pipes  # type: ignore[method-assign]  # Instance-local SDK fix.
+
+
 @contextlib.asynccontextmanager
 async def _session() -> AsyncIterator[AsyncCodex]:
     """Open AsyncCodex so a cancellation during startup still closes the app-server.
@@ -44,6 +68,7 @@ async def _session() -> AsyncIterator[AsyncCodex]:
     because MCP cancels requests with an AnyIO cancel scope, which re-cancels every await.
     """
     client = AsyncCodex(CodexConfig(experimental_api=False))
+    _close_sdk_pipes(client)
     startup = asyncio.ensure_future(client.__aenter__())
     try:
         await asyncio.shield(startup)

@@ -1,11 +1,14 @@
 import asyncio
 import functools
+import io
+import threading
 
 import anyio
 import openai_codex.generated.v2_all as wire
 import pytest
 from fastmcp.exceptions import ToolError
 from openai_codex import ApprovalMode, CodexError, Sandbox, TransportClosedError
+from openai_codex.models import InitializeResponse
 
 from nexus_mcp.backends import codex
 from nexus_mcp.types import BackendInfo, PromptRequest
@@ -25,6 +28,7 @@ def created():
 
 def install(monkeypatch, created, script, **kwargs):
     monkeypatch.setattr(codex, "AsyncCodex", factory(script, created, **kwargs))
+    monkeypatch.setattr(codex, "_close_sdk_pipes", lambda _client: None)
 
 
 def request(tmp_path, **overrides):
@@ -277,3 +281,78 @@ async def test_info_survives_launch_failure(monkeypatch, created):
     install(monkeypatch, created, [], enter_error=FileNotFoundError("x"))
     got = await codex.info()
     assert got.installed is True and got.models is None and "could not start" in got.hint.lower()
+
+
+@pytest.mark.parametrize("exit_kind", ["normal", "startup_error", "cancel_startup"])
+async def test_sdk_pipes_close_after_process_exit(monkeypatch, exit_kind):
+    """Exercise the real SDK close path with a process that records shutdown order."""
+    events: list[str] = []
+
+    class Pipe(io.StringIO):
+        def __init__(self, name: str) -> None:
+            super().__init__()
+            self.name = name
+
+        def close(self) -> None:
+            events.append(f"close-{self.name}")
+            super().close()
+
+    class Process:
+        def __init__(self) -> None:
+            self.stdin = Pipe("stdin")
+            self.stdout = Pipe("stdout")
+            self.stderr = Pipe("stderr")
+            self.exited = False
+
+        def terminate(self) -> None:
+            events.append("terminate")
+
+        def wait(self, timeout=None) -> int:
+            events.append("wait")
+            self.exited = True
+            return 0
+
+        def poll(self) -> int | None:
+            return 0 if self.exited else None
+
+    process = Process()
+    sdk_type = codex.AsyncCodex
+    client = sdk_type()
+    sync = client._client._sync
+    sync._proc = process
+    entered = threading.Event()
+    release = threading.Event()
+
+    def initialize() -> InitializeResponse:
+        entered.set()
+        if exit_kind == "cancel_startup":
+            release.wait(timeout=2)
+        if exit_kind == "startup_error":
+            raise RuntimeError("initialize failed")
+        return InitializeResponse(userAgent="fake/1")
+
+    monkeypatch.setattr(sync, "initialize", initialize)
+    monkeypatch.setattr(codex, "AsyncCodex", lambda _config: client)
+
+    async def open_session() -> None:
+        async with codex._session():
+            pass
+
+    if exit_kind == "cancel_startup":
+        task = asyncio.create_task(open_session())
+        assert await asyncio.to_thread(entered.wait, 2)
+        task.cancel()
+        await asyncio.sleep(0)
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    elif exit_kind == "startup_error":
+        with pytest.raises(RuntimeError, match="initialize failed"):
+            await open_session()
+    else:
+        await open_session()
+
+    assert process.exited
+    assert process.stdout.closed and process.stderr.closed
+    assert events.index("wait") < events.index("close-stdout")
+    assert events.index("wait") < events.index("close-stderr")
