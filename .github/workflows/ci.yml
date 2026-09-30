@@ -77,7 +77,10 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # test (ubuntu-latest, 3.13) builds the same cache key and is its sole saver.
       - uses: ./.github/actions/setup-uv
+        with:
+          save-cache: "false"
       - name: Ruff check
         run: uv run ruff check .
       - name: Ruff format check
@@ -93,7 +96,10 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # test (ubuntu-latest, 3.13) builds the same cache key and is its sole saver.
       - uses: ./.github/actions/setup-uv
+        with:
+          save-cache: "false"
       - name: Mypy
         run: uv run mypy src/nexus_mcp
 
