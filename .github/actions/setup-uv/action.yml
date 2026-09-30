@@ -5,6 +5,10 @@ inputs:
     description: "Python version to install"
     required: false
     default: "3.13"
+  save-cache:
+    description: "Whether to save the uv cache after the run"
+    required: false
+    default: "auto"
 runs:
   using: "composite"
   steps:
@@ -14,6 +18,7 @@ runs:
         enable-cache: true
         cache-dependency-glob: "uv.lock"
         python-version: ${{ inputs.python-version }}
+        save-cache: ${{ inputs.save-cache }}
     - name: Install dependencies
       run: uv sync --locked --all-extras --all-groups
       shell: bash
