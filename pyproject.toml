@@ -1,7 +1,7 @@
 [project]
 name = "nexus-mcp"
 dynamic = ["version"]
-description = "MCP server that delegates tasks to coding agents (Claude, Codex)"
+description = "MCP server that delegates tasks to coding agents (Claude, Codex, Antigravity)"
 readme = "README.md"
 authors = [
     { name = "j7an", email = "j7an@users.noreply.github.com" }
@@ -10,6 +10,7 @@ license = "MIT"
 keywords = [
     "ai-agents",
     "ai-orchestration",
+    "antigravity",
     "claude-code",
     "claude-desktop",
     "claudecode",
@@ -17,6 +18,8 @@ keywords = [
     "codex",
     "codex-cli",
     "fastmcp",
+    "gemini",
+    "google-antigravity",
     "mcp",
     "mcp-server",
     "model-context-protocol",

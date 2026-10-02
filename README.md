@@ -2,8 +2,8 @@
 <!-- mcp-name: io.github.j7an/nexus-mcp -->
 
 MCP server that delegates tasks to coding agents — [Claude Code](https://code.claude.com)
-via the Claude Agent SDK and [Codex](https://developers.openai.com/codex) via the Codex App Server —
-from any MCP client.
+via the Claude Agent SDK, [Codex](https://developers.openai.com/codex) via the Codex App Server,
+and Antigravity via the Antigravity SDK — from any MCP client.
 
 ## Install
 
@@ -13,12 +13,14 @@ Backends are optional extras; install the ones you use.
 |---|---|---|
 | `claude` | Claude Agent SDK | `claude-agent-sdk` (bundles the Claude Code CLI, ~100 MB) |
 | `codex` | Codex App Server | `openai-codex` (bundles the Codex CLI, ~120–150 MB) |
+| `antigravity` | Antigravity SDK | `google-antigravity` (bundles the Antigravity Go harness, ~40 MB) |
 | `all` | every backend | |
 
 ```bash
 uvx --with 'nexus-mcp[all]' nexus-mcp          # run directly
 pip install 'nexus-mcp[claude]'                 # or install
 pip install 'nexus-mcp[codex]'                  # Codex only
+pip install 'nexus-mcp[antigravity]'
 ```
 
 Claude Code MCP config:
@@ -28,7 +30,10 @@ Claude Code MCP config:
 ```
 
 Authentication is the agent's own: log in with `claude`, or set `ANTHROPIC_API_KEY`; for Codex,
-log in with `codex login` (credentials in `~/.codex` are shared).
+log in with `codex login` (credentials in `~/.codex` are shared). Antigravity uses `GEMINI_API_KEY`,
+or Vertex AI with `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_CLOUD_PROJECT`, and
+`GOOGLE_CLOUD_LOCATION`, authenticated through Application Default Credentials (ADC). It does not
+use Google-account login.
 
 **Windows:** recent `claude-agent-sdk` releases ship no Windows wheel with a bundled CLI;
 install Claude Code so `claude` is on `PATH`.
@@ -39,7 +44,7 @@ Runs one agent turn and returns its final answer.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `backend` | required | `claude` or `codex` |
+| `backend` | required | `claude`, `codex`, or `antigravity` |
 | `prompt` | required | Task for the agent |
 | `cwd` | required | Absolute project directory |
 | `profile` | `read_only` | Permission profile (below) |
@@ -49,8 +54,8 @@ Runs one agent turn and returns its final answer.
 | `timeout` | `600` | Seconds before the turn is cancelled |
 
 Returns `{backend, session_id, output, usage}`. Conversations are stored by the agent itself
-(`~/.claude/projects`, `$CODEX_HOME/sessions`), so a `session_id` keeps working after nexus-mcp
-restarts.
+(`~/.claude/projects`, `$CODEX_HOME/sessions`, `~/.nexus-mcp/antigravity`), so a `session_id` keeps
+working after nexus-mcp restarts. Antigravity does not support `fork=true`.
 
 ### Permission profiles
 
@@ -65,10 +70,14 @@ Actions outside the chosen profile are denied automatically — nobody is prompt
 Codex enforces profiles with its OS sandbox (`read-only`, `workspace-write`, `danger-full-access`)
 and never asks for approval.
 
+Antigravity enforces workspace containment in its harness and uses the OS sandbox for commands.
+`workspace_write` fails if that sandbox is unavailable.
+
 ## Resource: `nexus://backends`
 
 JSON list of `{name, installed, models, hint}`; `hint` gives the install command for a
-missing extra. Codex lists its models; Claude reports `null` (any id or alias the CLI accepts).
+missing extra. Codex lists its models; Claude and Antigravity report `null` (Antigravity does not
+provide a model list).
 
 ## Configuration
 
