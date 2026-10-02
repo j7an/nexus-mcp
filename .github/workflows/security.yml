@@ -20,4 +20,4 @@ jobs:
       actions: read
       contents: read
       security-events: write
-    uses: j7an/shared-workflows/.github/workflows/security-scan.yml@a93150a711d06975d9da4460ffc039d83068791e # v4.8.1
+    uses: j7an/shared-workflows/.github/workflows/security-scan.yml@014676723fae3e1ec914e13ccca4b000dab28f9e # e2e: shared-workflows feat/zizmor-sarif-upload
