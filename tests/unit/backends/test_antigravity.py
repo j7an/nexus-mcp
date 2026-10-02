@@ -2,6 +2,8 @@
 
 import asyncio
 import re
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
@@ -12,6 +14,7 @@ from fastmcp.exceptions import ToolError
 
 pytest.importorskip("google.antigravity")
 
+from google.antigravity.connections.local.local_connection import LocalConnectionStrategy
 from google.antigravity.hooks import policy
 from google.antigravity.types import (
     AntigravityConnectionError,
@@ -334,3 +337,103 @@ async def test_anyio_cancel_during_startup_exits_after_start(monkeypatch, create
     await canceller
     assert scope.cancelled_caught
     assert created[0].events == ["enter-start", "enter-done", "exit"]
+
+
+@pytest.mark.parametrize(
+    "exit_kind", ["normal", "startup_error", "cancel_startup", "exit_error", "concurrent"]
+)
+async def test_sdk_process_is_reaped_and_pipes_closed(tmp_path, exit_kind):
+    """Exercise real Agent startup/exit with per-config strategy process ownership."""
+    processes = []
+    reached_websocket = asyncio.Event()
+    release = asyncio.Event()
+
+    class Strategy(LocalConnectionStrategy):
+        async def _connect_websocket(self, port, api_key, process):
+            reached_websocket.set()
+            return None, "ws://fake"
+
+        async def __aenter__(self):
+            process = subprocess.Popen(
+                [sys.executable, "-c", "import sys; sys.stdin.buffer.read()"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            processes.append(process)
+            self.process = process
+            await self._connect_websocket(0, "dummy", process)
+            if exit_kind == "cancel_startup":
+                await release.wait()
+            if exit_kind == "startup_error":
+                process.kill()  # SDK initialization failure kills without waiting/closing.
+                raise RuntimeError("SECRET-provider")
+            self._connection = SimpleNamespace(_initial_history=[])
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            if exit_kind == "exit_error":
+                raise RuntimeError("exit failed")
+            process = self.process
+            process.stdin.close()
+            process.wait(timeout=2)  # SDK normal exit waits but leaves stdout/stderr open.
+            self._connection = None
+
+    class Config(antigravity.LocalAgentConfig):
+        def create_strategy(self, *, tool_runner, hook_runner):
+            return Strategy(tool_runner=tool_runner, hook_runner=hook_runner)
+
+    base = antigravity._config(request(tmp_path), CID)
+    config = Config(
+        conversation_id=CID,
+        save_dir=str(antigravity._STORE),
+        workspaces=[str(tmp_path)],
+        capabilities=base.capabilities,
+        policies=base.policies,
+    )
+
+    async def open_session():
+        async with antigravity._session(config):
+            pass
+
+    try:
+        if exit_kind == "cancel_startup":
+            task = asyncio.create_task(open_session())
+            await reached_websocket.wait()
+            task.cancel()
+            await asyncio.sleep(0)
+            assert processes[0].returncode is None
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        elif exit_kind == "startup_error":
+            with pytest.raises(ToolError, match="could not start or resume"):
+                await open_session()
+        elif exit_kind == "exit_error":
+            with pytest.raises(RuntimeError, match="^exit failed$"):
+                await open_session()
+        elif exit_kind == "concurrent":
+            # Agent copies the same native config; each copy must capture only its process.
+            async with antigravity._session(config):
+                async with antigravity._session(config):
+                    pass
+                assert processes[1].returncode is not None
+                assert all(
+                    p.closed for p in (processes[1].stdin, processes[1].stdout, processes[1].stderr)
+                )
+                assert processes[0].poll() is None
+                assert not processes[0].stdout.closed
+        else:
+            await open_session()
+        for process in processes:
+            assert process.returncode is not None, "shutdown must reap the launched process"
+            assert process.stdin.closed
+            assert process.stdout.closed
+            assert process.stderr.closed
+    finally:
+        # Keep intentional RED failures from leaking actual test-owned subprocess resources.
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=2)
+            for pipe in (process.stdin, process.stdout, process.stderr):
+                pipe.close()

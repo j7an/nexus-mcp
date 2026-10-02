@@ -2,13 +2,16 @@
 
 import asyncio
 import contextlib
+import subprocess
 import uuid
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 import anyio
 from fastmcp.exceptions import ToolError
 from google.antigravity import Agent, CapabilitiesConfig, LocalAgentConfig
+from google.antigravity.connections.connection import ConnectionStrategy
 from google.antigravity.hooks import policy
 from google.antigravity.types import (
     AntigravityConnectionError,
@@ -22,6 +25,9 @@ from google.antigravity.types import (
 from pydantic import ValidationError
 
 from nexus_mcp.types import BackendInfo, PromptRequest, PromptResult
+
+if TYPE_CHECKING:
+    from google.antigravity.connections.local.local_connection import LocalConnectionStrategy
 
 __all__ = ["Agent", "info", "run"]
 
@@ -77,10 +83,56 @@ def _ignore_session(_session_id: str) -> None:
     return None
 
 
+def _sdk_process_cleanup(agent: Agent) -> Callable[[], None]:
+    """Retain this Agent's harness process for reaping and pipe closure after SDK exit.
+
+    Remove when the SDK reaps failed initialization and closes all process pipes.
+    Capture begins at the WebSocket handshake; revisit if an earlier launch failure
+    is observed. No shared config, SDK class, or subprocess factory is changed.
+    """
+    process: subprocess.Popen[bytes] | None = None
+    original_create = agent._config.create_strategy
+
+    def create_strategy(*, tool_runner: Any, hook_runner: Any) -> ConnectionStrategy:
+        strategy = cast(
+            "LocalConnectionStrategy",
+            original_create(tool_runner=tool_runner, hook_runner=hook_runner),
+        )
+        original_connect = strategy._connect_websocket
+
+        async def connect_with_process(
+            port: int, api_key: str, proc: subprocess.Popen[bytes]
+        ) -> tuple[Any, str]:
+            nonlocal process
+            process = proc
+            return cast("tuple[Any, str]", await original_connect(port, api_key, proc))
+
+        object.__setattr__(strategy, "_connect_websocket", connect_with_process)
+        return strategy
+
+    # Agent deep-copies the native Pydantic config; override only that copy's factory.
+    object.__setattr__(agent._config, "create_strategy", create_strategy)
+
+    def cleanup() -> None:
+        if process is None:
+            return
+        try:
+            if process.poll() is None:
+                process.kill()  # Also stop the harness if SDK exit itself failed.
+            process.wait(timeout=2)
+        finally:
+            for pipe in (process.stdin, process.stdout, process.stderr):
+                if pipe is not None:
+                    pipe.close()
+
+    return cleanup
+
+
 @contextlib.asynccontextmanager
 async def _session(config: LocalAgentConfig) -> AsyncIterator[Agent]:
     """Finish pending startup before shielded teardown on every exit."""
     agent = Agent(config)
+    cleanup = _sdk_process_cleanup(agent)
     startup = asyncio.ensure_future(agent.__aenter__())
     try:
         try:
@@ -103,7 +155,10 @@ async def _session(config: LocalAgentConfig) -> AsyncIterator[Agent]:
                     await startup
             # SDK disconnect() blocks on process.wait(timeout=180). Move teardown to a
             # worker thread if a shutdown hang is observed.
-            await agent.__aexit__(None, None, None)
+            try:
+                await agent.__aexit__(None, None, None)
+            finally:
+                cleanup()
 
 
 async def info() -> BackendInfo:

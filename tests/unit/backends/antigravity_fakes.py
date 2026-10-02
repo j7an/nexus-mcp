@@ -33,6 +33,7 @@ class FakeAgent:
         stop_reason: Any,
     ) -> None:
         self.config = config
+        self._config = config.model_copy(deep=True)
         self.events: list[str] = []
         self.entering = asyncio.Event()
         self.sandbox_status = sandbox
