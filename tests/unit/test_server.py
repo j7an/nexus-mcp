@@ -198,6 +198,11 @@ def test_installed_reflects_sdk_importability(monkeypatch):
     assert backends.installed("claude") is True
 
 
+def test_installed_is_false_when_dotted_parent_is_missing(monkeypatch):
+    monkeypatch.setitem(backends._SDK_PACKAGES, "claude", "nonexistentpkg.sub")
+    assert backends.installed("claude") is False
+
+
 async def test_timeout_omits_invalid_backend_session_id(monkeypatch, tmp_path):
     slow = FakeBackend(delay=5, announce="sid-acquired\nprovider detail")
     monkeypatch.setattr(backends, "installed", lambda name: True)

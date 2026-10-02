@@ -21,7 +21,11 @@ NAMES: tuple[BackendName, ...] = tuple(_SDK_PACKAGES)
 
 def installed(name: BackendName) -> bool:
     """Return whether the backend's SDK extra is importable."""
-    return find_spec(_SDK_PACKAGES[name]) is not None
+    try:
+        return find_spec(_SDK_PACKAGES[name]) is not None
+    except ModuleNotFoundError:
+        # Dotted names import their parent package.
+        return False
 
 
 def install_hint(name: BackendName) -> str:
