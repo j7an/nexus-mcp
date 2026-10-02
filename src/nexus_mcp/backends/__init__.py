@@ -15,7 +15,11 @@ from nexus_mcp.types import BackendInfo, BackendName
 __all__ = ["NAMES", "get", "info", "install_hint", "installed"]
 
 # Backend name -> top-level package installed by its optional extra.
-_SDK_PACKAGES: dict[BackendName, str] = {"claude": "claude_agent_sdk", "codex": "openai_codex"}
+_SDK_PACKAGES: dict[BackendName, str] = {
+    "claude": "claude_agent_sdk",
+    "codex": "openai_codex",
+    "antigravity": "google.antigravity",
+}
 NAMES: tuple[BackendName, ...] = tuple(_SDK_PACKAGES)
 
 

@@ -37,7 +37,7 @@ def build_instructions() -> str:
         "`cwd` is required (absolute path to the project directory). "
         "Profiles: read_only (default), workspace_write, full_access. "
         "Pass the returned `session_id` to continue a conversation, "
-        "or with `fork=true` to branch it."
+        "or with `fork=true` to branch it (claude, codex)."
     )
 
 

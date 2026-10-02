@@ -169,6 +169,12 @@ async def test_backends_resource_lists_uninstalled_with_hint(monkeypatch):
             "models": None,
             "hint": backends.install_hint("codex"),
         },
+        {
+            "name": "antigravity",
+            "installed": False,
+            "models": None,
+            "hint": backends.install_hint("antigravity"),
+        },
     ]
 
 
@@ -177,13 +183,15 @@ async def test_backends_resource_uses_backend_info(fake):
     assert payload == [
         {"name": "claude", "installed": True, "models": None, "hint": None},
         {"name": "claude", "installed": True, "models": None, "hint": None},
+        {"name": "claude", "installed": True, "models": None, "hint": None},
     ]
 
 
 def test_instructions_list_installed_backends(monkeypatch):
     monkeypatch.setattr(backends, "installed", lambda name: True)
     text = server.build_instructions()
-    assert "Installed backends: claude, codex." in text
+    assert "Installed backends: claude, codex, antigravity." in text
+    assert "or with `fork=true` to branch it (claude, codex)." in text
     assert "`cwd` is required" in text
     assert server.mcp.instructions is not None
     assert "`cwd` is required" in server.mcp.instructions

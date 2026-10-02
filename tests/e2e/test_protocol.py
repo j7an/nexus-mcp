@@ -54,6 +54,7 @@ async def test_backends_resource(client):
     assert json.loads(contents[0].text) == [
         {"name": "claude", "installed": True, "models": None, "hint": None},
         {"name": "claude", "installed": True, "models": None, "hint": None},
+        {"name": "claude", "installed": True, "models": None, "hint": None},
     ]
 
 
