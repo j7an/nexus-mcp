@@ -1,9 +1,12 @@
 """Antigravity SDK configuration, turn, and lifecycle contracts."""
 
+import ast
 import asyncio
+import inspect
 import re
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
@@ -195,7 +198,7 @@ async def test_unsandboxed_profiles_run(monkeypatch, created, tmp_path, profile)
             AntigravityValidationError("SECRET-provider"),
             (
                 "Antigravity needs credentials: set GEMINI_API_KEY, or configure Vertex "
-                "(GOOGLE_GENAI_USE_VERTEXAI with project/location or an API key)"
+                "(GOOGLE_GENAI_USE_VERTEXAI with GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION)"
             ),
         ),
         (
@@ -218,8 +221,9 @@ async def test_startup_errors_are_classified(monkeypatch, created, tmp_path, err
 
 
 @pytest.mark.parametrize("error_type", [AntigravityConnectionError, AntigravityExecutionError])
-async def test_turn_errors_are_classified(monkeypatch, created, tmp_path, error_type):
-    install(monkeypatch, created, chat_error=error_type("SECRET-provider"))
+@pytest.mark.parametrize("raise_site", ["chat_error", "text_error"])
+async def test_turn_errors_are_classified(monkeypatch, created, tmp_path, error_type, raise_site):
+    install(monkeypatch, created, **{raise_site: error_type("SECRET-provider")})
     message = f"Antigravity run failed ({error_type.__name__}); check credentials and model"
     with pytest.raises(ToolError, match=f"^{re.escape(message)}$") as raised:
         await antigravity.run(request(tmp_path))
@@ -337,6 +341,29 @@ async def test_anyio_cancel_during_startup_exits_after_start(monkeypatch, create
     await canceller
     assert scope.cancelled_caught
     assert created[0].events == ["enter-start", "enter-done", "exit"]
+
+
+def test_sdk_process_capture_hook_contract():
+    """Native SDK startup must call the instance hook with its harness process."""
+    assert tuple(inspect.signature(LocalConnectionStrategy._connect_websocket).parameters) == (
+        "self",
+        "port",
+        "api_key",
+        "process",
+    )
+    startup = ast.parse(textwrap.dedent(inspect.getsource(LocalConnectionStrategy.__aenter__)))
+    assert any(
+        isinstance(node, ast.Await)
+        and isinstance(call := node.value, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "self"
+        and call.func.attr == "_connect_websocket"
+        and len(call.args) == 3
+        and isinstance(call.args[2], ast.Name)
+        and call.args[2].id == "process"
+        for node in ast.walk(startup)
+    )
 
 
 @pytest.mark.parametrize(

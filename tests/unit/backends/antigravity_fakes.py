@@ -8,12 +8,17 @@ _AVAILABLE = SimpleNamespace(available=True)
 
 
 class FakeResponse:
-    def __init__(self, text: str, usage: Any, stop_reason: Any) -> None:
+    def __init__(
+        self, text: str, usage: Any, stop_reason: Any, text_error: Exception | None = None
+    ) -> None:
         self._text = text
+        self._text_error = text_error
         self.usage_metadata = usage
         self.stop_reason = stop_reason
 
     async def text(self) -> str:
+        if self._text_error is not None:
+            raise self._text_error
         return self._text
 
 
@@ -27,6 +32,7 @@ class FakeAgent:
         usage: Any,
         start_error: Exception | None,
         chat_error: Exception | None,
+        text_error: Exception | None = None,
         drift_id: str | None,
         enter_gate: asyncio.Event | None,
         block_chat: asyncio.Event | None,
@@ -43,7 +49,7 @@ class FakeAgent:
         self.drift_id = drift_id
         self.enter_gate = enter_gate
         self.block_chat = block_chat
-        self.response = FakeResponse(text, usage, stop_reason)
+        self.response = FakeResponse(text, usage, stop_reason, text_error)
         self.prompts: list[str] = []
 
     async def __aenter__(self) -> "FakeAgent":
@@ -80,6 +86,7 @@ def factory(
     usage: Any = None,
     start_error: Exception | None = None,
     chat_error: Exception | None = None,
+    text_error: Exception | None = None,
     drift_id: str | None = None,
     enter_gate: asyncio.Event | None = None,
     block_chat: asyncio.Event | None = None,
@@ -93,6 +100,7 @@ def factory(
             usage=usage,
             start_error=start_error,
             chat_error=chat_error,
+            text_error=text_error,
             drift_id=drift_id,
             enter_gate=enter_gate,
             block_chat=block_chat,

@@ -140,7 +140,7 @@ async def _session(config: LocalAgentConfig) -> AsyncIterator[Agent]:
         except AntigravityValidationError:
             raise ToolError(
                 "Antigravity needs credentials: set GEMINI_API_KEY, or configure Vertex "
-                "(GOOGLE_GENAI_USE_VERTEXAI with project/location or an API key)"
+                "(GOOGLE_GENAI_USE_VERTEXAI with GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION)"
             ) from None
         except RuntimeError:
             raise ToolError(
