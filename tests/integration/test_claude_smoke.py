@@ -6,7 +6,7 @@ from nexus_mcp.backends import claude, claude_policy
 from nexus_mcp.backends.claude_policy import SETTINGS_PROFILE_ENV
 from nexus_mcp.types import PromptRequest
 
-pytestmark = [pytest.mark.integration, pytest.mark.slow]
+pytestmark = pytest.mark.integration
 
 MODEL = "haiku"
 
