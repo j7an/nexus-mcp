@@ -42,7 +42,7 @@ jobs:
       - name: Mypy
         run: uv run mypy src/nexus_mcp
       - name: Run tests
-        run: uv run pytest -m "not integration"
+        run: uv run pytest
 
   build:
     name: Build distributions
