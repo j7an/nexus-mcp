@@ -15,13 +15,21 @@ from nexus_mcp.types import BackendInfo, BackendName
 __all__ = ["NAMES", "get", "info", "install_hint", "installed"]
 
 # Backend name -> top-level package installed by its optional extra.
-_SDK_PACKAGES: dict[BackendName, str] = {"claude": "claude_agent_sdk", "codex": "openai_codex"}
+_SDK_PACKAGES: dict[BackendName, str] = {
+    "claude": "claude_agent_sdk",
+    "codex": "openai_codex",
+    "antigravity": "google.antigravity",
+}
 NAMES: tuple[BackendName, ...] = tuple(_SDK_PACKAGES)
 
 
 def installed(name: BackendName) -> bool:
     """Return whether the backend's SDK extra is importable."""
-    return find_spec(_SDK_PACKAGES[name]) is not None
+    try:
+        return find_spec(_SDK_PACKAGES[name]) is not None
+    except ModuleNotFoundError:
+        # Dotted names import their parent package.
+        return False
 
 
 def install_hint(name: BackendName) -> str:

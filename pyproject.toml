@@ -1,7 +1,7 @@
 [project]
 name = "nexus-mcp"
 dynamic = ["version"]
-description = "MCP server that delegates tasks to coding agents (Claude, Codex)"
+description = "MCP server that delegates tasks to coding agents (Claude, Codex, Antigravity)"
 readme = "README.md"
 authors = [
     { name = "j7an", email = "j7an@users.noreply.github.com" }
@@ -10,6 +10,7 @@ license = "MIT"
 keywords = [
     "ai-agents",
     "ai-orchestration",
+    "antigravity",
     "claude-code",
     "claude-desktop",
     "claudecode",
@@ -17,6 +18,8 @@ keywords = [
     "codex",
     "codex-cli",
     "fastmcp",
+    "gemini",
+    "google-antigravity",
     "mcp",
     "mcp-server",
     "model-context-protocol",
@@ -44,7 +47,8 @@ dependencies = [
 [project.optional-dependencies]
 claude = ["claude-agent-sdk>=0.2.158,<0.3"]
 codex = ["openai-codex>=0.157.1"]
-all = ["nexus-mcp[claude,codex]"]
+antigravity = ["google-antigravity>=0.1.20,<0.2"]
+all = ["nexus-mcp[claude,codex,antigravity]"]
 
 [project.urls]
 Homepage = "https://github.com/j7an/nexus-mcp"
@@ -123,6 +127,10 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 
+[[tool.mypy.overrides]]
+module = ["google.antigravity", "google.antigravity.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 addopts = "-m 'not integration'"
 asyncio_mode = "auto"  # Recommended by FastMCP: eliminates need for @pytest.mark.asyncio decorators
@@ -174,3 +182,6 @@ claude-agent-sdk = "2026-09-24T00:00:00Z"
 # Remove after 2026-10-01, when the five-day cutoff includes this release.
 openai-codex = "2026-09-27T00:00:00Z"
 openai-codex-cli-bin = "2026-09-27T00:00:00Z"
+# Temporary exception for google-antigravity 0.1.20 (Antigravity backend baseline).
+# Remove after 2026-10-03, when the five-day cutoff includes this release.
+google-antigravity = "2026-09-29T00:00:00Z"

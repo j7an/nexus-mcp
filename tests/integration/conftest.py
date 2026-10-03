@@ -15,3 +15,9 @@ def claude_installed() -> None:
 def codex_installed() -> None:
     if not backends.installed("codex"):
         pytest.skip("codex extra not installed")
+
+
+@pytest.fixture
+def antigravity_installed() -> None:
+    if not backends.installed("antigravity"):
+        pytest.skip("antigravity extra not installed")
