@@ -63,15 +63,8 @@ confusion when `pip install` reports a different string than the tag.
 
 ## What Happens Next (Automated)
 
-The `release.yml` workflow runs five jobs in sequence:
-
-| Job | What it does |
-|-----|--------------|
-| `build` | Verifies the tag is on `main`, builds sdist + wheel via `uv build`, uploads artifacts |
-| `publish-testpypi` | Publishes to TestPyPI, waits 30 s, installs and smoke-tests the package |
-| `publish-pypi` | **Waits for a required reviewer to approve** the `pypi` environment, then publishes |
-| `github-release` | Creates a **draft** GitHub Release with auto-generated notes; a regex classifier marks it as `prerelease: true` unless the tag matches `^v[0-9]+\.[0-9]+\.[0-9]+(\.post[0-9]+)?$` |
-| `publish-mcp-registry` | Authenticates via OIDC, publishes the committed `server.json` to MCP Registry |
+`.github/workflows/release.yml` defines the job sequence. The `pypi` environment requires a
+reviewer to approve the deployment before anything is published to PyPI.
 
 Monitor progress at:
 `https://github.com/j7an/nexus-mcp/actions`
@@ -83,7 +76,7 @@ Monitor progress at:
 - [ ] Approve the `pypi` environment deployment when GitHub prompts you
 - [ ] Verify the live package: `pip install "nexus-mcp==${VERSION}"`
 - [ ] Smoke-test: `python -c "import nexus_mcp; print(nexus_mcp.__version__)"`
-- [ ] Open the draft GitHub Release, review auto-generated notes, and click **Publish release**
+- [ ] Review the published GitHub Release and its auto-generated notes
 - [ ] Verify the MCP Registry listing
 
 ---
@@ -122,5 +115,4 @@ skipped, create the release manually:
 
     gh release create "v${VERSION}" dist/* \
       --title "v${VERSION}" \
-      --generate-notes \
-      --draft
+      --generate-notes
