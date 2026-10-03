@@ -2,7 +2,8 @@ name: CI
 
 # No push-to-main trigger: the "Protect main" ruleset allows squash merges only and
 # requires branches to be up to date with passing checks, so main's tree is exactly
-# what the PR tested. Restore `push: branches: [main]` if that rule is relaxed.
+# what the PR tested. Restore `push: branches: [main]` if that rule is relaxed, and
+# re-add `if: github.event_name == 'pull_request'` to the coverage and dependency-review jobs.
 on:
   pull_request:
 
