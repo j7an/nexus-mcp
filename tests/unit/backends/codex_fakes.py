@@ -1,6 +1,7 @@
 """Scripted stand-ins for openai_codex.AsyncCodex, threads, and turn handles."""
 
 import asyncio
+from collections.abc import Sequence
 from typing import Any
 
 import openai_codex.generated.v2_all as wire
@@ -93,10 +94,11 @@ class FakeCodex:
         self,
         config: Any,
         script: list[Any],
-        enter_error: BaseException | None,
-        interrupt_error: BaseException | None,
-        models: list[str],
-        enter_gate: asyncio.Event | None,
+        *,
+        enter_error: BaseException | None = None,
+        interrupt_error: BaseException | None = None,
+        models: Sequence[str] = (),
+        enter_gate: asyncio.Event | None = None,
     ) -> None:
         self.config = config
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
@@ -105,7 +107,7 @@ class FakeCodex:
         self.enter_error = enter_error
         self.enter_gate = enter_gate
         self.entering = asyncio.Event()
-        self.model_ids = models
+        self.model_ids = list(models)
         self.events: list[str] = []
         self.closed = False
 
@@ -145,17 +147,9 @@ class FakeCodex:
         return SimpleNamespace(data=[SimpleNamespace(id=model) for model in self.model_ids])
 
 
-def factory(
-    script: list[Any],
-    created: list[FakeCodex],
-    *,
-    enter_error: BaseException | None = None,
-    interrupt_error: BaseException | None = None,
-    models: list[str] | None = None,
-    enter_gate: asyncio.Event | None = None,
-):  # type: ignore[no-untyped-def]
+def factory(script: list[Any], created: list[FakeCodex], **kwargs: Any):  # type: ignore[no-untyped-def]
     def make(config: Any) -> FakeCodex:
-        codex = FakeCodex(config, script, enter_error, interrupt_error, models or [], enter_gate)
+        codex = FakeCodex(config, script, **kwargs)
         created.append(codex)
         return codex
 

@@ -2,10 +2,6 @@
 
 import json
 
-import pytest
-
-pytestmark = pytest.mark.e2e
-
 
 async def test_lists_exactly_the_prompt_tool(client):
     tools = await client.list_tools()

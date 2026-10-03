@@ -27,16 +27,16 @@ class FakeAgent:
         self,
         config: Any,
         *,
-        sandbox: Any,
-        text: str,
-        usage: Any,
-        start_error: Exception | None,
-        chat_error: Exception | None,
+        sandbox: Any = _AVAILABLE,
+        text: str = "done",
+        usage: Any = None,
+        start_error: Exception | None = None,
+        chat_error: Exception | None = None,
         text_error: Exception | None = None,
-        drift_id: str | None,
-        enter_gate: asyncio.Event | None,
-        block_chat: asyncio.Event | None,
-        stop_reason: Any,
+        drift_id: str | None = None,
+        enter_gate: asyncio.Event | None = None,
+        block_chat: asyncio.Event | None = None,
+        stop_reason: Any = "UNSPECIFIED",
     ) -> None:
         self.config = config
         self._config = config.model_copy(deep=True)
@@ -78,34 +78,9 @@ class FakeAgent:
         return self.response
 
 
-def factory(
-    created: list[FakeAgent],
-    *,
-    sandbox: Any = _AVAILABLE,
-    text: str = "done",
-    usage: Any = None,
-    start_error: Exception | None = None,
-    chat_error: Exception | None = None,
-    text_error: Exception | None = None,
-    drift_id: str | None = None,
-    enter_gate: asyncio.Event | None = None,
-    block_chat: asyncio.Event | None = None,
-    stop_reason: Any = "UNSPECIFIED",
-):  # type: ignore[no-untyped-def]
+def factory(created: list[FakeAgent], **kwargs: Any):  # type: ignore[no-untyped-def]
     def make(config: Any) -> FakeAgent:
-        agent = FakeAgent(
-            config,
-            sandbox=sandbox,
-            text=text,
-            usage=usage,
-            start_error=start_error,
-            chat_error=chat_error,
-            text_error=text_error,
-            drift_id=drift_id,
-            enter_gate=enter_gate,
-            block_chat=block_chat,
-            stop_reason=stop_reason,
-        )
+        agent = FakeAgent(config, **kwargs)
         created.append(agent)
         return agent
 

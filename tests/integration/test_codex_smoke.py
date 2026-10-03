@@ -9,7 +9,7 @@ import pytest
 from nexus_mcp.backends import codex
 from nexus_mcp.types import PromptRequest
 
-pytestmark = [pytest.mark.integration, pytest.mark.slow]
+pytestmark = pytest.mark.integration
 
 _CALL_TYPES = frozenset({"function_call", "custom_tool_call"})
 _OUTPUT_TYPES = frozenset({"function_call_output", "custom_tool_call_output"})

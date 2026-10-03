@@ -18,7 +18,7 @@ from nexus_mcp import server
 from nexus_mcp.backends import antigravity
 from nexus_mcp.types import PromptRequest
 
-pytestmark = [pytest.mark.integration, pytest.mark.slow]
+pytestmark = pytest.mark.integration
 
 _START_ERROR = (
     "Antigravity could not start or resume the session "

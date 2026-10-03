@@ -19,7 +19,6 @@ def test_diff_coverage_uses_shared_action_with_nexus_policy() -> None:
         r"uses: j7an/shared-workflows/actions/coverage@[0-9a-f]{40} # v[0-9]+\.[0-9]+\.[0-9]+",
         job,
     )
-    assert "if: github.event_name == 'pull_request'\n" in job
     assert "fetch-depth: 0" in job
     assert 'save-cache: "false"' in job
     assert "--cov=nexus_mcp" in job

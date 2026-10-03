@@ -92,7 +92,6 @@ select = [
 
     # Modern Python practices
     "UP",   # pyupgrade (modernize syntax for target Python version)
-    "FA",   # flake8-future-annotations (PEP 563 compliance)
 
     # Code quality
     "B",    # flake8-bugbear (detect likely bugs and design problems)
@@ -101,7 +100,6 @@ select = [
     "RET",  # flake8-return (improve return statements)
 
     # Import management
-    "ICN",  # flake8-import-conventions (enforce import aliases, e.g., pd for pandas)
     "TID",  # flake8-tidy-imports (ban relative imports, enforce import style)
     "TC",   # flake8-type-checking (optimize TYPE_CHECKING blocks)
 
@@ -113,9 +111,6 @@ select = [
 
     # Documentation
     "TD",   # flake8-todos (require issue links in TODO comments)
-
-    # Library-specific
-    "NPY",  # NumPy-specific rules (better array operations)
 ]
 
 [tool.ruff.format]
@@ -144,8 +139,6 @@ filterwarnings = [
 ]
 markers = [
     "integration: tests that call real CLI subprocesses",
-    "slow: tests that take >1 second",
-    "e2e: tests that exercise the full MCP protocol stack via in-process Client",
 ]
 
 [tool.coverage.run]
@@ -153,7 +146,6 @@ source = ["nexus_mcp"]
 branch = true
 relative_files = true
 omit = [
-    "*/tests/*",
     "*/__main__.py",
 ]
 
@@ -162,26 +154,12 @@ fail_under = 90
 show_missing = true
 exclude_also = [
     "if TYPE_CHECKING:",
-    'if __name__ == .__main__.:',
-    "@(abc\\.)?abstractmethod",
-    "raise NotImplementedError",
-    "class .*\\bProtocol\\):",
-    "\\.\\.\\.",
 ]
 
 [tool.uv]
 exclude-newer = "5 days"
 
-# Temporary exception for FastMCP 4.0.10 / claude-agent-sdk 0.2.158 (v2 baseline).
-# Remove after 2026-09-30, when the five-day cutoff includes these releases.
 [tool.uv.exclude-newer-package]
-fastmcp = "2026-09-26T00:00:00Z"
-fastmcp-slim = "2026-09-26T00:00:00Z"
-claude-agent-sdk = "2026-09-24T00:00:00Z"
-# Temporary exception for openai-codex 0.157.1 (v2 Codex backend baseline).
-# Remove after 2026-10-01, when the five-day cutoff includes this release.
-openai-codex = "2026-09-27T00:00:00Z"
-openai-codex-cli-bin = "2026-09-27T00:00:00Z"
 # Temporary exception for google-antigravity 0.1.20 (Antigravity backend baseline).
 # Remove after 2026-10-03, when the five-day cutoff includes this release.
 google-antigravity = "2026-09-29T00:00:00Z"

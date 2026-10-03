@@ -359,3 +359,9 @@ async def test_sdk_pipes_close_after_process_exit(monkeypatch, exit_kind):
     assert process.stdout.closed and process.stderr.closed
     assert events.index("wait") < events.index("close-stdout")
     assert events.index("wait") < events.index("close-stderr")
+
+
+def test_factory_rejects_unknown_option():
+    make = factory([], [], enter_eror=RuntimeError())
+    with pytest.raises(TypeError):
+        make(None)
