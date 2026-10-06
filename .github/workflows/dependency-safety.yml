@@ -25,4 +25,4 @@ jobs:
     with:
       auto_merge: true
       release_age_policy: advisory
-      minimum_release_age_days: 5
+      minimum_release_age_days: 7
