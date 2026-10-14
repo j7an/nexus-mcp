@@ -20,4 +20,4 @@ jobs:
       actions: read
       contents: read
       security-events: write
-    uses: j7an/shared-workflows/.github/workflows/security-scan.yml@798e12564a8aeacc4dda95f76d8d3d22d677f1a0 # v4.9.0
+    uses: j7an/shared-workflows/.github/workflows/security-scan.yml@19391aa44c5b4f6247a38cf38c158fe692a44990 # v4.12.0
