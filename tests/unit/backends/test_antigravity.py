@@ -343,6 +343,21 @@ async def test_anyio_cancel_during_startup_exits_after_start(monkeypatch, create
     assert created[0].events == ["enter-start", "enter-done", "exit"]
 
 
+def _awaited_self_calls(method, attr):
+    """Return calls in ``method`` of the form ``await self.<attr>(...)``."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(method)))
+    return [
+        call
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Await)
+        and isinstance(call := node.value, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "self"
+        and call.func.attr == attr
+    ]
+
+
 def test_sdk_process_capture_hook_contract():
     """Native SDK startup must call the instance hook with its harness process."""
     assert tuple(inspect.signature(LocalConnectionStrategy._connect_websocket).parameters) == (
@@ -351,18 +366,13 @@ def test_sdk_process_capture_hook_contract():
         "api_key",
         "process",
     )
-    startup = ast.parse(textwrap.dedent(inspect.getsource(LocalConnectionStrategy.__aenter__)))
+    assert _awaited_self_calls(LocalConnectionStrategy.__aenter__, "_spawn_harness_and_connect_ws")
+    connects = _awaited_self_calls(
+        LocalConnectionStrategy._spawn_harness_and_connect_ws, "_connect_websocket"
+    )
     assert any(
-        isinstance(node, ast.Await)
-        and isinstance(call := node.value, ast.Call)
-        and isinstance(call.func, ast.Attribute)
-        and isinstance(call.func.value, ast.Name)
-        and call.func.value.id == "self"
-        and call.func.attr == "_connect_websocket"
-        and len(call.args) == 3
-        and isinstance(call.args[2], ast.Name)
-        and call.args[2].id == "process"
-        for node in ast.walk(startup)
+        len(call.args) == 3 and isinstance(call.args[2], ast.Name) and call.args[2].id == "process"
+        for call in connects
     )
 
 
