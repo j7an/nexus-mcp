@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+SETUP_UV_ACTION = ROOT / ".github" / "actions" / "setup-uv" / "action.yml"
 
 
 def _workflow_text() -> str:
@@ -23,6 +24,12 @@ def test_testpypi_verifier_disables_setup_uv_cache() -> None:
     assert "uses: astral-sh/setup-uv@" in setup_step
     assert "with:" in setup_step
     assert "enable-cache: false" in setup_step
+
+
+def test_setup_uv_composite_keeps_default_cache_policy() -> None:
+    # setup-uv's `auto` default skips caching on tag pushes, so release jobs that call this
+    # composite never restore a possibly poisoned cache (#297).
+    assert "enable-cache" not in SETUP_UV_ACTION.read_text(encoding="utf-8")
 
 
 def test_mcp_publisher_download_is_pinned_and_checksum_verified() -> None:
