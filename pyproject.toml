@@ -158,3 +158,6 @@ exclude_also = [
 
 [tool.uv]
 exclude-newer = "7 days"
+# Temporary: pyasn1 0.6.5 fixes four advisories but stays inside the 7-day window until
+# 2026-11-03T06:33Z. Remove this exception once that has passed.
+exclude-newer-package = { pyasn1 = "2026-10-27T06:33:00Z" }
