@@ -68,7 +68,7 @@ jobs:
       - name: Run tests with coverage
         run: uv run pytest --cov=nexus_mcp --cov-report=term-missing --cov-report=xml
       - name: Check diff coverage
-        uses: j7an/shared-workflows/actions/coverage@1084a4b6feef47a301967f12524f40be73295ea4 # v4.12.2
+        uses: j7an/shared-workflows/actions/coverage@4f97f4716f0d420853222db356d9340ac40f40ba # v4.12.3
         with:
           report-path: coverage.xml
           diff-cover-path: ${{ github.workspace }}/.venv/bin/diff-cover
