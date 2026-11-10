@@ -15,4 +15,4 @@ jobs:
   gate:
     permissions:
       statuses: write
-    uses: j7an/shared-workflows/.github/workflows/dependency-safety-non-bot-gate.yml@1084a4b6feef47a301967f12524f40be73295ea4 # v4.12.2
+    uses: j7an/shared-workflows/.github/workflows/dependency-safety-non-bot-gate.yml@4f97f4716f0d420853222db356d9340ac40f40ba # v4.12.3
